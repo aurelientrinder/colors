@@ -12,6 +12,26 @@
 
         <!-- The window is wide enough for the list plus a preview; Stage is the visible panel. It is
              centred and list-wide, and widens on both sides when a file is selected. -->
+        <Grid.Resources>
+            <ResourceDictionary>
+                <ResourceDictionary.ThemeDictionaries>
+                    <!-- Glass: light catching the upper part of the pane (the rim is drawn by ShadowWindow). -->
+                    <ResourceDictionary x:Key="Dark">
+                        <LinearGradientBrush x:Key="SheenBrush" MappingMode="Absolute" StartPoint="0,0" EndPoint="0,180">
+                            <GradientStop Offset="0" Color="#12FFFFFF" />
+                            <GradientStop Offset="1" Color="#00FFFFFF" />
+                        </LinearGradientBrush>
+                    </ResourceDictionary>
+                    <ResourceDictionary x:Key="Light">
+                        <LinearGradientBrush x:Key="SheenBrush" MappingMode="Absolute" StartPoint="0,0" EndPoint="0,180">
+                            <GradientStop Offset="0" Color="#59FFFFFF" />
+                            <GradientStop Offset="1" Color="#00FFFFFF" />
+                        </LinearGradientBrush>
+                    </ResourceDictionary>
+                </ResourceDictionary.ThemeDictionaries>
+            </ResourceDictionary>
+        </Grid.Resources>
+
         <Grid
             x:Name="Stage"
             Width="680"
@@ -24,6 +44,11 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+
+        <Border
+            Grid.RowSpan="4"
+            Background="{ThemeResource SheenBrush}"
+            IsHitTestVisible="False" />
 
         <!-- search field -->
         <Grid Padding="22,0,18,0">
@@ -46,8 +71,9 @@
                 VerticalAlignment="Center"
                 Background="Transparent"
                 BorderThickness="0"
+                FontFamily="Segoe UI Variable Display, Segoe UI"
                 FontSize="22"
-                FontWeight="Normal"
+                FontWeight="SemiLight"
                 PlaceholderText="Search apps, files, settings…"
                 PreviewKeyDown="OnInputKeyDown"
                 TextChanged="OnInputChanged">
@@ -286,6 +312,7 @@
                 TextTrimming="CharacterEllipsis" />
             </Grid>
         </Border>
+
         </Grid>
     </Grid>
 </Window>

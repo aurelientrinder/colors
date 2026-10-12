@@ -42,6 +42,7 @@ works exactly as before, just without "Related" results.
 | `Palette: Run at startup` | toggle start-at-sign-in (per-user logon task "Palette", no admin; starts right away, unlike Run-key apps that Windows delays) |
 | `Palette: Reindex files` | refresh the file index now |
 | `Palette: Quit` | exit |
+| launch `PaletteWinUI.exe` again | opens the palette of the running copy; `--query "text"` opens it with that text typed |
 | tray icon: click | show / hide the palette |
 | tray icon: right-click | Open, Run at startup (checked when on), Re-index files, Quit |
 
@@ -64,7 +65,9 @@ Anything you launch is remembered and boosted next time (frecency).
   First run prompts UAC once and registers a logon task (`PaletteMftRefresh`,
   highest privileges) so later refreshes need no prompt. Without the helper it
   falls back to walking your user profile.
-- **Between snapshots:** a file watcher on your profile adds new files live.
+- **Between snapshots:** a file watcher on your profile adds new files live. It and the other
+  upkeep threads (snapshot reloads, drive walks) run in efficiency mode at below-normal priority,
+  so only searching itself runs at full speed.
 - **Drives without an MFT** (FAT/exFAT, and virtual drives such as Google Drive, which
   report FAT32): when a drive's snapshot comes back empty, the app itself (unelevated,
   because the elevated helper often cannot see per-user virtual drives) walks it slowly
@@ -75,7 +78,12 @@ Anything you launch is remembered and boosted next time (frecency).
   EmbeddingGemma-300m if that is the only model present) in its own process. Its index is
   per model and rebuilds itself when the model changes. It indexes apps, settings, commands and the
   text of documents (`.txt .md .rst .tex .docx .pptx .pdf` under your profile), most
-  recently modified first, only while on AC power and at below-normal priority.
+  recently modified first, only while on AC power. The model runs on the GPU through DirectML
+  when one is available (any DirectX 12 GPU, integrated ones included), which takes ~7x less CPU
+  time than the CPU path at the same or better speed; otherwise on half the CPU cores. Either way
+  the helper runs at below-normal priority in Windows' efficiency mode (EcoQoS), so a rebuild
+  stays on the efficient cores and keeps the machine quiet. On the GPU, inputs are padded to a
+  few fixed shapes, because DirectML compiles kernels for every new shape it meets.
   After typing pauses (~180 ms) the launcher asks it for up to three matches and appends
   them under the instant results; it never sits in the keystroke path. When the typed
   text appears in no instant hit's name (natural-language queries like "take a
@@ -108,7 +116,9 @@ and show/hide/activation diagnostics to `%LOCALAPPDATA%\palette\winui.log`.
 Semantic tier knobs (environment variables): `PALETTE_SEMANTIC=0` disables it,
 `PALETTE_SEM_MIN` overrides the similarity floor (EmbeddingGemma 2: 0.72 docs / 0.70
 items; the original model's score band is lower, so its floors are 0.42),
-`PALETTE_SEM_ON_BATTERY=1` lets indexing run on battery, `PALETTE_SEM_THREADS`,
+`PALETTE_SEM_ON_BATTERY=1` lets indexing run on battery, `PALETTE_SEM_DEVICE` (`gpu`
+default, falls back to the CPU; `cpu`; `npu`, where DirectML exposes one),
+`PALETTE_SEM_THREADS` (CPU path, default half the cores),
 `PALETTE_SEM_DOC_TOKENS` (tokens per chunk, default 224), `PALETTE_SEM_MAX_CHUNKS`
 (default 8), `PALETTE_SEM_MAX_DOCS` (default 40000).
 `palette-semantic.exe query "text"` / `index` (prints extraction vs embedding time) /
@@ -117,6 +127,6 @@ items; the original model's score band is lower, so its floors are 0.42),
 ## Not yet done
 
 - Semantic tier: source code is not indexed; scanned PDFs (no text layer) need OCR;
-  embedding speed on CPU is ~3-4 chunks/s, so a full rebuild takes tens of minutes
+  embedding runs at ~4-5 chunks/s (GPU or CPU), so a full rebuild takes tens of minutes
 - Configurable hotkey
 - Non-NTFS drives (exFAT/FAT) are not in the MFT snapshot

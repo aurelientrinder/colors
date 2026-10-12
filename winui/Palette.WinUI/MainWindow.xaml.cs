@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Window
 
     private readonly AppWindow _aw;
     private readonly IntPtr _hwnd;
+    private readonly ShadowWindow _shadow = new();
 
     public ObservableCollection<HitVm> Items { get; } = new();
 
@@ -45,7 +46,7 @@ public sealed partial class MainWindow : Window
         _hwnd = WindowNative.GetWindowHandle(this);
         _aw = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_hwnd));
 
-        SystemBackdrop = new DesktopAcrylicBackdrop();
+        SystemBackdrop = new GlassBackdrop();
         ExtendsContentIntoTitleBar = true;
 
         var presenter = OverlappedPresenter.Create();
@@ -78,6 +79,39 @@ public sealed partial class MainWindow : Window
         new Thread(IconLoop) { IsBackground = true, Name = "icons" }.Start();
         new Thread(SemanticLoop) { IsBackground = true, Name = "semantic" }.Start();
         new Thread(HotkeyLoop) { IsBackground = true, Name = "hotkey" }.Start();
+        new Thread(ShowRequestLoop) { IsBackground = true, Name = "show-requests" }.Start();
+    }
+
+    internal const string ShowEventName = "Local\\PaletteWinUIShow";
+    internal static string ShowRequestFile =>
+        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "palette", "show-query.txt");
+
+    /// <summary>A second launch signals this: open the palette, optionally with a query typed in.</summary>
+    private void ShowRequestLoop()
+    {
+        using var ev = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+        while (ev.WaitOne())
+        {
+            string? q = null;
+            try
+            {
+                if (File.Exists(ShowRequestFile))
+                {
+                    q = File.ReadAllText(ShowRequestFile);
+                    File.Delete(ShowRequestFile);
+                }
+            }
+            catch { }
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_visible) ShowPalette();
+                if (q != null)
+                {
+                    Input.Text = q;
+                    Input.SelectionStart = q.Length;
+                }
+            });
+        }
     }
 
     /// <summary>The stock TextBox clear button has no off switch; neutralise its template part.</summary>
@@ -115,6 +149,10 @@ public sealed partial class MainWindow : Window
         Divider.Visibility = vis;
         Footer.Visibility = vis;
         _listBodyDip = rows > 0 ? rows * RowDip + PadDip : 0;
+        // Rows arriving or leaving while the list is up (Related rows, a narrower match) glide the
+        // panel to its new height; a jump would show the window shape a frame ahead of the rows.
+        if (_visible && AnimationsOn && _listShownDip > 0 && _listBodyDip > 0 && _listShownDip != _listBodyDip) EnsureFrames();
+        else _listShownDip = _listBodyDip;
 
         if (recenter)
         {
@@ -128,8 +166,13 @@ public sealed partial class MainWindow : Window
             // too little room means no preview at all.
             double side = Math.Clamp((wa.Width / s - WidthDip - 48) / 2, 0, SideDip);
             _sideDip = side >= MinSideDip ? side : 0;
-            int w = (int)((WidthDip + 2 * _sideDip) * s);
-            int ph = (int)((InputDip + DividerDip + crate_MaxRows * RowDip + PadDip + FooterDip) * s);
+            // The client area (XAML) is smaller than the window by what is left of its frame, and the
+            // acrylic backdrop is laid out from the window's corner rather than the client's, so it
+            // stops that offset short of the client's right and bottom edges: add both.
+            var (ox, oy, cw, ch) = Win32.ClientArea(_hwnd);
+            int ncw = Math.Max(0, _aw.Size.Width - cw) + ox, nch = Math.Max(0, _aw.Size.Height - ch) + oy;
+            int w = (int)((WidthDip + 2 * _sideDip) * s) + ncw;
+            int ph = (int)((InputDip + DividerDip + crate_MaxRows * RowDip + PadDip + FooterDip) * s) + nch;
             ph = Math.Min(ph, wa.Height - (int)(wa.Height * 0.18) - (int)(24 * s));
             int x = wa.X + (wa.Width - w) / 2;
             int y = wa.Y + (int)(wa.Height * 0.18);
@@ -140,6 +183,7 @@ public sealed partial class MainWindow : Window
 
     private const int crate_MaxRows = 11;     // 8 instant + 3 related
     private double _listBodyDip;              // height the result rows need
+    private double _listShownDip;             // height the list currently has on screen (follows _listBodyDip)
 
     // ------------------------------------------------------------ shape + animations
     //
@@ -149,7 +193,7 @@ public sealed partial class MainWindow : Window
     // while the content fades in. Selecting a file widens the panel on both sides to make room
     // for its preview, and narrows it again when the selection moves to something else.
 
-    private const double CornerDip = 22, PopMs = 230, PreviewMs = 200;
+    private const double CornerDip = 22, PopMs = 230, PreviewMs = 200, ListMs = 45;
     private const double SideDip = 210, MinSideDip = 140;     // preview width = 2 * side
     private const double PreviewBodyDip = 7 * RowDip + PadDip; // the panel is at least this tall with a preview
     private double _sideDip = SideDip;
@@ -220,6 +264,12 @@ public sealed partial class MainWindow : Window
             _pvU = _pvTarget > _pvU ? Math.Min(_pvTarget, _pvU + step) : Math.Max(_pvTarget, _pvU - step);
             busy |= _pvU != _pvTarget;
         }
+        if (_listShownDip != _listBodyDip)
+        {
+            _listShownDip += (_listBodyDip - _listShownDip) * (1 - Math.Exp(-dt / ListMs));
+            if (Math.Abs(_listBodyDip - _listShownDip) < 0.5) _listShownDip = _listBodyDip;
+            else busy = true;
+        }
 
         ApplyShape();
         if (!busy)
@@ -232,14 +282,16 @@ public sealed partial class MainWindow : Window
     private void ApplyShape()
     {
         double s = Scale;
-        int w = _aw.Size.Width, wh = _aw.Size.Height;
+        // Shapes are computed in client (XAML) pixels, then shifted by the client area's offset
+        // inside the window for the region, which is in window coordinates.
+        var (ox, oy, w, wh) = Win32.ClientArea(_hwnd);
         if (w <= 0 || wh <= 0) return;
 
         // Preview: ease-in-out cubic on its linear progress.
         double u = _pvU;
         double p = u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(-2 * u + 2, 3) / 2;
         bool rows = Items.Count > 0;
-        double bodyDip = rows ? Math.Max(_listBodyDip, PreviewBodyDip * p) : 0;
+        double bodyDip = rows ? Math.Max(_listShownDip, PreviewBodyDip * p) : 0;
         Body.Height = bodyDip;
         double side = _sideDip * (1 - p);
         Stage.Margin = new Thickness(side, 0, 0, 0);
@@ -247,27 +299,44 @@ public sealed partial class MainWindow : Window
         PreviewPane.Opacity = p * p;
         PreviewPane.Visibility = p > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        // Pop: ease-out quartic size, quick fade-in.
+        // Pop: the whole window fades in (a window-level alpha that DWM applies for free) while the
+        // content grows from 92% with an ease-out quartic on the GPU. The glass, rim and shadow
+        // keep their final shape throughout: reshaping a window every frame makes DWM recompose
+        // it, which cost a third of each frame at 90-120 Hz.
         double ease = 1 - Math.Pow(1 - _popT, 4);
-        double k = 0.92 + 0.08 * ease;                        // size, relative to the visible panel
+        double k = 0.92 + 0.08 * ease;
         double alpha = Math.Clamp(_popT / 0.45, 0, 1);
 
         double h = Math.Min((InputDip + (rows ? DividerDip + bodyDip + FooterDip : 0)) * s, wh);
-        double x0 = side * s, cx = w / 2.0;
-        double left = cx - (cx - x0) * k, right = cx + (cx - x0) * k;
-        double top = h * 0.35 * (1 - k), bottom = top + h * k; // anchored a little above centre
-        int r = (int)(CornerDip * s * 2);                     // CreateRoundRectRgn takes the ellipse diameter
-        // Inset a few pixels: Windows paints a white hairline along the very edge of this window
-        // (the backdrop's frame highlight), inside the window and so not removable by styles alone.
-        int inset = (int)Math.Ceiling(2 * s);
-        var rgn = Win32.CreateRoundRectRgn((int)left + inset, (int)top + inset, (int)Math.Ceiling(right) - inset, (int)Math.Ceiling(bottom) - inset, r, r);
-        Win32.SetWindowRgn(_hwnd, rgn, true);
+        double x0 = side * s, cx = (_sideDip + WidthDip / 2) * s;   // the panel's centre never moves
+        // Outer edges of the panel, in window pixels. The region is cut a pixel inside them, and the
+        // shadow window paints an antialiased rim over the region's stair-stepped edge.
+        int rl = (int)Math.Round(x0) + ox, rt = oy, rr = (int)Math.Round(2 * cx - x0) + ox, rb = (int)Math.Round(h) + oy;
+        double radius = CornerDip * s;
+        if ((rl, rt, rr, rb) != _region)
+        {
+            _region = (rl, rt, rr, rb);
+            int i = 1, d = (int)Math.Round(2 * (radius - i));     // CreateRoundRectRgn takes the ellipse diameter
+            // CreateRoundRectRgn leaves out one pixel more on the right and bottom than its arguments say.
+            var rgn = Win32.CreateRoundRectRgn(rl + i, rt + i, rr - i + 1, rb - i + 1, d, d);
+            Win32.SetWindowRgn(_hwnd, rgn, true);
+        }
+        _shadow.Draw(new RectInt32(_aw.Position.X, _aw.Position.Y, _aw.Size.Width, _aw.Size.Height), rl, rt, rr, rb, radius, alpha, s,
+            Root.ActualTheme == ElementTheme.Dark);
 
-        Root.Opacity = alpha;
-        RootXf.CenterX = w / s / 2;
+        byte a = (byte)Math.Round(alpha * 255);
+        if (a != _windowAlpha)
+        {
+            _windowAlpha = a;
+            Win32.SetWindowAlpha(_hwnd, a);
+        }
+        RootXf.CenterX = cx / s;
         RootXf.CenterY = h / s * 0.35;
         RootXf.ScaleX = RootXf.ScaleY = k;
     }
+
+    private (int, int, int, int) _region;     // the window region last set
+    private int _windowAlpha = -1;            // the window alpha last set
 
     private IntPtr _previousForeground;   // the window that had focus before the palette opened
     private int _reassertTries;
@@ -287,6 +356,7 @@ public sealed partial class MainWindow : Window
     private void QuitApp()
     {
         _tray.Dispose();                  // remove the icon before the process disappears
+        _shadow.Dispose();
         Environment.Exit(0);
     }
 
@@ -319,6 +389,7 @@ public sealed partial class MainWindow : Window
         int ncOff = 1;                                                      // DWMNCRP_DISABLED: no frame, shadow or hairline
         Win32.DwmSetWindowAttribute(_hwnd, 2, ref ncOff, sizeof(int));      // DWMWA_NCRENDERING_POLICY
         Win32.ForceForeground(_hwnd);
+        _shadow.ShowOver(_hwnd);
         Activate();
         Input.Focus(FocusState.Programmatic);
         Enqueue("");   // empty query = most-used items
@@ -335,6 +406,7 @@ public sealed partial class MainWindow : Window
         _visible = false;
         _lastHidden = DateTime.UtcNow;
         _aw.Hide();
+        _shadow.Hide();
 
         // Hiding hands focus to whatever Windows picks (often the desktop), not the app you were in.
         var prev = _previousForeground;

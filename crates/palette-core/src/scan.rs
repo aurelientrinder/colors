@@ -300,13 +300,34 @@ fn walk_root(root: &str) -> Vec<(String, bool)> {
     out
 }
 
+/// Mark the calling thread as background work: below-normal priority, and EcoQoS ("efficiency
+/// mode"), which runs it on the efficient cores at low clocks. These threads live in the
+/// launcher's process, so they must never compete with its UI or with the user's apps.
+pub(crate) fn background_thread() {
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadInformation, SetThreadPriority, ThreadPowerThrottling, THREAD_POWER_THROTTLING_CURRENT_VERSION,
+        THREAD_POWER_THROTTLING_EXECUTION_SPEED, THREAD_POWER_THROTTLING_STATE, THREAD_PRIORITY_BELOW_NORMAL,
+    };
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        let state = THREAD_POWER_THROTTLING_STATE {
+            Version: THREAD_POWER_THROTTLING_CURRENT_VERSION,
+            ControlMask: THREAD_POWER_THROTTLING_EXECUTION_SPEED,
+            StateMask: THREAD_POWER_THROTTLING_EXECUTION_SPEED,
+        };
+        let _ = SetThreadInformation(
+            GetCurrentThread(),
+            ThreadPowerThrottling,
+            &state as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<THREAD_POWER_THROTTLING_STATE>() as u32,
+        );
+    }
+}
+
 /// Keeps `walk-<X>.txt` fresh for every drive the MFT helper reported as empty.
 fn spawn_extra_walker() {
-    use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
     std::thread::spawn(|| {
-        unsafe {
-            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-        }
+        background_thread();
         std::thread::sleep(Duration::from_secs(30)); // let startup settle first
         loop {
             for root in unreadable_drive_roots() {
@@ -422,6 +443,8 @@ pub fn spawn_manager(catalog: Arc<RwLock<Catalog>>, notify: Notify) {
             c.files = std::mem::take(&mut files);
         });
         notify();
+        // The index is up; everything from here on is background upkeep.
+        background_thread();
 
         // 2. Refresh apps.
         let apps = scan_apps();
@@ -477,6 +500,7 @@ pub fn spawn_manager(catalog: Arc<RwLock<Catalog>>, notify: Notify) {
 pub fn spawn_watcher(catalog: Arc<RwLock<Catalog>>, on_docs: Arc<dyn Fn(Vec<String>) + Send + Sync>) {
     use notify::{EventKind, RecursiveMode, Watcher};
     std::thread::spawn(move || {
+        background_thread();
         let Some(home) = std::env::var_os("USERPROFILE") else { return };
         let (tx, rx) = std::sync::mpsc::channel();
         let Ok(mut w) = notify::recommended_watcher(tx) else { return };

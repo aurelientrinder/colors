@@ -38,6 +38,8 @@
     <None Include="..\..\target\release\palette_core.dll" Link="palette_core.dll" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\target\release\palette-mft.exe" Link="palette-mft.exe" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\target\release\palette-semantic.exe" Link="palette-semantic.exe" CopyToOutputDirectory="PreserveNewest" />
+    <!-- DirectML runtime for palette-semantic's GPU path (placed next to it by ort's build). -->
+    <None Include="..\..\target\release\DirectML.dll" Link="DirectML.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\target\release\DirectML.dll')" />
   </ItemGroup>
 
   <!-- Embedding model for the semantic tier (fetched by scripts\get-model.ps1). Optional: without it

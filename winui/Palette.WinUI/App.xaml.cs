@@ -36,7 +36,19 @@ public partial class App : Application
             _single = new Mutex(true, "Local\\PaletteWinUISingleton", out bool createdNew);
             if (!createdNew)
             {
-                Log("second instance, exiting");
+                // Launching it again opens the palette of the running copy (with `--query text`,
+                // already typed in).
+                Log("second instance: asking the first to show, exiting");
+                try
+                {
+                    var argv = Environment.GetCommandLineArgs();
+                    int qi = Array.IndexOf(argv, "--query");
+                    string path = MainWindow.ShowRequestFile;
+                    if (qi >= 0 && qi + 1 < argv.Length) File.WriteAllText(path, argv[qi + 1]);
+                    else File.Delete(path);
+                    if (EventWaitHandle.TryOpenExisting(MainWindow.ShowEventName, out var ev)) ev.Set();
+                }
+                catch { }
                 Exit();
                 return;
             }

@@ -89,6 +89,47 @@ internal static class Win32
         return (style, ex);
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr h, out RECT r);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr h, out RECT r);
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr h, ref POINT p);
+
+    /// <summary>
+    /// Where the client area (the XAML content) sits inside the window, and its size. A window
+    /// region is in window coordinates, so shapes drawn to match the content must add the offset.
+    /// </summary>
+    public static (int ox, int oy, int cw, int ch) ClientArea(IntPtr h)
+    {
+        GetWindowRect(h, out var w);
+        GetClientRect(h, out var c);
+        var p = new POINT();
+        ClientToScreen(h, ref p);
+        return (p.X - w.Left, p.Y - w.Top, c.Right - c.Left, c.Bottom - c.Top);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
+
+    /// <summary>
+    /// Fade the whole window, backdrop included. DWM applies the alpha when composing, so changing
+    /// it every frame costs next to nothing. Makes the window layered on first use.
+    /// </summary>
+    public static void SetWindowAlpha(IntPtr h, byte alpha)
+    {
+        const int GWL_EXSTYLE = -20;
+        const long WS_EX_LAYERED = 0x80000;
+        long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
+        if ((ex & WS_EX_LAYERED) == 0) SetWindowLongPtr(h, GWL_EXSTYLE, new IntPtr(ex | WS_EX_LAYERED));
+        SetLayeredWindowAttributes(h, 0, alpha, 0x2 /* LWA_ALPHA */);
+    }
+
     [DllImport("gdi32.dll")]
     public static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseW, int ellipseH);
 

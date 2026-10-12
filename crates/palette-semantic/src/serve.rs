@@ -50,6 +50,7 @@ pub struct Cfg {
     pub model: PathBuf,
     pub home: PathBuf,
     pub threads: usize,
+    pub device: crate::embed::Device,
     /// Tokens per chunk (the model truncates beyond this).
     pub doc_tokens: usize,
     /// Chunks kept per document.
@@ -177,7 +178,13 @@ impl Shared {
         };
         let mut g = self.emb.lock().unwrap_or_else(|e| e.into_inner());
         if g.is_none() {
-            *g = Some(Embedder::load(&self.cfg.model, self.cfg.threads)?);
+            let mut e = Embedder::load(&self.cfg.model, self.cfg.threads, self.cfg.device)?;
+            if e.device != embed::Device::Cpu {
+                // DirectML compiles kernels for each new input shape; do the query shape now, so
+                // the first real query does not wait for it.
+                let _ = e.embed(&[embed::query_prompt("warm up")], QUERY_TOKENS);
+            }
+            *g = Some(e);
         }
         let r = f(g.as_mut().unwrap());
         self.used_at.store(now_secs(), Ordering::Relaxed);

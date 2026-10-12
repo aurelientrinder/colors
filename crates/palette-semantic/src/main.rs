@@ -63,9 +63,10 @@ fn config(args: &[String]) -> Cfg {
         data,
         model: model_dir(args),
         home,
-        // Below-normal priority keeps this out of the way; 6 of 8 threads measured ~30% faster
-        // than 4 on the dev machine, and indexing is a one-off background rebuild.
-        threads: env_usize("PALETTE_SEM_THREADS").unwrap_or((cores * 3 / 4).max(2)),
+        // CPU threads, used only when no DirectML GPU is available (the GPU path needs one).
+        // Half the cores: a rebuild takes longer but leaves the machine quiet.
+        threads: env_usize("PALETTE_SEM_THREADS").unwrap_or((cores / 2).max(2)),
+        device: std::env::var("PALETTE_SEM_DEVICE").ok().and_then(|v| embed::Device::parse(&v)).unwrap_or(embed::Device::Gpu),
         doc_tokens: env_usize("PALETTE_SEM_DOC_TOKENS").unwrap_or(224),
         max_chunks: env_usize("PALETTE_SEM_MAX_CHUNKS").unwrap_or(8),
         max_docs: env_usize("PALETTE_SEM_MAX_DOCS").unwrap_or(40_000),
@@ -116,14 +117,14 @@ fn embed_test(cfg: &Cfg) {
     use std::time::Instant;
     eprintln!("model dir: {}  threads: {}", cfg.model.display(), cfg.threads);
     let t = Instant::now();
-    let mut e = match embed::Embedder::load(&cfg.model, cfg.threads) {
+    let mut e = match embed::Embedder::load(&cfg.model, cfg.threads, cfg.device) {
         Ok(e) => e,
         Err(err) => {
             eprintln!("load failed: {err}");
             std::process::exit(1);
         }
     };
-    eprintln!("loaded in {} ms; inputs: {:?}", t.elapsed().as_millis(), e.input_names());
+    eprintln!("loaded on {:?} in {} ms; inputs: {:?}", e.device, t.elapsed().as_millis(), e.input_names());
 
     let q = embed::query_prompt("how do I change the screen brightness");
     let docs = [
@@ -142,6 +143,13 @@ fn embed_test(cfg: &Cfg) {
     for (d, v) in docs.iter().zip(&dv) {
         let s: f32 = v.iter().zip(&qv).map(|(a, b)| a * b).sum();
         println!("{s:.3}  {}", &d[..d.len().min(60)]);
+    }
+
+    // Latency of a few different queries (a GPU recompiles for new input shapes).
+    for q in ["brightness", "where is my invoice from march", "screenshot", "how do I change the default browser on windows"] {
+        let t = Instant::now();
+        e.embed(&[embed::query_prompt(q)], 64).expect("embed query");
+        eprintln!("query {:?}: {} ms", q, t.elapsed().as_millis());
     }
 
     // Throughput on chunk-sized input: 16 chunks of ~900 characters, in groups of 8.
