@@ -115,23 +115,96 @@ public sealed partial class MainWindow : Window
         var vis = rows > 0 ? Visibility.Visible : Visibility.Collapsed;
         Divider.Visibility = vis;
         Footer.Visibility = vis;
-        int w = (int)(WidthDip * s), ph = (int)(h * s);
+        int w = (int)(WidthDip * s);
+        _contentPx = (int)(h * s);       // the visible panel; the window itself keeps its full size
+        // (growing a window shows unpainted black for a frame; a region just reveals more of it)
+        double fullDip = InputDip + DividerDip + (crate_MaxRows) * RowDip + PadDip + FooterDip;
+        int ph = (int)(fullDip * s);
 
-        int x, y;
         if (recenter)
         {
             Win32.GetCursorPos(out var c);
             var area = DisplayArea.GetFromPoint(new PointInt32(c.X, c.Y), DisplayAreaFallback.Nearest);
             var wa = area.WorkArea;
-            x = wa.X + (wa.Width - w) / 2;
-            y = wa.Y + (int)(wa.Height * 0.18);
+            ph = Math.Min(ph, wa.Height - (int)(wa.Height * 0.18) - (int)(24 * s));
+            int x = wa.X + (wa.Width - w) / 2;
+            int y = wa.Y + (int)(wa.Height * 0.18);
+            _aw.MoveAndResize(new RectInt32(x, y, w, ph));
         }
-        else
+        if (!_popRunning) ApplyShape(1);
+    }
+
+    private const int crate_MaxRows = 11;     // 8 instant + 3 related
+    private int _contentPx;
+
+    // ------------------------------------------------------------ shape + pop animation
+    //
+    // The window is clipped to a rounded rectangle with a window region. That gives corners far
+    // rrounder than DWM's fixed 8 px and hides any system border; DWM's own rounding is switched
+    // off. Opening "pops": the region and the content grow from 92% to full size with an ease-out
+    // while the content fades in.
+
+    private const double CornerDip = 22, PopMs = 230;
+    private readonly System.Diagnostics.Stopwatch _popClock = new();
+    private bool _popRunning;
+
+    private void StartPop()
+    {
+        if (!AnimationsOn)
         {
-            x = _aw.Position.X;
-            y = _aw.Position.Y;
+            ApplyShape(1);
+            return;
         }
-        _aw.MoveAndResize(new RectInt32(x, y, w, ph));
+        _popClock.Restart();
+        ApplyShape(0);
+        if (!_popRunning)
+        {
+            _popRunning = true;
+            CompositionTarget.Rendering += OnPopFrame;
+        }
+    }
+
+    private static readonly Windows.UI.ViewManagement.UISettings Ui = new();
+    private static bool AnimationsOn
+    {
+        get { try { return Ui.AnimationsEnabled; } catch { return true; } }
+    }
+
+    private void OnPopFrame(object? sender, object e)
+    {
+        double t = Math.Min(1, _popClock.Elapsed.TotalMilliseconds / PopMs);
+        ApplyShape(t);
+        if (t >= 1)
+        {
+            CompositionTarget.Rendering -= OnPopFrame;
+            _popRunning = false;
+        }
+    }
+
+    /// <param name="t">0 = start of the pop, 1 = finished.</param>
+    private void ApplyShape(double t)
+    {
+        double s = Scale;
+        int w = _aw.Size.Width, h = Math.Min(_contentPx, _aw.Size.Height);
+        if (w <= 0 || h <= 0) return;
+
+        double ease = 1 - Math.Pow(1 - t, 4);                 // ease-out quartic
+        double k = 0.92 + 0.08 * ease;                        // size, relative to the window
+        double alpha = Math.Clamp(t / 0.45, 0, 1);
+
+        double rw = w * k, rh = h * k;
+        double left = (w - rw) / 2, top = (h - rh) * 0.35;    // anchored a little above centre
+        int r = (int)(CornerDip * s * 2);                     // CreateRoundRectRgn takes the ellipse diameter
+        // Inset a few pixels: Windows paints a white hairline along the very edge of this window
+        // (the backdrop's frame highlight), inside the window and so not removable by styles alone.
+        int inset = (int)Math.Ceiling(2 * s);
+        var rgn = Win32.CreateRoundRectRgn((int)left + inset, (int)top + inset, (int)Math.Ceiling(left + rw) - inset, (int)Math.Ceiling(top + rh) - inset, r, r);
+        Win32.SetWindowRgn(_hwnd, rgn, true);
+
+        Root.Opacity = alpha;
+        RootXf.CenterX = w / s / 2;
+        RootXf.CenterY = h / s * 0.35;
+        RootXf.ScaleX = RootXf.ScaleY = k;
     }
 
     private IntPtr _previousForeground;   // the window that had focus before the palette opened
@@ -169,8 +242,19 @@ public sealed partial class MainWindow : Window
         _shownAt = DateTime.UtcNow;
         _visible = true;
         FooterStatus.Text = Native.SemanticStatus();
-        ShowAnim.Begin();
+        StartPop();
         _aw.Show();
+        // The presenter can put its frame styles back on Show; a frame is what Windows draws the
+        // white outline for, so take it off again every time.
+        var (st, ex) = Win32.StripFrame(_hwnd);
+        App.Log($"styles before strip: 0x{st:X} ex 0x{ex:X}");
+        // DWM can reset these when a window is hidden and shown again: re-apply every time so
+        // the popup keeps its rounded corners and never gets the square 1 px system border.
+        int round = 1, none = unchecked((int)0xFFFFFFFE);                   // 1 = DWMWCP_DONOTROUND (the region rounds)
+        Win32.DwmSetWindowAttribute(_hwnd, 33, ref round, sizeof(int));     // DWMWA_WINDOW_CORNER_PREFERENCE
+        Win32.DwmSetWindowAttribute(_hwnd, 34, ref none, sizeof(int));      // DWMWA_BORDER_COLOR = none
+        int ncOff = 1;                                                      // DWMNCRP_DISABLED: no frame, shadow or hairline
+        Win32.DwmSetWindowAttribute(_hwnd, 2, ref ncOff, sizeof(int));      // DWMWA_NCRENDERING_POLICY
         Win32.ForceForeground(_hwnd);
         Activate();
         Input.Focus(FocusState.Programmatic);

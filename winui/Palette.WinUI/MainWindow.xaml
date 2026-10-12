@@ -5,30 +5,10 @@
     xmlns:local="using:Palette"
     Title="PaletteWinUI">
 
-    <Grid x:Name="Root" RenderTransformOrigin="0.5,0">
+    <Grid x:Name="Root">
         <Grid.RenderTransform>
-            <TranslateTransform x:Name="RootShift" />
+            <CompositeTransform x:Name="RootXf" />
         </Grid.RenderTransform>
-        <Grid.Resources>
-            <Storyboard x:Name="ShowAnim">
-                <DoubleAnimation
-                    Storyboard.TargetName="Root"
-                    Storyboard.TargetProperty="Opacity"
-                    From="0"
-                    To="1"
-                    Duration="0:0:0.12" />
-                <DoubleAnimation
-                    Storyboard.TargetName="RootShift"
-                    Storyboard.TargetProperty="Y"
-                    From="8"
-                    To="0"
-                    Duration="0:0:0.16">
-                    <DoubleAnimation.EasingFunction>
-                        <CubicEase EasingMode="EaseOut" />
-                    </DoubleAnimation.EasingFunction>
-                </DoubleAnimation>
-            </Storyboard>
-        </Grid.Resources>
 
         <Grid.RowDefinitions>
             <RowDefinition Height="64" />

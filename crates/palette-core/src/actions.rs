@@ -40,26 +40,43 @@ pub static QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::At
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
+/// Scheduled task that starts Palette at sign-in. A task rather than a Run-key entry because
+/// Windows holds Run-key apps back for a minute or two after sign-in; a logon task starts at once.
+const TASK: &str = "Palette";
+
 /// Is Palette registered to start when you sign in?
 pub fn autostart_enabled() -> bool {
-    Command::new("reg.exe")
-        .args(["query", RUN_KEY, "/v", "Palette"])
+    Command::new("schtasks.exe")
+        .args(["/query", "/tn", TASK])
         .creation_flags(NO_WINDOW)
         .output()
         .is_ok_and(|o| o.status.success())
 }
 
-/// Register or remove the per-user autostart entry (HKCU, no admin needed).
+/// Register or remove the per-user logon task (no admin needed through the ScheduledTasks
+/// module; `schtasks /create /sc onlogon` would demand elevation).
 pub fn set_autostart(enable: bool) -> bool {
+    // The old Run-key entry, from earlier versions, would start a second (immediately exiting) copy.
+    let _ = Command::new("reg.exe").args(["delete", RUN_KEY, "/v", "Palette", "/f"]).creation_flags(NO_WINDOW).output();
     let out = if enable {
         let Ok(exe) = std::env::current_exe() else { return false };
-        Command::new("reg.exe")
-            .args(["add", RUN_KEY, "/v", "Palette", "/t", "REG_SZ", "/d", &format!("\"{}\"", exe.display()), "/f"])
+        let exe = exe.display().to_string().replace('\'', "''");
+        let dir = std::path::Path::new(&exe).parent().map(|p| p.display().to_string()).unwrap_or_default();
+        let script = format!(
+            "$u = \"$env:USERDOMAIN\\$env:USERNAME\"; \
+             Register-ScheduledTask -TaskName '{TASK}' -Force -ErrorAction Stop \
+             -Action (New-ScheduledTaskAction -Execute '{exe}' -WorkingDirectory '{dir}') \
+             -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $u) \
+             -Principal (New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited) \
+             -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew) | Out-Null"
+        );
+        Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .creation_flags(NO_WINDOW)
             .output()
     } else {
-        Command::new("reg.exe")
-            .args(["delete", RUN_KEY, "/v", "Palette", "/f"])
+        Command::new("schtasks.exe")
+            .args(["/delete", "/tn", TASK, "/f"])
             .creation_flags(NO_WINDOW)
             .output()
     };

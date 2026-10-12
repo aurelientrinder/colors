@@ -39,7 +39,7 @@ works exactly as before, just without "Related" results.
 | `Esc` or click away | hide |
 | `2*(3+4)` | calculator, Enter copies the result |
 | `> ipconfig` | run a command in cmd |
-| `Palette: Run at startup` | toggle start-at-sign-in (HKCU Run, no admin) |
+| `Palette: Run at startup` | toggle start-at-sign-in (per-user logon task "Palette", no admin; starts right away, unlike Run-key apps that Windows delays) |
 | `Palette: Reindex files` | refresh the file index now |
 | `Palette: Quit` | exit |
 | tray icon: click | show / hide the palette |

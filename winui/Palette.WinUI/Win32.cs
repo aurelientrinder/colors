@@ -55,6 +55,47 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr h, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+    /// <summary>
+    /// Make the window a bare popup: no caption, resize frame or edges, so Windows draws no border
+    /// line of any kind around it. Returns the (style, exstyle) it had before, for diagnostics.
+    /// </summary>
+    public static (long style, long ex) StripFrame(IntPtr h)
+    {
+        const int GWL_STYLE = -16, GWL_EXSTYLE = -20;
+        const long WS_POPUP = 0x80000000, WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000,
+            WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000, WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000;
+        const long WS_EX_DLGMODALFRAME = 0x1, WS_EX_WINDOWEDGE = 0x100, WS_EX_CLIENTEDGE = 0x200, WS_EX_STATICEDGE = 0x20000;
+        const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20;
+
+        long style = GetWindowLongPtr(h, GWL_STYLE).ToInt64();
+        long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
+        long newStyle = (style & ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_BORDER | WS_DLGFRAME)) | WS_POPUP;
+        long newEx = ex & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
+        if (newStyle != style || newEx != ex)
+        {
+            SetWindowLongPtr(h, GWL_STYLE, new IntPtr(newStyle));
+            SetWindowLongPtr(h, GWL_EXSTYLE, new IntPtr(newEx));
+            SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+        return (style, ex);
+    }
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseW, int ellipseH);
+
+    /// <summary>The system owns the region afterwards.</summary>
+    [DllImport("user32.dll")]
+    public static extern int SetWindowRgn(IntPtr hWnd, IntPtr rgn, bool redraw);
+
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
 
