@@ -20,7 +20,7 @@ pub struct Response {
 
 const CHUNK: usize = 16 * 1024;
 const TOP_FILES: usize = 40;
-pub const MAX_HITS: usize = 8;
+pub const MAX_HITS: usize = 5;
 
 /// Search worker: owns the narrowing cache, runs off the UI thread, always
 /// skips straight to the newest request when keystrokes pile up.
@@ -129,6 +129,26 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
                 let prefix = prefix_bonus(&it.name, &lq);
                 h.score = s as i32 + prefix + h.kind.bonus() + usage.bonus(&h.key());
                 hits.push(h);
+            }
+        }
+    }
+
+    // Open windows, matched on their title and their app's name ("chrome" finds every Chrome
+    // window). Listed fresh each time: windows open, close and retitle themselves constantly.
+    {
+        let mut m = Matcher::new(Config::DEFAULT);
+        let mut buf = Vec::new();
+        for w in crate::wins::list() {
+            let hay = if w.app.is_empty() { w.title.clone() } else { format!("{} {}", w.title, w.app) };
+            if let Some(s) = pattern.score(Utf32Str::new(&hay, &mut buf), &mut m) {
+                let prefix = prefix_bonus(&w.title, &lq).max(prefix_bonus(&w.app, &lq));
+                hits.push(Hit {
+                    subtitle: if w.app.is_empty() { "Open window".into() } else { format!("Open window \u{b7} {}", w.app) },
+                    title: w.title,
+                    kind: Kind::Window,
+                    action: Action::Focus { hwnd: w.hwnd, icon: w.icon },
+                    score: s as i32 + prefix + Kind::Window.bonus(),
+                });
             }
         }
     }

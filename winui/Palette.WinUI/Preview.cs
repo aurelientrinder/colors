@@ -17,13 +17,14 @@ namespace Palette;
 /// <summary>
 /// Preview of the selected result, shown automatically when it is a file: images and the first
 /// page of PDFs are rendered, text, code and Word documents show their opening text, anything
-/// else gets the shell's thumbnail. Loading is asynchronous and dropped as soon as the selection
-/// moves on.
+/// else gets the shell's thumbnail. It opens inline, under the selected row, pushing the rows below
+/// it down. Loading is asynchronous and dropped as soon as the selection moves on.
 /// </summary>
 public sealed partial class MainWindow
 {
     private string? _pvPath;      // file the preview shows (or is loading)
     private int _pvVersion;       // bumped on every change; stale loads check it and stop
+    private int _pvRow;           // the row the preview opens under (kept while it closes)
 
     private const long MaxImageBytes = 80L << 20;
     private const int MaxTextBytes = 24 << 10;
@@ -64,7 +65,12 @@ public sealed partial class MainWindow
     {
         int i = ResultsList.SelectedIndex;
         HitVm? vm = _visible && i >= 0 && i < Items.Count ? Items[i] : null;
-        string? path = _sideDip > 0 ? vm?.Path : null;
+        string? path = vm?.Path;
+        if (path != null && _pvRow != i)
+        {
+            _pvRow = i;
+            if (!_animating) ApplyShape();
+        }
         if (path == _pvPath)
         {
             if (path != null) SetPreviewOpen(true);
@@ -101,7 +107,7 @@ public sealed partial class MainWindow
         PreviewScroll.Visibility = Visibility.Collapsed;
         PreviewText.Text = "";
         PreviewNote.Text = "";
-        PreviewName.Text = PreviewMeta.Text = PreviewFolder.Text = "";
+        PreviewMeta.Text = "";
     }
 
     private enum PvKind { Missing, Cloud, Text, Image, Pdf, Other }
@@ -111,8 +117,6 @@ public sealed partial class MainWindow
     private async Task LoadPreview(string path, HitVm vm, int v)
     {
         ClearPreview();
-        PreviewName.Text = System.IO.Path.GetFileName(path);
-        PreviewFolder.Text = System.IO.Path.GetDirectoryName(path) ?? "";
         ShowIcon(vm.Icon);
 
         // Let a burst of arrow presses settle before touching the disk.
@@ -174,7 +178,7 @@ public sealed partial class MainWindow
         PreviewIcon.Visibility = Visibility.Collapsed;
     }
 
-    private int PreviewPx => (int)(2 * _sideDip * Scale);
+    private int PreviewPx => (int)(WidthDip * Scale);
 
     private async Task<bool> ShowImage(string path, int v)
     {

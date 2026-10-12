@@ -11,6 +11,7 @@ pub mod scan;
 pub mod search;
 pub mod semantic;
 pub mod usage;
+pub mod wins;
 
 use std::sync::Arc;
 

@@ -55,7 +55,7 @@ pub fn thresholds() -> Thresholds {
 }
 
 /// Rows the semantic tier may add under the instant results.
-pub const MAX_RELATED: usize = 3;
+pub const MAX_RELATED: usize = 2;
 
 #[derive(Deserialize)]
 struct RawReply {

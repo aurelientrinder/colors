@@ -10,6 +10,8 @@ pub enum Kind {
     Command,
     Calc,
     Web,
+    /// An open window (the switcher).
+    Window,
 }
 
 impl Kind {
@@ -22,11 +24,15 @@ impl Kind {
             Kind::Command => "Command",
             Kind::Calc => "Calculator",
             Kind::Web => "Web",
+            Kind::Window => "Window",
         }
     }
     /// Ranking nudge so apps beat same-scoring files.
     pub fn bonus(self) -> i32 {
         match self {
+            // Switching to the copy that is already open beats starting another, even one launched
+            // often (app 150 plus up to ~200 of frecency).
+            Kind::Window => 360,
             Kind::App => 150,
             Kind::Setting => 60,
             Kind::Command => 40,
@@ -47,6 +53,9 @@ pub enum Action {
     Copy(String),
     /// Built-in palette command (lock, sleep, quit, ...).
     Builtin(String),
+    /// Bring an open window to the front. `icon` is the app it belongs to (exe path or
+    /// shell:AppsFolder\<AUMID>), for its icon.
+    Focus { hwnd: isize, icon: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -67,6 +76,7 @@ impl Hit {
             Action::Run(s) => format!("run:{s}"),
             Action::Copy(_) => format!("copy:{}", self.title),
             Action::Builtin(s) => format!("builtin:{s}"),
+            Action::Focus { hwnd, .. } => format!("window:{hwnd}"),
         }
     }
 

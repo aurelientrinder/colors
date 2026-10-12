@@ -91,6 +91,7 @@ pub fn execute(hit: &Hit, copy: &dyn Fn(&str)) -> bool {
             let _ = Command::new("cmd.exe").args(["/c", "start", "", "cmd.exe", "/k", cmd]).spawn();
         }
         Action::Copy(text) => copy(text),
+        Action::Focus { hwnd, .. } => crate::wins::focus(*hwnd),
         Action::Builtin(id) => match id.as_str() {
             "lock" => quiet("rundll32.exe", &["user32.dll,LockWorkStation"]),
             "sleep" => quiet("rundll32.exe", &["powrprof.dll,SetSuspendState", "0,1,0"]),

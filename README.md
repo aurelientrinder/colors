@@ -32,11 +32,12 @@ works exactly as before, just without "Related" results.
 
 | Input | Does |
 |---|---|
-| type | fuzzy search apps, settings, commands, files/folders |
+| type | fuzzy search apps, settings, commands, files/folders, and open windows |
 | `Up` / `Down` (or `Ctrl+N` / `Ctrl+P`) | move selection |
 | `Enter` | open / run |
 | `Ctrl+Enter` | reveal file in Explorer |
 | `Esc` or click away | hide |
+| part of a window title or app name | switch to that open window (restored if minimised); an open window ranks above launching its app again |
 | `2*(3+4)` | calculator, Enter copies the result |
 | `> ipconfig` | run a command in cmd |
 | `Palette: Run at startup` | toggle start-at-sign-in (per-user logon task "Palette", no admin; starts right away, unlike Run-key apps that Windows delays) |

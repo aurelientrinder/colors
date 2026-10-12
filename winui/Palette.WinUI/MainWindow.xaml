@@ -36,13 +36,14 @@
             x:Name="Stage"
             Width="680"
             HorizontalAlignment="Left"
-            VerticalAlignment="Top">
+            VerticalAlignment="Bottom">
 
+        <!-- bottom-anchored: key hints, results (best match last), divider, search field -->
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="64" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Border
@@ -51,7 +52,7 @@
             IsHitTestVisible="False" />
 
         <!-- search field -->
-        <Grid Padding="22,0,18,0">
+        <Grid Grid.Row="3" Padding="22,0,18,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -91,27 +92,37 @@
 
         <Border
             x:Name="Divider"
-            Grid.Row="1"
+            Grid.Row="2"
             Height="1"
             Background="{ThemeResource DividerStrokeColorDefaultBrush}"
             Visibility="Collapsed" />
 
-        <!-- results | preview -->
-        <Grid x:Name="Body" Grid.Row="2" Height="0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="680" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <!-- results, with the preview opening inline under the selected row -->
+        <Grid x:Name="Body" Grid.Row="1" Height="0">
 
+        <!-- The list is flipped (and each row flipped back) so the best match sits next to the
+             search field and the rest stack upward from it. -->
         <ListView
             x:Name="ResultsList"
             Margin="8,6,8,6"
-            VerticalAlignment="Top"
+            VerticalAlignment="Stretch"
+            RenderTransformOrigin="0.5,0.5"
+            ContainerContentChanging="OnContainerContentChanging"
             IsItemClickEnabled="True"
             ItemClick="OnItemClick"
             ItemsSource="{x:Bind Items}"
             SelectionChanged="OnSelectionChanged"
+            ScrollViewer.VerticalScrollBarVisibility="Hidden"
+            ScrollViewer.VerticalScrollMode="Disabled"
             SelectionMode="Single">
+            <!-- Rows arriving later (Related) must not slide or fade in: the built-in item
+                 transitions animate them from the wrong side of the flipped list. -->
+            <ListView.ItemContainerTransitions>
+                <TransitionCollection />
+            </ListView.ItemContainerTransitions>
+            <ListView.RenderTransform>
+                <ScaleTransform ScaleY="-1" />
+            </ListView.RenderTransform>
             <ListView.ItemContainerStyle>
                 <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
                     <Setter Property="MinHeight" Value="52" />
@@ -121,7 +132,10 @@
             </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="local:HitVm">
-                    <Grid Height="52" ColumnSpacing="14">
+                    <Grid Height="52" ColumnSpacing="14" RenderTransformOrigin="0.5,0.5">
+                        <Grid.RenderTransform>
+                            <ScaleTransform ScaleY="-1" />
+                        </Grid.RenderTransform>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="34" />
                             <ColumnDefinition Width="*" />
@@ -179,12 +193,12 @@
 
         <Border
             x:Name="PreviewPane"
-            Grid.Column="1"
-            Padding="14,12,14,12"
-            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-            BorderThickness="1,0,0,0"
-            Opacity="0">
-            <Grid RowSpacing="12">
+            Height="224"
+            Margin="14,0,14,0"
+            VerticalAlignment="Bottom"
+            Opacity="0"
+            Visibility="Collapsed">
+            <Grid RowSpacing="6">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
@@ -236,23 +250,14 @@
                     </Grid>
                 </Border>
 
-                <StackPanel Grid.Row="1" Spacing="2">
-                    <TextBlock
-                        x:Name="PreviewName"
-                        FontSize="14"
-                        FontWeight="SemiBold"
-                        TextTrimming="CharacterEllipsis" />
-                    <TextBlock
-                        x:Name="PreviewMeta"
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextTrimming="CharacterEllipsis" />
-                    <TextBlock
-                        x:Name="PreviewFolder"
-                        FontSize="12"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        TextTrimming="CharacterEllipsis" />
-                </StackPanel>
+                <!-- the row above already shows the name and folder -->
+                <TextBlock
+                    x:Name="PreviewMeta"
+                    Grid.Row="1"
+                    Margin="4,0,4,0"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextTrimming="CharacterEllipsis" />
             </Grid>
         </Border>
         </Grid>
@@ -260,12 +265,12 @@
         <!-- key hints -->
         <Border
             x:Name="Footer"
-            Grid.Row="3"
+            Grid.Row="0"
             Height="36"
             Padding="18,0"
             Background="{ThemeResource SubtleFillColorTertiaryBrush}"
             BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-            BorderThickness="0,1,0,0"
+            BorderThickness="0,0,0,1"
             Visibility="Collapsed">
             <Grid>
             <Grid.ColumnDefinitions>

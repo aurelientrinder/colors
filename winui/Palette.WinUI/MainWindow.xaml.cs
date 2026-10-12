@@ -166,26 +166,24 @@ public sealed partial class MainWindow : Window
             Win32.GetCursorPos(out var c);
             var area = DisplayArea.GetFromPoint(new PointInt32(c.X, c.Y), DisplayAreaFallback.Nearest);
             var wa = area.WorkArea;
-            // The preview widens the panel by SideDip on each side; narrow screens get less, and
-            // too little room means no preview at all.
-            double side = Math.Clamp((wa.Width / s - WidthDip - 48) / 2, 0, SideDip);
-            _sideDip = side >= MinSideDip ? side : 0;
             // The client area (XAML) is smaller than the window by what is left of its frame, and the
             // acrylic backdrop is laid out from the window's corner rather than the client's, so it
             // stops that offset short of the client's right and bottom edges: add both.
             var (ox, oy, cw, ch) = Win32.ClientArea(_hwnd);
             int ncw = Math.Max(0, _aw.Size.Width - cw) + ox, nch = Math.Max(0, _aw.Size.Height - ch) + oy;
-            int w = (int)((WidthDip + 2 * _sideDip) * s) + ncw;
-            int ph = (int)((InputDip + DividerDip + crate_MaxRows * RowDip + PadDip + FooterDip) * s) + nch;
-            ph = Math.Min(ph, wa.Height - (int)(wa.Height * 0.18) - (int)(24 * s));
+            int w = (int)(WidthDip * s) + ncw;
+            int ph = (int)((InputDip + DividerDip + crate_MaxRows * RowDip + PadDip + PreviewDip + FooterDip) * s) + nch;
+            // Anchored to the bottom of the work area (above the taskbar), with the panel growing upward.
+            int gap = (int)(24 * s);
+            ph = Math.Min(ph, wa.Height - 2 * gap);
             int x = wa.X + (wa.Width - w) / 2;
-            int y = wa.Y + (int)(wa.Height * 0.18);
+            int y = wa.Y + wa.Height - gap - ph;
             _aw.MoveAndResize(new RectInt32(x, y, w, ph));
         }
         if (!_animating) ApplyShape();
     }
 
-    private const int crate_MaxRows = 11;     // 8 instant + 3 related
+    private const int crate_MaxRows = 7;      // 5 instant + 2 related
     private bool _holdHeight;                 // typing: the list height may grow but not shrink
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settle;
 
@@ -208,10 +206,14 @@ public sealed partial class MainWindow : Window
         _settle.Start();
     }
 
-    /// <summary>Select the first row, touching the selection only when it is not already there.</summary>
+    /// <summary>
+    /// Select the first row once something is typed, so Enter opens the best match. With an empty
+    /// query (the most-used list on open) nothing is selected until an arrow key picks a row.
+    /// Touches the selection only when it is not already as wanted.
+    /// </summary>
     private void SelectFirst()
     {
-        int want = Items.Count > 0 ? 0 : -1;
+        int want = Items.Count > 0 && !string.IsNullOrWhiteSpace(Input.Text) ? 0 : -1;
         if (ResultsList.SelectedIndex != want) ResultsList.SelectedIndex = want;
     }
     private double _listBodyDip;              // height the result rows need
@@ -221,14 +223,12 @@ public sealed partial class MainWindow : Window
     //
     // The window is clipped to a rounded rectangle with a window region. That gives corners far
     // rounder than DWM's fixed 8 px and hides any system border; DWM's own rounding is switched
-    // off. Opening "pops": the region and the content grow from 92% to full size with an ease-out
-    // while the content fades in. Selecting a file widens the panel on both sides to make room
-    // for its preview, and narrows it again when the selection moves to something else.
+    // off. Opening "pops": the window fades in while the content grows from 92% to full size with
+    // an ease-out. Selecting a file opens its preview under its row: the rows below slide down and
+    // the panel grows, and both reverse when the selection moves to something else.
 
     private const double CornerDip = 22, PopMs = 230, PreviewMs = 200, ListMs = 45;
-    private const double SideDip = 210, MinSideDip = 140;     // preview width = 2 * side
-    private const double PreviewBodyDip = 7 * RowDip + PadDip; // the panel is at least this tall with a preview
-    private double _sideDip = SideDip;
+    private const double PreviewDip = 234;    // the inline preview, with its gaps
     private readonly System.Diagnostics.Stopwatch _popClock = new();
     private readonly System.Diagnostics.Stopwatch _frameClock = System.Diagnostics.Stopwatch.StartNew();
     private double _popT = 1;                 // pop progress, 0..1
@@ -323,11 +323,17 @@ public sealed partial class MainWindow : Window
         double u = _pvU;
         double p = u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(-2 * u + 2, 3) / 2;
         bool rows = Items.Count > 0;
-        double bodyDip = rows ? Math.Max(_listShownDip, PreviewBodyDip * p) : 0;
+        double pvDip = rows ? PreviewDip * p : 0;
+        double bodyDip = rows ? _listShownDip + pvDip : 0;
         Body.Height = bodyDip;
-        double side = _sideDip * (1 - p);
-        Stage.Margin = new Thickness(side, 0, 0, 0);
-        Stage.Width = WidthDip + 2 * _sideDip * p;
+        // The preview sits under its row; the rows below slide down to make room. It is clipped to
+        // the room made so far, so it unrolls rather than overlapping the rows below.
+        ShiftRows(pvDip);
+        // The list is flipped, so "under" a row (in list order) is visually above it: the pane is
+        // measured from the bottom of the body and unrolls upward from the row.
+        PreviewPane.Margin = new Thickness(14, 0, 14, 6 + (_pvRow + 1) * RowDip + 4);
+        double room = Math.Max(0, pvDip - 8);
+        PreviewPane.Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 224 - room, 4096, room) };
         PreviewPane.Opacity = p * p;
         PreviewPane.Visibility = p > 0 ? Visibility.Visible : Visibility.Collapsed;
 
@@ -340,10 +346,12 @@ public sealed partial class MainWindow : Window
         double alpha = Math.Clamp(_popT / 0.45, 0, 1);
 
         double h = Math.Min((InputDip + (rows ? DividerDip + bodyDip + FooterDip : 0)) * s, wh);
-        double x0 = side * s, cx = (_sideDip + WidthDip / 2) * s;   // the panel's centre never moves
+        double x0 = 0, cx = WidthDip / 2 * s;
         // Outer edges of the panel, in window pixels. The region is cut a pixel inside them, and the
         // shadow window paints an antialiased rim over the region's stair-stepped edge.
-        int rl = (int)Math.Round(x0) + ox, rt = oy, rr = (int)Math.Round(2 * cx - x0) + ox, rb = (int)Math.Round(h) + oy;
+        // The panel is anchored to the bottom of the client area and grows upward.
+        int rl = (int)Math.Round(x0) + ox, rr = (int)Math.Round(2 * cx - x0) + ox, rb = wh + oy;
+        int rt = rb - (int)Math.Round(h);
         double radius = CornerDip * s;
         if ((rl, rt, rr, rb) != _region)
         {
@@ -363,9 +371,32 @@ public sealed partial class MainWindow : Window
             Win32.SetWindowAlpha(_hwnd, a);
         }
         RootXf.CenterX = cx / s;
-        RootXf.CenterY = h / s * 0.35;
+        RootXf.CenterY = (wh - h * 0.35) / s;
         RootXf.ScaleX = RootXf.ScaleY = k;
     }
+
+    private double _rowShift;                 // how far the rows under the preview are pushed down
+
+    /// <summary>Push the rows below the preview's row down by <paramref name="dip"/>.</summary>
+    private void ShiftRows(double dip)
+    {
+        _rowShift = dip;
+        for (int i = 0; i < Items.Count; i++)
+        {
+            if (ResultsList.ContainerFromIndex(i) is UIElement c) ShiftRow(c, i);
+        }
+    }
+
+    private void ShiftRow(UIElement c, int index)
+    {
+        double y = index > _pvRow ? _rowShift : 0;
+        if (c.RenderTransform is TranslateTransform t) t.Y = y;
+        else if (y != 0) c.RenderTransform = new TranslateTransform { Y = y };
+    }
+
+    /// <summary>Rows realised later (the list grew) take the current shift too.</summary>
+    private void OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args) =>
+        ShiftRow(args.ItemContainer, args.ItemIndex);
 
     private (int, int, int, int) _region;     // the window region last set
     private int _windowAlpha = -1;            // the window alpha last set
@@ -554,11 +585,13 @@ public sealed partial class MainWindow : Window
         switch (e.Key)
         {
             case VirtualKey.Down when n > 0:
-                ResultsList.SelectedIndex = (ResultsList.SelectedIndex + 1) % n;
+                // The list is drawn upside down: index 0 is the row next to the search field, so
+                // Up (visually up) goes to a higher index and Down comes back toward the field.
+                ResultsList.SelectedIndex = ResultsList.SelectedIndex < 0 ? 0 : (ResultsList.SelectedIndex - 1 + n) % n;
                 e.Handled = true;
                 break;
             case VirtualKey.Up when n > 0:
-                ResultsList.SelectedIndex = (ResultsList.SelectedIndex - 1 + n) % n;
+                ResultsList.SelectedIndex = ResultsList.SelectedIndex < 0 ? 0 : (ResultsList.SelectedIndex + 1) % n;
                 e.Handled = true;
                 break;
             case VirtualKey.Enter:

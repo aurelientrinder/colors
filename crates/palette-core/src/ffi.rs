@@ -256,8 +256,11 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
             return 1;
         }
     }
-    if let Ok(mut u) = e.usage.lock() {
-        u.record(&hit);
+    // Windows come and go: remembering one would leave a dead row in the most-used list.
+    if hit.kind != crate::model::Kind::Window {
+        if let Ok(mut u) = e.usage.lock() {
+            u.record(&hit);
+        }
     }
     // Clipboard is the shell's job (it reads `copy_text` from the JSON).
     let hide = actions::execute(&hit, &|_| {});
