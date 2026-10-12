@@ -10,6 +10,14 @@
             <CompositeTransform x:Name="RootXf" />
         </Grid.RenderTransform>
 
+        <!-- The window is wide enough for the list plus a preview; Stage is the visible panel. It is
+             centred and list-wide, and widens on both sides when a file is selected. -->
+        <Grid
+            x:Name="Stage"
+            Width="680"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top">
+
         <Grid.RowDefinitions>
             <RowDefinition Height="64" />
             <RowDefinition Height="Auto" />
@@ -62,14 +70,21 @@
             Background="{ThemeResource DividerStrokeColorDefaultBrush}"
             Visibility="Collapsed" />
 
-        <!-- results -->
+        <!-- results | preview -->
+        <Grid x:Name="Body" Grid.Row="2" Height="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="680" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
         <ListView
             x:Name="ResultsList"
-            Grid.Row="2"
             Margin="8,6,8,6"
+            VerticalAlignment="Top"
             IsItemClickEnabled="True"
             ItemClick="OnItemClick"
             ItemsSource="{x:Bind Items}"
+            SelectionChanged="OnSelectionChanged"
             SelectionMode="Single">
             <ListView.ItemContainerStyle>
                 <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
@@ -135,6 +150,86 @@
             </ListView.ItemTemplate>
         </ListView>
 
+        <Border
+            x:Name="PreviewPane"
+            Grid.Column="1"
+            Padding="14,12,14,12"
+            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+            BorderThickness="1,0,0,0"
+            Opacity="0">
+            <Grid RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border
+                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    DoubleTapped="OnPreviewDoubleTapped">
+                    <Grid>
+                        <Image
+                            x:Name="PreviewIcon"
+                            Width="72"
+                            Height="72"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
+                        <Image
+                            x:Name="PreviewImage"
+                            Margin="10"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Stretch="Uniform"
+                            Visibility="Collapsed" />
+                        <ScrollViewer
+                            x:Name="PreviewScroll"
+                            AllowFocusOnInteraction="False"
+                            HorizontalScrollBarVisibility="Auto"
+                            IsTabStop="False"
+                            Visibility="Collapsed">
+                            <TextBlock
+                                x:Name="PreviewText"
+                                Padding="14,12,14,12"
+                                FontFamily="Cascadia Mono, Consolas"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                LineHeight="18" />
+                        </ScrollViewer>
+                        <TextBlock
+                            x:Name="PreviewNote"
+                            Margin="16,0,16,18"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Bottom"
+                            FontSize="12"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </Grid>
+                </Border>
+
+                <StackPanel Grid.Row="1" Spacing="2">
+                    <TextBlock
+                        x:Name="PreviewName"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        x:Name="PreviewMeta"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        x:Name="PreviewFolder"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        </Grid>
+
         <!-- key hints -->
         <Border
             x:Name="Footer"
@@ -191,5 +286,6 @@
                 TextTrimming="CharacterEllipsis" />
             </Grid>
         </Border>
+        </Grid>
     </Grid>
 </Window>

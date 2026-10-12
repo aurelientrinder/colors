@@ -60,7 +60,8 @@ public static class Native
         [property: JsonPropertyName("kind")] string Kind,
         [property: JsonPropertyName("icon_key")] string? IconKey,
         [property: JsonPropertyName("copy_text")] string? CopyText,
-        [property: JsonPropertyName("related")] bool Related = false);
+        [property: JsonPropertyName("related")] bool Related = false,
+        [property: JsonPropertyName("path")] string? Path = null);
 
     /// <summary>Semantic rows to append after the instant results; Base is the index of the first.</summary>
     public sealed record Appended(

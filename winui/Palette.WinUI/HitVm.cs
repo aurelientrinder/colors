@@ -22,6 +22,7 @@ public sealed class HitVm : INotifyPropertyChanged
         Kind = h.Related ? "Related" : h.Kind;
         IconKey = h.IconKey;
         CopyText = h.CopyText;
+        Path = h.Path;
         // Calculator / web rows echo the query and related rows matched on meaning, not letters:
         // highlighting either is just noise.
         Query = h.Related || h.Kind is "Calculator" or "Web" ? "" : query;
@@ -49,13 +50,15 @@ public sealed class HitVm : INotifyPropertyChanged
 
     /// <summary>Would this row look identical to <paramref name="o"/>? (Then the list can keep it.)</summary>
     public bool SameRow(HitVm o) =>
-        Title == o.Title && Subtitle == o.Subtitle && Kind == o.Kind && IconKey == o.IconKey && Query == o.Query;
+        Title == o.Title && Subtitle == o.Subtitle && Kind == o.Kind && IconKey == o.IconKey && Query == o.Query && Path == o.Path;
 
     public string Title { get; }
     public string Subtitle { get; }
     public string Kind { get; }
     public string? IconKey { get; }
     public string? CopyText { get; }
+    /// <summary>Full path when the row is a file (it gets a preview).</summary>
+    public string? Path { get; }
     public string Query { get; }
     public string Glyph { get; }
     public Brush TileBrush { get; }

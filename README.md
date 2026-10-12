@@ -48,6 +48,10 @@ works exactly as before, just without "Related" results.
 New tray icons start in Windows' overflow area; drag it onto the taskbar to pin it.
 Closing the palette with `Esc` or the hotkey returns focus to the window you were in.
 
+Selecting a file widens the palette with a preview: images, the first page of PDFs, the
+opening text of text, code and Word files, otherwise Windows' thumbnail, plus size and date.
+Online-only cloud files are not read (that would download them). Double-click it to open.
+
 Anything you launch is remembered and boosted next time (frecency).
 
 ## How it works

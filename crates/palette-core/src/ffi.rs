@@ -52,6 +52,8 @@ struct HitJson<'a> {
     copy_text: Option<&'a str>,
     /// True for rows found by meaning rather than by name.
     related: bool,
+    /// Full path of a file hit; the shell previews it.
+    path: Option<&'a str>,
 }
 
 fn hit_json(h: &Hit, related: bool) -> HitJson<'_> {
@@ -65,6 +67,10 @@ fn hit_json(h: &Hit, related: bool) -> HitJson<'_> {
             _ => None,
         },
         related,
+        path: match (&h.action, h.kind) {
+            (Action::Open(p), crate::model::Kind::File) => Some(p.as_str()),
+            _ => None,
+        },
     }
 }
 

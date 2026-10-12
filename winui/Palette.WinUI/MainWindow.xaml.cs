@@ -111,57 +111,88 @@ public sealed partial class MainWindow : Window
     {
         double s = Scale;
         int rows = Items.Count;
-        double h = InputDip + (rows > 0 ? DividerDip + rows * RowDip + PadDip + FooterDip : 0);
         var vis = rows > 0 ? Visibility.Visible : Visibility.Collapsed;
         Divider.Visibility = vis;
         Footer.Visibility = vis;
-        int w = (int)(WidthDip * s);
-        _contentPx = (int)(h * s);       // the visible panel; the window itself keeps its full size
-        // (growing a window shows unpainted black for a frame; a region just reveals more of it)
-        double fullDip = InputDip + DividerDip + (crate_MaxRows) * RowDip + PadDip + FooterDip;
-        int ph = (int)(fullDip * s);
+        _listBodyDip = rows > 0 ? rows * RowDip + PadDip : 0;
 
         if (recenter)
         {
+            // The window keeps one full size (list + preview, all rows); the region shows the
+            // visible panel. Growing a window shows unpainted black for a frame; a region just
+            // reveals more of it.
             Win32.GetCursorPos(out var c);
             var area = DisplayArea.GetFromPoint(new PointInt32(c.X, c.Y), DisplayAreaFallback.Nearest);
             var wa = area.WorkArea;
+            // The preview widens the panel by SideDip on each side; narrow screens get less, and
+            // too little room means no preview at all.
+            double side = Math.Clamp((wa.Width / s - WidthDip - 48) / 2, 0, SideDip);
+            _sideDip = side >= MinSideDip ? side : 0;
+            int w = (int)((WidthDip + 2 * _sideDip) * s);
+            int ph = (int)((InputDip + DividerDip + crate_MaxRows * RowDip + PadDip + FooterDip) * s);
             ph = Math.Min(ph, wa.Height - (int)(wa.Height * 0.18) - (int)(24 * s));
             int x = wa.X + (wa.Width - w) / 2;
             int y = wa.Y + (int)(wa.Height * 0.18);
             _aw.MoveAndResize(new RectInt32(x, y, w, ph));
         }
-        if (!_popRunning) ApplyShape(1);
+        if (!_animating) ApplyShape();
     }
 
     private const int crate_MaxRows = 11;     // 8 instant + 3 related
-    private int _contentPx;
+    private double _listBodyDip;              // height the result rows need
 
-    // ------------------------------------------------------------ shape + pop animation
+    // ------------------------------------------------------------ shape + animations
     //
     // The window is clipped to a rounded rectangle with a window region. That gives corners far
-    // rrounder than DWM's fixed 8 px and hides any system border; DWM's own rounding is switched
+    // rounder than DWM's fixed 8 px and hides any system border; DWM's own rounding is switched
     // off. Opening "pops": the region and the content grow from 92% to full size with an ease-out
-    // while the content fades in.
+    // while the content fades in. Selecting a file widens the panel on both sides to make room
+    // for its preview, and narrows it again when the selection moves to something else.
 
-    private const double CornerDip = 22, PopMs = 230;
+    private const double CornerDip = 22, PopMs = 230, PreviewMs = 200;
+    private const double SideDip = 210, MinSideDip = 140;     // preview width = 2 * side
+    private const double PreviewBodyDip = 7 * RowDip + PadDip; // the panel is at least this tall with a preview
+    private double _sideDip = SideDip;
     private readonly System.Diagnostics.Stopwatch _popClock = new();
-    private bool _popRunning;
+    private readonly System.Diagnostics.Stopwatch _frameClock = System.Diagnostics.Stopwatch.StartNew();
+    private double _popT = 1;                 // pop progress, 0..1
+    private double _pvU, _pvTarget;           // preview progress (linear) and where it is heading
+    private double _lastFrameMs;
+    private bool _animating;
 
     private void StartPop()
     {
         if (!AnimationsOn)
         {
-            ApplyShape(1);
+            _popT = 1;
+            ApplyShape();
             return;
         }
+        _popT = 0;
         _popClock.Restart();
-        ApplyShape(0);
-        if (!_popRunning)
+        ApplyShape();
+        EnsureFrames();
+    }
+
+    private void SetPreviewOpen(bool open)
+    {
+        double target = open ? 1 : 0;
+        _pvTarget = target;
+        if (!AnimationsOn || !_visible)
         {
-            _popRunning = true;
-            CompositionTarget.Rendering += OnPopFrame;
+            _pvU = target;
+            ApplyShape();
+            return;
         }
+        if (_pvU != target) EnsureFrames();
+    }
+
+    private void EnsureFrames()
+    {
+        if (_animating) return;
+        _animating = true;
+        _lastFrameMs = _frameClock.Elapsed.TotalMilliseconds;
+        CompositionTarget.Rendering += OnFrame;
     }
 
     private static readonly Windows.UI.ViewManagement.UISettings Ui = new();
@@ -170,35 +201,66 @@ public sealed partial class MainWindow : Window
         get { try { return Ui.AnimationsEnabled; } catch { return true; } }
     }
 
-    private void OnPopFrame(object? sender, object e)
+    private void OnFrame(object? sender, object e)
     {
-        double t = Math.Min(1, _popClock.Elapsed.TotalMilliseconds / PopMs);
-        ApplyShape(t);
-        if (t >= 1)
+        double now = _frameClock.Elapsed.TotalMilliseconds;
+        double dt = Math.Min(now - _lastFrameMs, 50);
+        _lastFrameMs = now;
+        bool busy = false;
+
+        if (_popClock.IsRunning)
         {
-            CompositionTarget.Rendering -= OnPopFrame;
-            _popRunning = false;
+            _popT = Math.Min(1, _popClock.Elapsed.TotalMilliseconds / PopMs);
+            if (_popT >= 1) _popClock.Stop();
+            else busy = true;
+        }
+        if (_pvU != _pvTarget)
+        {
+            double step = dt / PreviewMs;
+            _pvU = _pvTarget > _pvU ? Math.Min(_pvTarget, _pvU + step) : Math.Max(_pvTarget, _pvU - step);
+            busy |= _pvU != _pvTarget;
+        }
+
+        ApplyShape();
+        if (!busy)
+        {
+            CompositionTarget.Rendering -= OnFrame;
+            _animating = false;
         }
     }
 
-    /// <param name="t">0 = start of the pop, 1 = finished.</param>
-    private void ApplyShape(double t)
+    private void ApplyShape()
     {
         double s = Scale;
-        int w = _aw.Size.Width, h = Math.Min(_contentPx, _aw.Size.Height);
-        if (w <= 0 || h <= 0) return;
+        int w = _aw.Size.Width, wh = _aw.Size.Height;
+        if (w <= 0 || wh <= 0) return;
 
-        double ease = 1 - Math.Pow(1 - t, 4);                 // ease-out quartic
-        double k = 0.92 + 0.08 * ease;                        // size, relative to the window
-        double alpha = Math.Clamp(t / 0.45, 0, 1);
+        // Preview: ease-in-out cubic on its linear progress.
+        double u = _pvU;
+        double p = u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(-2 * u + 2, 3) / 2;
+        bool rows = Items.Count > 0;
+        double bodyDip = rows ? Math.Max(_listBodyDip, PreviewBodyDip * p) : 0;
+        Body.Height = bodyDip;
+        double side = _sideDip * (1 - p);
+        Stage.Margin = new Thickness(side, 0, 0, 0);
+        Stage.Width = WidthDip + 2 * _sideDip * p;
+        PreviewPane.Opacity = p * p;
+        PreviewPane.Visibility = p > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        double rw = w * k, rh = h * k;
-        double left = (w - rw) / 2, top = (h - rh) * 0.35;    // anchored a little above centre
+        // Pop: ease-out quartic size, quick fade-in.
+        double ease = 1 - Math.Pow(1 - _popT, 4);
+        double k = 0.92 + 0.08 * ease;                        // size, relative to the visible panel
+        double alpha = Math.Clamp(_popT / 0.45, 0, 1);
+
+        double h = Math.Min((InputDip + (rows ? DividerDip + bodyDip + FooterDip : 0)) * s, wh);
+        double x0 = side * s, cx = w / 2.0;
+        double left = cx - (cx - x0) * k, right = cx + (cx - x0) * k;
+        double top = h * 0.35 * (1 - k), bottom = top + h * k; // anchored a little above centre
         int r = (int)(CornerDip * s * 2);                     // CreateRoundRectRgn takes the ellipse diameter
         // Inset a few pixels: Windows paints a white hairline along the very edge of this window
         // (the backdrop's frame highlight), inside the window and so not removable by styles alone.
         int inset = (int)Math.Ceiling(2 * s);
-        var rgn = Win32.CreateRoundRectRgn((int)left + inset, (int)top + inset, (int)Math.Ceiling(left + rw) - inset, (int)Math.Ceiling(top + rh) - inset, r, r);
+        var rgn = Win32.CreateRoundRectRgn((int)left + inset, (int)top + inset, (int)Math.Ceiling(right) - inset, (int)Math.Ceiling(bottom) - inset, r, r);
         Win32.SetWindowRgn(_hwnd, rgn, true);
 
         Root.Opacity = alpha;
@@ -238,6 +300,7 @@ public sealed partial class MainWindow : Window
         Input.Text = "";
         Items.Clear();
         _latestQuery = "";
+        ResetPreview();
         Resize(recenter: true);
         _shownAt = DateTime.UtcNow;
         _visible = true;
@@ -457,6 +520,7 @@ public sealed partial class MainWindow : Window
         SyncRows(r.Hits, r.Gen, query);
         ResultsList.SelectedIndex = Items.Count > 0 ? 0 : -1;
         Resize(recenter: false);
+        UpdatePreview();
 
         // The instant tier is on screen; ask for meaning-based matches in the background.
         string q = query.Trim();
@@ -571,6 +635,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         Resize(recenter: false);
+        UpdatePreview();
     }
 
 
