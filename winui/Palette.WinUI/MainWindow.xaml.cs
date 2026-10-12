@@ -148,7 +148,11 @@ public sealed partial class MainWindow : Window
         var vis = rows > 0 ? Visibility.Visible : Visibility.Collapsed;
         Divider.Visibility = vis;
         Footer.Visibility = vis;
-        _listBodyDip = rows > 0 ? rows * RowDip + PadDip : 0;
+        double need = rows > 0 ? rows * RowDip + PadDip : 0;
+        // While typing the list only grows: result counts change with every keystroke, and Related
+        // rows arrive a moment after each pause, so following them exactly makes the panel bounce.
+        // It shrinks to fit once typing settles (HoldHeight).
+        _listBodyDip = _holdHeight && rows > 0 ? Math.Max(need, _listBodyDip) : need;
         // Rows arriving or leaving while the list is up (Related rows, a narrower match) glide the
         // panel to its new height; a jump would show the window shape a frame ahead of the rows.
         if (_visible && AnimationsOn && _listShownDip > 0 && _listBodyDip > 0 && _listShownDip != _listBodyDip) EnsureFrames();
@@ -182,6 +186,34 @@ public sealed partial class MainWindow : Window
     }
 
     private const int crate_MaxRows = 11;     // 8 instant + 3 related
+    private bool _holdHeight;                 // typing: the list height may grow but not shrink
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settle;
+
+    /// <summary>Keep the list height from shrinking until results have stopped changing for a moment.</summary>
+    private void HoldHeight()
+    {
+        if (_settle == null)
+        {
+            _settle = DispatcherQueue.CreateTimer();
+            _settle.Interval = TimeSpan.FromMilliseconds(700);
+            _settle.IsRepeating = false;
+            _settle.Tick += (_, _) =>
+            {
+                _holdHeight = false;
+                if (_visible) Resize(recenter: false);
+            };
+        }
+        _holdHeight = true;
+        _settle.Stop();
+        _settle.Start();
+    }
+
+    /// <summary>Select the first row, touching the selection only when it is not already there.</summary>
+    private void SelectFirst()
+    {
+        int want = Items.Count > 0 ? 0 : -1;
+        if (ResultsList.SelectedIndex != want) ResultsList.SelectedIndex = want;
+    }
     private double _listBodyDip;              // height the result rows need
     private double _listShownDip;             // height the list currently has on screen (follows _listBodyDip)
 
@@ -590,7 +622,8 @@ public sealed partial class MainWindow : Window
         if (version != _queryVersion || !_visible) return;
         _gen = r.Gen;
         SyncRows(r.Hits, r.Gen, query);
-        ResultsList.SelectedIndex = Items.Count > 0 ? 0 : -1;
+        SelectFirst();
+        HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
 
@@ -616,7 +649,19 @@ public sealed partial class MainWindow : Window
         for (int i = 0; i < hits.Count; i++)
         {
             var fresh = new HitVm(hits[i], query);   // new each time: bold highlighting follows the query
-            var vm = i < Items.Count && Items[i].SameRow(fresh) ? Items[i] : fresh;
+            // A row that changed is updated in place rather than replaced, so the list keeps its
+            // selection (and does not replay the selection animation) on every keystroke.
+            HitVm vm;
+            if (i < Items.Count)
+            {
+                vm = Items[i];
+                if (!vm.SameRow(fresh)) vm.CopyFrom(fresh);
+            }
+            else
+            {
+                vm = fresh;
+                Items.Add(vm);
+            }
 
             // A kept row may still be waiting for an icon whose request belonged to an older
             // generation, so (re)queue anything that has none yet.
@@ -624,11 +669,6 @@ public sealed partial class MainWindow : Window
             {
                 if (_iconCache.TryGetValue(k, out var bmp)) vm.Icon = bmp;
                 else need.Add((i, k));
-            }
-            if (ReferenceEquals(vm, fresh))
-            {
-                if (i < Items.Count) Items[i] = vm;
-                else Items.Add(vm);
             }
         }
         while (Items.Count > hits.Count) Items.RemoveAt(Items.Count - 1);
@@ -696,7 +736,7 @@ public sealed partial class MainWindow : Window
         {
             // Strong meaning matches lead; the engine rebuilt the whole list around them.
             SyncRows(r.Hits, r.Gen, _semQuery);
-            ResultsList.SelectedIndex = Items.Count > 0 ? 0 : -1;
+            SelectFirst();
         }
         else if (r.Base == Items.Count)
         {
@@ -706,6 +746,7 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
+        HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
     }

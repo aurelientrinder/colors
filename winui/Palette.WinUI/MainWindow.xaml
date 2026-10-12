@@ -136,7 +136,7 @@
                         <Border
                             Width="32"
                             Height="32"
-                            Background="{x:Bind TileBrush}"
+                            Background="{x:Bind TileBrush, Mode=OneWay}"
                             CornerRadius="8"
                             Visibility="{x:Bind TileVisibility, Mode=OneWay}">
                             <FontIcon
@@ -145,18 +145,19 @@
                                 FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                 FontSize="16"
                                 Foreground="White"
-                                Glyph="{x:Bind Glyph}" />
+                                Glyph="{x:Bind Glyph, Mode=OneWay}" />
                         </Border>
 
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock
                                 FontSize="15"
                                 TextTrimming="CharacterEllipsis"
+                                local:Hl.Rev="{x:Bind Rev, Mode=OneWay}"
                                 local:Hl.Vm="{x:Bind}" />
                             <TextBlock
                                 FontSize="12"
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind Subtitle}"
+                                Text="{x:Bind Subtitle, Mode=OneWay}"
                                 TextTrimming="CharacterEllipsis" />
                         </StackPanel>
 
@@ -169,7 +170,7 @@
                             <TextBlock
                                 FontSize="11"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="{x:Bind Kind}" />
+                                Text="{x:Bind Kind, Mode=OneWay}" />
                         </Border>
                     </Grid>
                 </DataTemplate>

@@ -9,7 +9,11 @@ using Windows.UI;
 
 namespace Palette;
 
-/// <summary>One row in the results list.</summary>
+/// <summary>
+/// One row in the results list. Rows are updated in place as the query changes (see
+/// <see cref="CopyFrom"/>): replacing the selected row would drop the list's selection and replay
+/// its selection animation on every keystroke.
+/// </summary>
 public sealed class HitVm : INotifyPropertyChanged
 {
     private ImageSource? _icon;
@@ -48,20 +52,40 @@ public sealed class HitVm : INotifyPropertyChanged
 
     private static Color Rgb(byte r, byte g, byte b) => Color.FromArgb(255, r, g, b);
 
+    /// <summary>Turn this row into <paramref name="o"/>, keeping the object (and so its list container).</summary>
+    public void CopyFrom(HitVm o)
+    {
+        Title = o.Title;
+        Subtitle = o.Subtitle;
+        Kind = o.Kind;
+        CopyText = o.CopyText;
+        Path = o.Path;
+        Query = o.Query;
+        Glyph = o.Glyph;
+        TileBrush = o.TileBrush;
+        if (IconKey != o.IconKey) _icon = o._icon;
+        IconKey = o.IconKey;
+        Rev++;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));   // every property
+    }
+
+    /// <summary>Bumped by <see cref="CopyFrom"/>, so the highlighted title redraws.</summary>
+    public int Rev { get; private set; }
+
     /// <summary>Would this row look identical to <paramref name="o"/>? (Then the list can keep it.)</summary>
     public bool SameRow(HitVm o) =>
         Title == o.Title && Subtitle == o.Subtitle && Kind == o.Kind && IconKey == o.IconKey && Query == o.Query && Path == o.Path;
 
-    public string Title { get; }
-    public string Subtitle { get; }
-    public string Kind { get; }
-    public string? IconKey { get; }
-    public string? CopyText { get; }
+    public string Title { get; private set; }
+    public string Subtitle { get; private set; }
+    public string Kind { get; private set; }
+    public string? IconKey { get; private set; }
+    public string? CopyText { get; private set; }
     /// <summary>Full path when the row is a file (it gets a preview).</summary>
-    public string? Path { get; }
-    public string Query { get; }
-    public string Glyph { get; }
-    public Brush TileBrush { get; }
+    public string? Path { get; private set; }
+    public string Query { get; private set; }
+    public string Glyph { get; private set; }
+    public Brush TileBrush { get; private set; }
 
     public ImageSource? Icon
     {
@@ -94,11 +118,22 @@ public static class Hl
     public static HitVm? GetVm(DependencyObject d) => (HitVm?)d.GetValue(VmProperty);
     public static void SetVm(DependencyObject d, HitVm? v) => d.SetValue(VmProperty, v);
 
-    private static void OnVmChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    /// <summary>The row's <see cref="HitVm.Rev"/>: changes when the row was updated in place.</summary>
+    public static readonly DependencyProperty RevProperty =
+        DependencyProperty.RegisterAttached("Rev", typeof(int), typeof(Hl), new PropertyMetadata(0, OnRevChanged));
+
+    public static int GetRev(DependencyObject d) => (int)d.GetValue(RevProperty);
+    public static void SetRev(DependencyObject d, int v) => d.SetValue(RevProperty, v);
+
+    private static void OnVmChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => Render(d, e.NewValue as HitVm);
+
+    private static void OnRevChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => Render(d, GetVm(d));
+
+    private static void Render(DependencyObject d, HitVm? vm)
     {
         if (d is not TextBlock tb) return;
         tb.Inlines.Clear();
-        if (e.NewValue is not HitVm vm) return;
+        if (vm == null) return;
 
         string title = vm.Title;
         bool[]? mask = Mask(title, vm.Query);
