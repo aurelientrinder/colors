@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Palette</RootNamespace>
+    <AssemblyName>PaletteWinUI</AssemblyName>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\palette.ico</ApplicationIcon>
+    <DefaultLanguage>en-US</DefaultLanguage>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+  </ItemGroup>
+
+  <!-- Tray icon is loaded from this file at runtime (the exe icon is embedded via ApplicationIcon). -->
+  <ItemGroup>
+    <None Include="Assets\palette.ico" Link="palette.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Rust engine and admin helper, built by cargo (release profile) at the repo root. -->
+  <ItemGroup>
+    <None Include="..\..\target\release\palette_core.dll" Link="palette_core.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\target\release\palette-mft.exe" Link="palette-mft.exe" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\target\release\palette-semantic.exe" Link="palette-semantic.exe" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Embedding model for the semantic tier (fetched by scripts\get-model.ps1). Optional: without it
+       the launcher simply has no "Related" results. -->
+  <ItemGroup>
+    <None Include="..\..\models\**\*.*" Exclude="..\..\models\**\.download-done"
+          Link="models\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

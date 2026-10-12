@@ -1,0 +1,15 @@
+# Rust
+/target/
+
+# .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+
+# Embedding models: downloaded by scripts/get-model.ps1
+/models/
+
+# Local logs and scratch
+*.log
+.claude/
