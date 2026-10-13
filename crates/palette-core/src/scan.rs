@@ -25,6 +25,7 @@ pub fn builtins() -> Vec<Item> {
     let c = |n: &str, sub: &str, id: &str| item(n, sub, Kind::Command, Action::Builtin(id.into()));
     let s = |n: &str, uri: &str| item(n, "Windows Settings", Kind::Setting, Action::Open(uri.into()));
     vec![
+        c("Start menu", "Open the Windows Start menu", "start"),
         c("Lock", "Lock this PC", "lock"),
         c("Sleep", "Put this PC to sleep", "sleep"),
         c("Sign out", "Sign out of Windows", "signout"),

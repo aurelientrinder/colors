@@ -83,6 +83,19 @@ pub fn set_autostart(enable: bool) -> bool {
     out.is_ok_and(|o| o.status.success())
 }
 
+/// Open Start the way Ctrl+Esc does. The Windows key itself may be bound to the palette, so this
+/// is how Start stays one search away.
+fn open_start_menu() {
+    use windows::core::w;
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, SC_TASKLIST, WM_SYSCOMMAND};
+    unsafe {
+        if let Ok(tray) = FindWindowW(w!("Shell_TrayWnd"), None) {
+            let _ = PostMessageW(Some(tray), WM_SYSCOMMAND, WPARAM(SC_TASKLIST as usize), LPARAM(0));
+        }
+    }
+}
+
 /// Executes a hit. Returns true if the palette should hide afterwards.
 pub fn execute(hit: &Hit, copy: &dyn Fn(&str)) -> bool {
     match &hit.action {
@@ -93,6 +106,7 @@ pub fn execute(hit: &Hit, copy: &dyn Fn(&str)) -> bool {
         Action::Copy(text) => copy(text),
         Action::Focus { hwnd, .. } => crate::wins::focus(*hwnd),
         Action::Builtin(id) => match id.as_str() {
+            "start" => open_start_menu(),
             "lock" => quiet("rundll32.exe", &["user32.dll,LockWorkStation"]),
             "sleep" => quiet("rundll32.exe", &["powrprof.dll,SetSuspendState", "0,1,0"]),
             "signout" => quiet("shutdown.exe", &["/l"]),

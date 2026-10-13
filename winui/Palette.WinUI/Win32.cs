@@ -29,6 +29,9 @@ internal static class Win32
     public static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
 
     [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessage(ref MSG msg);
+
+    [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
@@ -187,7 +190,7 @@ internal static class Win32
     private static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 
     private const byte VK_MENU = 0x12;
-    private const uint KEYEVENTF_KEYUP = 0x2;
+    public const uint KEYEVENTF_KEYUP = 0x2;
 
     // ---- low-level keyboard hook (the Copilot key sends Win+Shift+F23, which the shell owns,
     // so RegisterHotKey cannot get it; a hook sees it first and can swallow it).
@@ -224,9 +227,84 @@ internal static class Win32
     /// </summary>
     public static void MaskStartMenu()
     {
-        keybd_event(VK_UNASSIGNED, 0, 0, UIntPtr.Zero);
-        keybd_event(VK_UNASSIGNED, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        keybd_event(VK_UNASSIGNED, 0, 0, InjectMarker);
+        keybd_event(VK_UNASSIGNED, 0, KEYEVENTF_KEYUP, InjectMarker);
     }
+
+    /// <summary>Press and release <paramref name="vk"/>, tagged as our own.</summary>
+    public static void TapKey(byte vk)
+    {
+        keybd_event(vk, 0, 0, InjectMarker);
+        keybd_event(vk, 0, KEYEVENTF_KEYUP, InjectMarker);
+    }
+
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vk);
+
+    /// <summary>Tags keystrokes this process injects, so its own keyboard hook lets them through.</summary>
+    public static readonly UIntPtr InjectMarker = (UIntPtr)0x50414C45;   // "PALE"
+
+    public const uint KEYEVENTF_EXTENDEDKEY = 0x1;
+
+    /// <summary>INPUT for x64: a 4-byte type, then the union (MOUSEINPUT, the largest, is 32 bytes).</summary>
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
+    public struct INPUT
+    {
+        [FieldOffset(0)] public uint type;
+        [FieldOffset(8)] public ushort wVk;
+        [FieldOffset(10)] public ushort wScan;
+        [FieldOffset(12)] public uint dwFlags;
+        [FieldOffset(16)] public uint time;
+        [FieldOffset(24)] public UIntPtr dwExtraInfo;
+    }
+
+    public static INPUT Key(ushort vk, ushort scan, uint flags) =>
+        new() { type = 1 /* INPUT_KEYBOARD */, wVk = vk, wScan = scan, dwFlags = flags, dwExtraInfo = InjectMarker };
+
+    [DllImport("user32.dll")]
+    public static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostThreadMessage(uint thread, uint msg, UIntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+    public static uint ProcessOf(IntPtr hwnd)
+    {
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        return pid;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr h);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool QueryFullProcessImageName(IntPtr h, uint flags, System.Text.StringBuilder name, ref uint size);
+
+    public static string? ProcessImageName(uint pid)
+    {
+        IntPtr h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
+        if (h == IntPtr.Zero) return null;
+        try
+        {
+            var sb = new System.Text.StringBuilder(1024);
+            uint n = (uint)sb.Capacity;
+            return QueryFullProcessImageName(h, 0, sb, ref n) ? sb.ToString() : null;
+        }
+        finally { CloseHandle(h); }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, UIntPtr w, string l, uint flags, uint timeout, out UIntPtr result);
+
+    /// <summary>Tell Explorer (and everyone else) that a setting in area <paramref name="area"/> changed.</summary>
+    public static void BroadcastSettingChange(string area) =>
+        SendMessageTimeout((IntPtr)0xFFFF /* HWND_BROADCAST */, 0x001A /* WM_SETTINGCHANGE */, UIntPtr.Zero, area,
+            0x2 /* SMTO_ABORTIFHUNG */, 200, out _);
 
     /// <summary>
     /// Move keyboard focus to hwnd even when another app (or the desktop) is foreground.
@@ -241,8 +319,8 @@ internal static class Win32
         if (GetForegroundWindow() == hwnd) return true;
 
         // Any synthetic keystroke from this process lifts the foreground lock.
-        keybd_event(VK_MENU, 0, 0, UIntPtr.Zero);
-        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        keybd_event(VK_MENU, 0, 0, InjectMarker);
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, InjectMarker);
         SetForegroundWindow(hwnd);
         if (GetForegroundWindow() == hwnd) return true;
 

@@ -1,7 +1,7 @@
 # Palette
 
 A Spotlight-style launcher for Windows: a Rust engine with a WinUI 3 interface.
-Resident, instant on `Alt+Space` (falls back to `Ctrl+Space` if taken) or the Copilot key
+Resident, instant on a tap of the Windows key, `Alt+Space` (falls back to `Ctrl+Space` if taken) or the Copilot key
 (Win+Shift+F23, intercepted with a low-level keyboard hook so Copilot does not open).
 
 ## Layout
@@ -45,10 +45,28 @@ works exactly as before, just without "Related" results.
 | `Palette: Quit` | exit |
 | launch `PaletteWinUI.exe` again | opens the palette of the running copy; `--query "text"` opens it with that text typed |
 | tray icon: click | show / hide the palette |
-| tray icon: right-click | Open, Run at startup (checked when on), Re-index files, Quit |
+| tray icon: right-click | Open, Run at startup (checked when on), the Windows Search options below, Re-index files, Quit |
 
 New tray icons start in Windows' overflow area; drag it onto the taskbar to pin it.
 Closing the palette with `Esc` or the hotkey returns focus to the window you were in.
+
+## In place of Windows Search
+
+Palette takes over the ways into Windows' own search (each switchable from the tray menu,
+saved in `%LOCALAPPDATA%\palette\settings.json`):
+
+| Input | Does |
+|---|---|
+| tap the Windows key | opens Palette instead of Start. Win+E, Win+D and other chords are untouched |
+| `Win+S`, `Win+Q` | open Palette instead of Windows Search |
+| type into Start or the taskbar search box | Start closes and Palette carries on with what you typed |
+| Start button, `Ctrl+Esc`, or the `Start menu` row | still open Start, for browsing pinned apps |
+| tray: Hide the taskbar search box | removes Windows' search box from the taskbar; unchecking puts back the style you had |
+
+Keys typed between the trigger and the palette taking focus are held back by the keyboard
+hook and replayed into it, so typing straight after the Windows key loses nothing. On
+current Windows 11 Start and search are one window (SearchHost.exe's "Search"), so the
+hand-off happens on the first typed key rather than when the window opens.
 
 Selecting a file widens the palette with a preview: images, the first page of PDFs, the
 opening text of text, code and Word files, otherwise Windows' thumbnail, plus size and date.

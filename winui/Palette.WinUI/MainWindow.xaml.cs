@@ -28,7 +28,7 @@ public sealed partial class MainWindow : Window
 
     public ObservableCollection<HitVm> Items { get; } = new();
 
-    private bool _visible;
+    private volatile bool _visible;           // read by the hook thread too
     private DateTime _shownAt = DateTime.MinValue;
     private ulong _gen;                       // generation of the results on screen
     private int _queryVersion;                // bumped on every keystroke
@@ -68,12 +68,22 @@ public sealed partial class MainWindow : Window
         _aw.MoveAndResize(new RectInt32(-32000, -32000, 100, 100));
         _aw.Hide();
 
+        _hooks = new ShellHooks(_settings, () => _visible,
+            toggle: () => DispatcherQueue.TryEnqueue(() => { if (_visible) HidePalette(restoreFocus: true); else ShowPalette(); }),
+            show: () => DispatcherQueue.TryEnqueue(() => { if (!_visible) ShowPalette(); }));
+
         _tray = new TrayIcon(
             toggle: () => DispatcherQueue.TryEnqueue(ToggleFromTray),
             isAutostart: Native.AutostartEnabled,
             setAutostart: enable => Native.SetAutostart(enable),
             reindex: Native.Reindex,
-            quit: () => DispatcherQueue.TryEnqueue(QuitApp));
+            quit: () => DispatcherQueue.TryEnqueue(QuitApp),
+            options: new TrayIcon.Option[]
+            {
+                new("Open with the Windows key", () => _settings.WinKeyOpens, on => { _settings.WinKeyOpens = on; _settings.Save(); }),
+                new("Replace Windows Search (Win+S, taskbar search)", () => _settings.ReplaceSearch, on => { _settings.ReplaceSearch = on; _settings.Save(); }),
+                new("Hide the taskbar search box", Settings.TaskbarSearchHidden, on => _settings.ApplyTaskbarSearch(on)),
+            });
 
         new Thread(SearchLoop) { IsBackground = true, Name = "search" }.Start();
         new Thread(IconLoop) { IsBackground = true, Name = "icons" }.Start();
@@ -461,6 +471,7 @@ public sealed partial class MainWindow : Window
         _shadow.ShowOver(_hwnd);
         Activate();
         Input.Focus(FocusState.Programmatic);
+        _hooks.RequestFlush();   // the palette has focus: replay anything typed since the trigger
         Enqueue("");   // empty query = most-used items
     }
 
@@ -514,6 +525,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private readonly Settings _settings = Settings.Load();
+    private readonly ShellHooks _hooks;
+
     private void HotkeyLoop()
     {
         // Alt+Space, falling back if another app owns it.
@@ -525,53 +539,29 @@ public sealed partial class MainWindow : Window
             if (Win32.RegisterHotKey(IntPtr.Zero, 1, combos[i] | Win32.MOD_NOREPEAT, Win32.VK_SPACE)) used = i;
         }
 
-        // Copilot key (Win+Shift+F23): RegisterHotKey cannot have it, a low-level hook can.
-        _kbdProc = CopilotKeyHook;
-        bool copilot = Win32.HookKeyboard(_kbdProc) != IntPtr.Zero;
+        // Windows key, Win+S, the Copilot key and the search flyout.
+        bool hooked = _hooks.Install();
 
         string label = used >= 0 ? names[used] : "";
-        if (copilot) label = label.Length > 0 ? label + " or Copilot key" : "Copilot key";
+        if (hooked) label = label.Length > 0 ? label + ", Windows key or Copilot key" : "Windows key or Copilot key";
         _tray.SetTooltip(label.Length > 0 ? $"Palette ({label})" : "Palette (no hotkey available; use this icon)");
-        if (used < 0 && !copilot) return;
 
         while (Win32.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
         {
             if (msg.message == Win32.WM_HOTKEY)
             {
                 App.Log($"WM_HOTKEY visible={_visible}");
-                ToggleFromHotkey();
+                _hooks.OnHotkey();
             }
-        }
-    }
-
-    private void ToggleFromHotkey() =>
-        DispatcherQueue.TryEnqueue(() => { if (_visible) HidePalette(restoreFocus: true); else ShowPalette(); });
-
-    private Win32.LowLevelKeyboardProc? _kbdProc; // referenced so the GC cannot collect the hook delegate
-    private bool _copilotDown;
-
-    private IntPtr CopilotKeyHook(int code, IntPtr wParam, IntPtr lParam)
-    {
-        if (code >= 0 && System.Runtime.InteropServices.Marshal.PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam).vkCode == Win32.VK_F23)
-        {
-            int m = (int)wParam;
-            if (m == Win32.WM_KEYDOWN || m == Win32.WM_SYSKEYDOWN)
+            else if (msg.message == ShellHooks.WM_FLUSH)
             {
-                if (!_copilotDown)
-                {
-                    _copilotDown = true;
-                    App.Log($"copilot key visible={_visible}");
-                    Win32.MaskStartMenu();
-                    ToggleFromHotkey();
-                }
+                _hooks.Flush();
             }
             else
             {
-                _copilotDown = false;
+                Win32.DispatchMessage(ref msg);   // delivers the out-of-context WinEvent callbacks
             }
-            return (IntPtr)1; // swallow: Copilot / Microsoft 365 never sees it
         }
-        return Win32.CallNextHookEx(IntPtr.Zero, code, wParam, lParam);
     }
 
     // ------------------------------------------------------------------ input
