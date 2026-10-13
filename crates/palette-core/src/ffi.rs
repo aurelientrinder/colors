@@ -210,12 +210,17 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     // only produced scattered-letter noise (typical for natural-language queries). If the
     // meaning matches are strong, they lead the list and become the default selection;
     // otherwise they are appended below the instant results.
+    // Word by word: "volume 3" is real in "Set volume to 3%", though not as one run of letters.
     let norm = |s: &str| -> String { s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect() };
-    let typed = norm(q);
+    let typed: Vec<String> = q.split_whitespace().map(&norm).filter(|w| !w.is_empty()).collect();
     let instant_is_real = last.1.first().is_some_and(|h| match h.kind {
-        crate::model::Kind::Calc => true, // a calculator result is the answer
+        // A calculator result or a quick setting answers the query as typed.
+        crate::model::Kind::Calc | crate::model::Kind::Toggle => true,
         crate::model::Kind::Web => false, // the fallback row says nothing about relevance
-        _ => norm(&h.title).contains(&typed),
+        _ => {
+            let t = norm(&h.title);
+            typed.iter().all(|w| t.contains(w.as_str()))
+        }
     });
     let lead_min = semantic::thresholds().lead;
     let lead = !instant_is_real && fresh[0].1 >= lead_min;
