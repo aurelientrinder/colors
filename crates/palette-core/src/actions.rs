@@ -68,7 +68,7 @@ pub fn set_autostart(enable: bool) -> bool {
              -Action (New-ScheduledTaskAction -Execute '{exe}' -WorkingDirectory '{dir}') \
              -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $u) \
              -Principal (New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited) \
-             -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew) | Out-Null"
+             -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew -Priority 4) | Out-Null"
         );
         Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])

@@ -78,7 +78,8 @@ public sealed partial class MainWindow : Window
         new Thread(SearchLoop) { IsBackground = true, Name = "search" }.Start();
         new Thread(IconLoop) { IsBackground = true, Name = "icons" }.Start();
         new Thread(SemanticLoop) { IsBackground = true, Name = "semantic" }.Start();
-        new Thread(HotkeyLoop) { IsBackground = true, Name = "hotkey" }.Start();
+        // Highest: it runs the keyboard hook, which Windows silently unhooks if it answers late.
+        new Thread(HotkeyLoop) { IsBackground = true, Name = "hotkey", Priority = ThreadPriority.Highest }.Start();
         new Thread(ShowRequestLoop) { IsBackground = true, Name = "show-requests" }.Start();
     }
 
@@ -437,7 +438,12 @@ public sealed partial class MainWindow : Window
         Resize(recenter: true);
         _shownAt = DateTime.UtcNow;
         _visible = true;
-        FooterStatus.Text = Native.SemanticStatus();
+        // Reads a status file: keep disk access out of the show path.
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            string status = Native.SemanticStatus();
+            DispatcherQueue.TryEnqueue(() => FooterStatus.Text = status);
+        });
         StartPop();
         _aw.Show();
         // The presenter can put its frame styles back on Show; a frame is what Windows draws the

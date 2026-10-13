@@ -140,6 +140,49 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
 
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll")]
+    private static extern bool SetPriorityClass(IntPtr h, uint cls);
+
+    [DllImport("kernel32.dll")]
+    private static extern unsafe bool SetProcessInformation(IntPtr h, int cls, void* info, uint size);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool SetProcessWorkingSetSizeEx(IntPtr h, nint min, nint max, uint flags);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtSetInformationProcess(IntPtr h, int cls, ref int info, int size);
+
+    /// <summary>
+    /// Undo what a background launch does to the process, so the hotkey answers at once however
+    /// long it sat idle. A logon task (Task Scheduler priority 7) starts it at below-normal CPU,
+    /// low I/O and low memory priority: its pages are trimmed first and each page-in then queues
+    /// behind other disk work, which is what made the palette take seconds to appear. Windows can
+    /// also put a process with no visible window into EcoQoS (efficiency mode).
+    /// </summary>
+    public static unsafe void StayResponsive()
+    {
+        IntPtr me = GetCurrentProcess();
+        SetPriorityClass(me, 0x20 /* NORMAL_PRIORITY_CLASS */);   // apps launched from here inherit it too
+
+        int io = 2;                                                // IoPriorityNormal
+        NtSetInformationProcess(me, 33 /* ProcessIoPriority */, ref io, sizeof(int));
+
+        uint mem = 5;                                              // MEMORY_PRIORITY_NORMAL
+        SetProcessInformation(me, 0 /* ProcessMemoryPriority */, &mem, sizeof(uint));
+
+        // PROCESS_POWER_THROTTLING_STATE { Version = 1, ControlMask, StateMask = 0 }: opt out of
+        // EcoQoS and timer-resolution throttling. The indexing threads still throttle themselves.
+        uint* pt = stackalloc uint[3] { 1, 0x1 | 0x4, 0 };
+        SetProcessInformation(me, 4 /* ProcessPowerThrottling */, pt, 3 * sizeof(uint));
+
+        // A soft working-set floor: under memory pressure Windows trims other processes' pages
+        // before the palette's, so the code and data a show touches stay resident.
+        SetProcessWorkingSetSizeEx(me, 160 << 20, 1024 << 20, 0x2 | 0x8 /* HARDWS_MIN_DISABLE | HARDWS_MAX_DISABLE */);
+    }
+
     [DllImport("user32.dll")]
     private static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 

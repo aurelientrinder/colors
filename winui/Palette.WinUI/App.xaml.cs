@@ -52,6 +52,9 @@ public partial class App : Application
                 Exit();
                 return;
             }
+            Win32.StayResponsive();
+            // The UI thread draws the palette: let it run ahead of the engine's worker threads.
+            Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
             Native.Init();
             Log("engine started");
             _window = new MainWindow();
