@@ -76,6 +76,8 @@ pub fn pinnable(hit: &Hit) -> bool {
 pub const ALL_APPS: &str = "allapps";
 const MOST_USED: usize = 3;
 const RECENT_FILES: usize = 4;
+/// Recent files read for search ranking as well (a recently opened file outranks its namesakes).
+const RECENT_RANKED: usize = 150;
 
 fn all_apps_row() -> Hit {
     Hit {
@@ -121,7 +123,7 @@ pub fn recent_cached() -> Vec<Hit> {
     use std::time::{Duration, Instant};
     static CACHE: Mutex<Option<(Instant, Vec<Hit>)>> = Mutex::new(None);
     static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let read = || recent_files(RECENT_FILES * 3);
+    let read = || recent_files(RECENT_RANKED);
 
     let mut c = CACHE.lock().unwrap();
     match &*c {

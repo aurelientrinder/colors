@@ -1,5 +1,5 @@
-//! Quick settings changed in place, without opening Settings: "dark", "wifi", "bluetooth",
-//! "mute", "volume 30", "brightness 70". Rows say what Enter will do given the current state
+//! Quick settings changed in place, without opening Settings: "dark mode", "wifi off",
+//! "bluetooth", "mute", "volume 30", "brightness 70". Rows say what Enter will do given the current state
 //! ("Turn Wi-Fi off"), so the state is read when the query names one of them.
 
 use crate::model::{Action, Hit, Kind};
@@ -7,24 +7,28 @@ use std::sync::OnceLock;
 
 struct Quick {
     id: &'static str,
-    /// What it answers to; the query matches when one of these starts with it (or the other way round).
+    /// The setting's names ("wifi"): typed alone they offer the toggle, after the Settings page,
+    /// since you may only want to look.
     names: &'static [&'static str],
+    /// Names that are themselves a request ("mute", "dark mode"): typed, the toggle leads.
+    verbs: &'static [&'static str],
     /// Takes a number ("volume 30").
     level: bool,
 }
 
 const QUICK: &[Quick] = &[
-    Quick { id: "dark", names: &["dark mode", "dark theme", "light mode", "light theme", "theme"], level: false },
-    Quick { id: "wifi", names: &["wifi", "wi-fi", "wireless", "wlan"], level: false },
-    Quick { id: "bluetooth", names: &["bluetooth"], level: false },
-    Quick { id: "mute", names: &["mute", "unmute", "sound off", "sound on"], level: false },
-    Quick { id: "volume", names: &["volume", "vol"], level: true },
-    Quick { id: "brightness", names: &["brightness"], level: true },
+    Quick { id: "dark", names: &["theme"], verbs: &["dark mode", "dark theme", "light mode", "light theme"], level: false },
+    Quick { id: "wifi", names: &["wifi", "wi-fi", "wireless", "wlan"], verbs: &[], level: false },
+    Quick { id: "bluetooth", names: &["bluetooth"], verbs: &[], level: false },
+    Quick { id: "mute", names: &["sound", "audio"], verbs: &["mute", "unmute"], level: false },
+    Quick { id: "volume", names: &["volume", "vol"], verbs: &[], level: true },
+    Quick { id: "brightness", names: &["brightness"], verbs: &[], level: true },
 ];
 
-/// Strong enough to lead the list when the query clearly names a quick setting.
-const STRONG: i32 = 1000;
-const WEAK: i32 = 300;
+/// The query asks for the change ("mute", "wifi off", "volume 30"): first row.
+const ASKED: i32 = 1000;
+/// The query names the setting ("wifi"): offered just after the best Settings pages.
+const NAMED: i32 = 290;
 
 /// Rows for the quick settings `query` names, best first.
 pub fn hits(query: &str) -> Vec<Hit> {
@@ -32,35 +36,63 @@ pub fn hits(query: &str) -> Vec<Hit> {
     if q.len() < 2 {
         return Vec::new();
     }
-    // "volume 30" / "vol 30%" / "brightness 70"
-    let (text, number) = match q.rsplit_once(' ') {
-        Some((t, n)) => match n.trim_end_matches('%').parse::<u32>() {
-            Ok(v) => (t.trim().to_string(), Some(v.min(100))),
-            Err(_) => (q.clone(), None),
-        },
-        None => (q.clone(), None),
+    // "turn wifi off", "wifi on", "turn off bluetooth", "volume 30", "vol 30%"
+    let mut words: Vec<&str> =
+        q.split_whitespace().filter(|w| !matches!(*w, "turn" | "toggle" | "switch" | "set")).collect();
+    let state = |w: &str| match w {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
     };
+    let mut desired = words.last().and_then(|w| state(w));
+    let mut number = None;
+    if desired.is_some() {
+        words.pop();
+    } else if let Some(n) = words.last().and_then(|w| w.trim_end_matches('%').parse::<u32>().ok()) {
+        number = Some(n.min(100));
+        words.pop();
+    } else if let Some(d) = words.first().and_then(|w| state(w)) {
+        desired = Some(d);
+        words.remove(0);
+    }
+    let text = words.join(" ");
+    if text.len() < 2 {
+        return Vec::new();
+    }
+    let asked = desired.is_some() || number.is_some();
 
+    // 2: typed in full, 1: the start of it.
+    let matched = |list: &[&str]| -> Option<u8> {
+        list.iter().filter_map(|n| if *n == text { Some(2) } else if n.starts_with(text.as_str()) { Some(1) } else { None }).max()
+    };
     let mut out = Vec::new();
     for qk in QUICK {
-        let best = qk
-            .names
-            .iter()
-            .filter_map(|n| {
-                if *n == text || (text.len() > n.len() && text.starts_with(n)) {
-                    Some(STRONG)
-                } else if n.starts_with(text.as_str()) {
-                    Some(if text.len() >= 3 { STRONG - 100 } else { WEAK })
-                } else {
-                    None
-                }
-            })
-            .max();
-        let Some(score) = best else { continue };
-        if number.is_some() && !qk.level {
+        let verb = matched(qk.verbs);
+        let noun = matched(qk.names);
+        if verb.is_none() && noun.is_none() {
             continue;
         }
-        if let Some(h) = row(qk.id, number, score) {
+        if (number.is_some() && !qk.level) || (desired.is_some() && qk.level) {
+            continue;
+        }
+        let score = if verb == Some(2) || (asked && noun == Some(2)) {
+            ASKED
+        } else if text.len() >= 3 && (verb.is_some() || asked) {
+            ASKED - 100
+        } else if noun == Some(2) {
+            NAMED
+        } else if text.len() >= 3 {
+            NAMED - 40
+        } else {
+            NAMED - 90
+        };
+        // "light mode on" means dark mode off; "sound off" means muted.
+        let target = match qk.id {
+            "dark" if text.starts_with("light") => desired.map(|d| !d),
+            "mute" if !text.contains("mute") => desired.map(|d| !d),
+            _ => desired,
+        };
+        if let Some(h) = row(qk.id, number, target, score) {
             out.push(h);
         }
     }
@@ -75,24 +107,28 @@ fn on_off(b: bool) -> &'static str {
     if b { "on" } else { "off" }
 }
 
-fn row(id: &str, number: Option<u32>, score: i32) -> Option<Hit> {
+/// `target` is the state asked for (dark mode on, Wi-Fi on, muted); without one the row flips
+/// the current state.
+fn row(id: &str, number: Option<u32>, target: Option<bool>, score: i32) -> Option<Hit> {
     match id {
         "dark" => {
             let dark = dark_mode()?;
+            let to = target.unwrap_or(!dark);
             Some(hit(
-                format!("Turn dark mode {}", on_off(!dark)),
+                format!("Turn dark mode {}", on_off(to)),
                 format!("Apps and Windows are {}", if dark { "dark" } else { "light" }),
-                format!("dark:{}", on_off(!dark)),
+                format!("dark:{}", on_off(to)),
                 score,
             ))
         }
         "wifi" | "bluetooth" => {
             let label = if id == "wifi" { "Wi-Fi" } else { "Bluetooth" };
             let on = radio_on(id)?;
+            let to = target.unwrap_or(!on);
             Some(hit(
-                format!("Turn {label} {}", on_off(!on)),
+                format!("Turn {label} {}", on_off(to)),
                 format!("{label} is {}", on_off(on)),
-                format!("{id}:{}", on_off(!on)),
+                format!("{id}:{}", on_off(to)),
                 score,
             ))
         }
@@ -101,12 +137,10 @@ fn row(id: &str, number: Option<u32>, score: i32) -> Option<Hit> {
             let now = format!("Volume {}%{}", (level * 100.0).round(), if muted { ", muted" } else { "" });
             match number {
                 Some(n) => Some(hit(format!("Set volume to {n}%"), now, format!("volume:{n}"), score)),
-                None => Some(hit(
-                    if muted { "Unmute".into() } else { "Mute".into() },
-                    now,
-                    format!("mute:{}", on_off(!muted)),
-                    score,
-                )),
+                None => {
+                    let mute = target.unwrap_or(!muted);
+                    Some(hit(if mute { "Mute".into() } else { "Unmute".into() }, now, format!("mute:{}", on_off(mute)), score))
+                }
             }
         }
         "brightness" => {

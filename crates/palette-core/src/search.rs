@@ -19,7 +19,9 @@ pub struct Response {
 }
 
 const CHUNK: usize = 16 * 1024;
-const TOP_FILES: usize = 40;
+/// File matches ranked on their path as well (location, depth, recent use): enough that a
+/// hundred equally good "Downloads" folders cannot crowd out yours.
+const FILE_POOL: usize = 3000;
 pub const MAX_HITS: usize = 5;
 
 /// Search worker: owns the narrowing cache, runs off the UI thread, always
@@ -39,7 +41,7 @@ pub fn spawn(
                 req = newer;
             }
             let t0 = std::time::Instant::now();
-            let hits = run(&req.query, &catalog, &usage, &mut cache);
+            let hits = run(&req.query, &catalog, &usage, &mut cache, MAX_HITS);
             if log {
                 use std::io::Write;
                 if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -72,7 +74,13 @@ impl Searcher {
 
     pub fn search(&self, query: &str) -> Vec<Hit> {
         let mut cache = self.cache.lock().unwrap();
-        run(query, &self.catalog, &self.usage, &mut cache)
+        run(query, &self.catalog, &self.usage, &mut cache, MAX_HITS)
+    }
+
+    /// The best `n` rows instead of the visible few (diagnostics).
+    pub fn search_all(&self, query: &str, n: usize) -> Vec<Hit> {
+        let mut cache = self.cache.lock().unwrap();
+        run(query, &self.catalog, &self.usage, &mut cache, n)
     }
 }
 
@@ -86,7 +94,7 @@ struct Narrow {
     valid: bool,
 }
 
-fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut Narrow) -> Vec<Hit> {
+fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut Narrow, max: usize) -> Vec<Hit> {
     let q = raw.trim();
     if q.is_empty() {
         return usage.lock().map(|u| u.top(MAX_HITS)).unwrap_or_default();
@@ -120,21 +128,27 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     let path_query = q.contains('\\') || q.contains('/');
     let lq = q.to_lowercase();
 
-    // Small items: always a full scan, it's a few hundred entries.
+    let words: Vec<&str> = lq.split_whitespace().collect();
+
+    // Apps, commands and settings: a few thousand entries, always a full scan.
     {
         let mut m = Matcher::new(Config::DEFAULT);
         let mut buf = Vec::new();
-        let words: Vec<&str> = lq.split_whitespace().collect();
         for it in &cat.items {
-            let base = match &it.keywords {
-                Some(kw) => word_prefix_score(&it.name, kw, &words),
-                None => pattern
-                    .score(Utf32Str::new(&it.name, &mut buf), &mut m)
-                    .map(|s| s as i32 + prefix_bonus(&it.name, &lq)),
+            let scored = match &it.keywords {
+                // Every word already begins a word: always a good match.
+                Some(kw) => word_prefix_score(&it.name, kw, &words).map(|s| (s, GOOD)),
+                None => pattern.score(Utf32Str::new(&it.name, &mut buf), &mut m).map(|s| {
+                    let f = fit(&it.name, &lq, &words);
+                    (s as i32 + f, f)
+                }),
             };
-            if let Some(b) = base {
+            if let Some((base, f)) = scored {
                 let mut h = it.hit.clone();
-                h.score = b + h.kind.bonus() + usage.bonus(&h.key());
+                h.score = base + kind_bonus(h.kind, f) + coverage(&it.name, &lq) + usage.bonus(&h.key());
+                if h.kind == Kind::App && secondary(&it.name, &lq) {
+                    h.score -= 60;
+                }
                 hits.push(h);
             }
         }
@@ -147,20 +161,26 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     {
         let mut m = Matcher::new(Config::DEFAULT);
         let mut buf = Vec::new();
-        let words: Vec<&str> = lq.split_whitespace().collect();
         for w in crate::wins::list() {
             let hay = if w.app.is_empty() { w.title.clone() } else { format!("{} {}", w.title, w.app) };
-            if !words_begin(&hay, &words) {
+            // One or two letters begin some word of nearly every page title: then the title or
+            // the app's name has to begin with them.
+            if !words_begin(&hay, &words) || (lq.len() < 3 && !starts_ci(&w.title, &lq) && prefix_bonus(&w.app, &lq) == 0) {
                 continue;
             }
             if let Some(s) = pattern.score(Utf32Str::new(&hay, &mut buf), &mut m) {
                 let prefix = prefix_bonus(&w.title, &lq).max(prefix_bonus(&w.app, &lq));
+                // Found by its title, the window is what you mean. Found only by its app's name
+                // ("chrome", which most titles end with), it comes after the app itself, which
+                // leads as in Start.
+                let own = strip_app(&w.title, &w.app);
+                let bonus = if words_begin(own, &words) { Kind::Window.bonus() } else { BY_APP_NAME };
                 hits.push(Hit {
                     subtitle: if w.app.is_empty() { "Open window".into() } else { format!("Open window \u{b7} {}", w.app) },
                     title: w.title,
                     kind: Kind::Window,
                     action: Action::Focus { hwnd: w.hwnd, icon: w.icon },
-                    score: s as i32 + prefix + Kind::Window.bonus(),
+                    score: s as i32 + prefix + bonus,
                 });
             }
         }
@@ -212,23 +232,26 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     cache.matches = scored.iter().map(|&(i, _)| i).collect();
     cache.valid = true;
 
-    // Top-K by raw score, then re-rank with bonuses.
+    // The best matches by name, then ranked on their path too.
     let mut top = scored;
-    if top.len() > TOP_FILES {
-        top.select_nth_unstable_by(TOP_FILES, |a, b| b.1.cmp(&a.1));
-        top.truncate(TOP_FILES);
+    if top.len() > FILE_POOL {
+        top.select_nth_unstable_by(FILE_POOL, |a, b| b.1.cmp(&a.1));
+        top.truncate(FILE_POOL);
     }
-    // Score first, stat later: only verify existence for candidates that
-    // actually make the visible list (the index can be a little stale).
-    let mut cands: Vec<Hit> = Vec::with_capacity(top.len());
-    for (i, s) in top {
-        let i = i as usize;
-        let path = cat.files.path(i);
-        let dir = cat.files.is_dir(i);
-        let name = cat.files.name(i);
-        let parent = path.rsplit_once('\\').map(|(p, _)| p).unwrap_or("");
+    // What you opened lately (Windows' Recent folder, newest first) counts for a lot.
+    let recent = crate::home::recent_cached();
+    let recent_rank: std::collections::HashMap<String, i32> = recent
+        .iter()
+        .enumerate()
+        .filter_map(|(i, h)| match &h.action {
+            Action::Open(p) => Some((p.to_lowercase(), i as i32)),
+            _ => None,
+        })
+        .collect();
+    let file_hit = |path: &str, dir: bool, raw: u32| -> Hit {
+        let (parent, name) = path.rsplit_once('\\').unwrap_or(("", path));
         let kind = if dir { Kind::Folder } else { Kind::File };
-        let prefix = prefix_bonus(name, &lq);
+        let lp = path.to_lowercase();
         let mut h = Hit {
             title: name.to_string(),
             subtitle: parent.to_string(),
@@ -236,19 +259,37 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
             action: Action::Open(path.to_string()),
             score: 0,
         };
-        // Shallow paths are usually more relevant than deeply nested ones.
-        let depth_penalty = path.matches('\\').count() as i32;
-        h.score = s as i32 + prefix + kind.bonus() - depth_penalty + usage.bonus(&h.key());
-        cands.push(h);
+        h.score = raw as i32 + prefix_bonus(name, &lq) + kind.bonus() + path_prior(&lp) + usage.bonus(&h.key());
+        if let Some(r) = recent_rank.get(&lp) {
+            h.score += RECENT - r / 2;
+        }
+        h
+    };
+    let mut cands: Vec<Hit> =
+        top.into_iter().map(|(i, s)| file_hit(cat.files.path(i as usize), cat.files.is_dir(i as usize), s)).collect();
+    // Recent files the index has not caught up with yet.
+    {
+        let mut m = Matcher::new(cfg.clone());
+        let mut buf = Vec::new();
+        for h in &recent {
+            let Action::Open(p) = &h.action else { continue };
+            let hay = if path_query { p.as_str() } else { h.title.as_str() };
+            if let Some(s) = pattern.score(Utf32Str::new(hay, &mut buf), &mut m) {
+                cands.push(file_hit(p, h.kind == Kind::Folder, s));
+            }
+        }
     }
     cands.sort_by(|a, b| b.score.cmp(&a.score));
+    // Score first, stat later: only verify existence for candidates that actually make the
+    // visible list (the index can be a little stale).
     let mut kept = 0usize;
+    let mut seen = std::collections::HashSet::new();
     for h in cands {
-        if kept >= MAX_HITS {
+        if kept >= max {
             break;
         }
         if let Action::Open(p) = &h.action {
-            if std::fs::symlink_metadata(p).is_err() {
+            if !seen.insert(p.to_lowercase()) || std::fs::symlink_metadata(p).is_err() {
                 continue;
             }
         }
@@ -260,8 +301,126 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     hits.push(web_hit(q));
 
     hits.sort_by(|a, b| b.score.cmp(&a.score));
-    hits.truncate(MAX_HITS);
+    // One row per app: "Task Manager" is both a built-in and a Start entry.
+    let mut apps = std::collections::HashSet::new();
+    hits.retain(|h| !matches!(h.kind, Kind::App | Kind::Command) || apps.insert(h.title.to_lowercase()));
+    hits.truncate(max);
     hits
+}
+
+fn starts_ci(s: &str, lq: &str) -> bool {
+    s.get(..lq.len()).is_some_and(|p| p.eq_ignore_ascii_case(lq))
+}
+
+/// A window title without the app name most apps append ("Inbox - Google Chrome").
+fn strip_app<'a>(title: &'a str, app: &str) -> &'a str {
+    if app.is_empty() || title.len() <= app.len() {
+        return title;
+    }
+    match title.get(title.len() - app.len()..) {
+        Some(tail) if tail.eq_ignore_ascii_case(app) => {
+            title[..title.len() - app.len()].trim_end_matches(|c: char| c.is_whitespace() || "-\u{2013}\u{2014}|".contains(c))
+        }
+        _ => title,
+    }
+}
+
+/// A match this good gets its kind's full bonus (see `fit`).
+const GOOD: i32 = 90;
+/// A window found only through its app's name: just below that app.
+const BY_APP_NAME: i32 = 120;
+/// The most recently opened file; older ones a little less.
+const RECENT: i32 = 100;
+
+/// How the query sits in a name, beyond nucleo's letter-by-letter score. Whole words are what
+/// people type; letters scattered through a long name ("readme" in "Inventor Read-only Mode",
+/// "teams" in "Steam Support Center") are a last resort.
+fn fit(name: &str, lq: &str, words: &[&str]) -> i32 {
+    let l = name.to_lowercase();
+    if l == lq {
+        return 200;
+    }
+    let p = prefix_bonus(&l, lq);
+    if p > 0 {
+        return p;
+    }
+    let compact = |s: &str| -> String { s.chars().filter(|c| c.is_alphanumeric()).collect() };
+    let cq = compact(lq);
+    if cq.len() >= 2 && compact(&l).starts_with(&cq) {
+        return 120; // "wifi" for "Wi-Fi"
+    }
+    if words.len() > 1 && words_begin(&l, words) {
+        return GOOD; // "vis code" for "Visual Studio Code"
+    }
+    let initials: String = l.split(|c: char| !c.is_alphanumeric()).filter_map(|w| w.chars().next()).collect();
+    if cq.len() >= 2 && initials.starts_with(&cq) {
+        return GOOD; // "vsc" for "Visual Studio Code"
+    }
+    if l.contains(lq) {
+        return 30;
+    }
+    0
+}
+
+/// An app, setting or command matched well gets its whole kind bonus; matched loosely, a
+/// quarter of it, so a file named as typed beats an app that merely contains the letters.
+fn kind_bonus(kind: Kind, fit: i32) -> i32 {
+    if fit >= GOOD { kind.bonus() } else { kind.bonus() / 4 }
+}
+
+/// Up to 40 for how much of the name the query covers: "photo" is nearer to "Photos" than to
+/// "Photometric Calc 2026 R1". Breaks the ties equally good prefixes leave.
+fn coverage(name: &str, lq: &str) -> i32 {
+    let n = name.chars().count().max(1) as i32;
+    (40 * lq.chars().count() as i32 / n).min(40)
+}
+
+/// Start-menu entries that come along with an app rather than being one: uninstallers, help,
+/// release notes. Still found, just after the app itself, unless asked for by name.
+fn secondary(name: &str, lq: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "uninstall", "readme", "read me", "release notes", "help", "documentation", "faq", "license",
+        "manual", "what's new", "website", "installer", "repair", "migrat", "support center",
+    ];
+    let l = name.to_lowercase();
+    WORDS.iter().any(|w| l.contains(w) && !lq.contains(w.split(' ').next().unwrap_or(w)))
+}
+
+/// Where a file lives says a lot about whether it is the one you mean: your own folders over
+/// system and program trees, other accounts, caches and build output; shallow over deep.
+/// `lp` is the lowercased path.
+fn path_prior(lp: &str) -> i32 {
+    use std::sync::OnceLock;
+    static PROFILE: OnceLock<String> = OnceLock::new();
+    const KNOWN: &[&str] = &[
+        "\\desktop", "\\documents", "\\downloads", "\\pictures", "\\videos", "\\music",
+        "\\onedrive\\desktop", "\\onedrive\\documents", "\\onedrive\\pictures",
+    ];
+    const SYSTEM: &[&str] = &[
+        "\\windows\\", "\\windows.old", "\\$recycle.bin", "\\program files", "\\programdata",
+        "\\users\\default", "\\users\\public", "\\appdata\\", "\\xboxgames\\", "\\steamapps\\",
+    ];
+    const BUILD: &[&str] = &[
+        "\\node_modules\\", "\\.git\\", "\\target\\", "\\obj\\", "\\bin\\debug", "\\bin\\release",
+        "cache\\", "\\__pycache__", "\\site-packages\\", "\\.venv\\", "\\dist\\", "\\build\\",
+    ];
+    let profile = PROFILE.get_or_init(|| {
+        std::env::var("USERPROFILE").map(|p| p.trim_end_matches('\\').to_lowercase()).unwrap_or_default()
+    });
+    let mut p = -3 * lp.matches('\\').count() as i32;
+    if let Some(rest) = lp.strip_prefix(profile.as_str()).filter(|r| !profile.is_empty() && r.starts_with('\\')) {
+        if rest.matches('\\').count() == 1 {
+            p += 60; // C:\Users\you\Downloads itself
+        } else if KNOWN.iter().any(|k| rest.starts_with(k)) {
+            p += 20;
+        }
+    }
+    if SYSTEM.iter().any(|n| lp.contains(n)) {
+        p -= 90;
+    } else if BUILD.iter().any(|n| lp.contains(n)) {
+        p -= 40;
+    }
+    p
 }
 
 /// The "search the web" fallback row.
@@ -352,4 +511,41 @@ fn calculator(q: &str) -> Option<Hit> {
         action: Action::Copy(text),
         score: 10_000,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whole_words_beat_scattered_letters() {
+        assert!(fit("README.md", "readme", &["readme"]) > fit("Inventor Read-only Mode", "readme", &["readme"]));
+        assert_eq!(fit("Inventor Read-only Mode", "readme", &["readme"]), 0);
+        assert!(fit("Wi-Fi settings", "wifi", &["wifi"]) >= GOOD);
+        assert!(fit("Visual Studio Code", "vsc", &["vsc"]) >= GOOD);
+        assert!(coverage("Photos", "photo") > coverage("Photometric Calc 2026 R1", "photo"));
+    }
+
+    #[test]
+    fn your_folders_beat_system_copies() {
+        std::env::set_var("USERPROFILE", r"C:\Users\me");
+        let mine = path_prior(r"c:\users\me\downloads");
+        assert!(mine > path_prior(r"c:\users\public\downloads"));
+        assert!(mine > path_prior(r"c:\windows.old\users\me\downloads"));
+        assert!(path_prior(r"c:\users\me\desktop\app\src") > path_prior(r"c:\users\me\desktop\app\node_modules\x\src"));
+    }
+
+    #[test]
+    fn window_titles_lose_the_app_suffix() {
+        assert_eq!(strip_app("Inbox - Google Chrome", "Google Chrome"), "Inbox");
+        assert_eq!(strip_app("Claude", "Claude"), "Claude");
+        assert_eq!(strip_app("notes.txt \u{2013} Notepad", "Notepad"), "notes.txt");
+    }
+
+    #[test]
+    fn helpers_rank_after_their_app() {
+        assert!(secondary("Visual Studio Installer", "vis"));
+        assert!(!secondary("Visual Studio Installer", "installer"));
+        assert!(!secondary("Visual Studio", "vis"));
+    }
 }
