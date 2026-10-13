@@ -805,21 +805,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Rows in front of the list, in order (icons are fetched by key, so the shift is fine).</summary>
-    private void InsertRows(List<Native.Hit> hits, ulong gen)
-    {
-        for (int i = 0; i < hits.Count; i++)
-        {
-            var vm = new HitVm(hits[i], "");
-            if (vm.IconKey is { } k)
-            {
-                if (_iconCache.TryGetValue(k, out var bmp)) vm.Icon = bmp;
-                else if (_iconPending.Add(k)) _iconJobs.Add((gen, i, k));
-            }
-            Items.Insert(i, vm);
-        }
-    }
-
     // ------------------------------------------------------------- semantic
 
     private int _semVersion;
@@ -829,7 +814,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Waits for typing to pause, then asks the engine for related results. Never in the keystroke
-    /// path: the instant results are already on screen; these rows join them next to the search box.
+    /// path: the instant results are already on screen; these rows are appended below them.
     /// </summary>
     private void SemanticLoop()
     {
@@ -859,13 +844,6 @@ public sealed partial class MainWindow : Window
             SyncRows(r.Hits, r.Gen, _semQuery);
             SelectFirst();
         }
-        else if (r.Prepend)
-        {
-            // Next to the search box, ahead of the name matches; the highlight stays on its row.
-            var selected = ResultsList.SelectedItem;
-            InsertRows(r.Hits, r.Gen);
-            if (selected != null) ResultsList.SelectedItem = selected;
-        }
         else if (r.Base == Items.Count)
         {
             AddRows(r.Hits, r.Gen, "");
@@ -886,7 +864,7 @@ public sealed partial class MainWindow : Window
     {
         foreach (var (gen, index, key) in _iconJobs.GetConsumingEnumerable())
         {
-            byte[]? px = gen == _gen ? Native.Icon(gen, index, key) : null;
+            byte[]? px = gen == _gen ? Native.Icon(gen, index) : null;
             DispatcherQueue.TryEnqueue(() =>
             {
                 _iconPending.Remove(key);

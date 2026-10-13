@@ -43,7 +43,7 @@ public static class Native
     private static extern void pc_reindex();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    private static extern unsafe int pc_icon(ulong gen, int index, [MarshalAs(UnmanagedType.LPUTF8Str)] string? key, byte* buf);
+    private static extern unsafe int pc_icon(ulong gen, int index, byte* buf);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern int pc_icon_size();
@@ -85,8 +85,7 @@ public static class Native
         [property: JsonPropertyName("gen")] ulong Gen,
         [property: JsonPropertyName("base")] int Base,
         [property: JsonPropertyName("hits")] List<Hit> Hits,
-        [property: JsonPropertyName("replace")] bool Replace = false,
-        [property: JsonPropertyName("prepend")] bool Prepend = false);
+        [property: JsonPropertyName("replace")] bool Replace = false);
 
     /// <summary>Blocks (tens of ms; seconds if the model process has to start): call off the UI thread.</summary>
     public static Appended Semantic(ulong gen, string query)
@@ -161,12 +160,12 @@ public static class Native
     public static void Reindex() => pc_reindex();
 
     /// <summary>Premultiplied RGBA, IconSize x IconSize, or null.</summary>
-    public static unsafe byte[]? Icon(ulong gen, int index, string? key)
+    public static unsafe byte[]? Icon(ulong gen, int index)
     {
         var buf = new byte[IconSize * IconSize * 4];
         fixed (byte* b = buf)
         {
-            return pc_icon(gen, index, key, b) != 0 ? buf : null;
+            return pc_icon(gen, index, b) != 0 ? buf : null;
         }
     }
 }

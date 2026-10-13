@@ -36,15 +36,13 @@ struct Results<'a> {
     hits: Vec<HitJson<'a>>,
 }
 
-/// Related (semantic) rows added to generation `gen`; `base` is the index of the first.
+/// Related (semantic) rows appended to generation `gen`; `base` is the index of the first.
 #[derive(Serialize)]
 struct Appended<'a> {
     gen: u64,
     base: usize,
     /// True when `hits` is the complete new list (the shell replaces everything it shows).
     replace: bool,
-    /// True when `hits` go in front of the rows shown (`base` is 0); the selection stays put.
-    prepend: bool,
     hits: Vec<HitJson<'a>>,
 }
 
@@ -211,8 +209,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     // When the top instant hit does not actually contain what was typed, fuzzy matching has
     // only produced scattered-letter noise (typical for natural-language queries). If the
     // meaning matches are strong, they lead the list and become the default selection;
-    // otherwise they go first too, next to the search box, but the selection stays on the
-    // best name match so an Enter pressed as they arrive still opens what was typed.
+    // otherwise they are appended below the instant results.
     let norm = |s: &str| -> String { s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect() };
     let typed = norm(q);
     let instant_is_real = last.1.first().is_some_and(|h| match h.kind {
@@ -229,9 +226,10 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     let new_hits: Vec<Hit> = fresh.into_iter().map(|(h, _)| h).collect();
 
     if !lead {
-        let json: Vec<HitJson> = new_hits.iter().map(|h| hit_json(h, true, &pinned)).collect();
-        last.1.splice(0..0, new_hits.iter().cloned());
-        let out = serde_json::to_string(&Appended { gen, base: 0, replace: false, prepend: true, hits: json })
+        let base = last.1.len();
+        last.1.extend(new_hits);
+        let json: Vec<HitJson> = last.1[base..].iter().map(|h| hit_json(h, true, &pinned)).collect();
+        let out = serde_json::to_string(&Appended { gen, base, replace: false, hits: json })
             .unwrap_or_else(|_| format!("{{\"gen\":{gen},\"base\":0,\"hits\":[]}}"));
         return into_c(out);
     }
@@ -256,7 +254,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     last.1 = rebuilt;
 
     let json: Vec<HitJson> = last.1.iter().enumerate().map(|(i, h)| hit_json(h, i < n, &pinned)).collect();
-    let out = serde_json::to_string(&Appended { gen, base: 0, replace: true, prepend: false, hits: json })
+    let out = serde_json::to_string(&Appended { gen, base: 0, replace: true, hits: json })
         .unwrap_or_else(|_| format!("{{\"gen\":{gen},\"base\":0,\"hits\":[]}}"));
     into_c(out)
 }
@@ -369,30 +367,14 @@ pub unsafe extern "C" fn pc_act(gen: u64, index: i32, id: *const c_char) -> i32 
 /// Write the icon of hit `index` into `buf` as premultiplied RGBA
 /// (`pc_icon_size()^2 * 4` bytes). Returns 1 on success.
 ///
-/// Icon of hit `index` of generation `gen`. `key` is the icon key the shell asked for: rows can
-/// move after the request (related rows go in front), so a hit at `index` with another icon is
-/// passed over for the one that has it.
-///
 /// # Safety
-/// `buf` must point to at least `pc_icon_size()^2 * 4` writable bytes; `key` is null or a
-/// NUL-terminated UTF-8 string.
+/// `buf` must point to at least `pc_icon_size()^2 * 4` writable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn pc_icon(gen: u64, index: i32, key: *const c_char, buf: *mut u8) -> i32 {
+pub unsafe extern "C" fn pc_icon(gen: u64, index: i32, buf: *mut u8) -> i32 {
     let Some(e) = ENGINE.get() else { return 0 };
-    let key = if key.is_null() { None } else { CStr::from_ptr(key).to_str().ok() };
     let hit: Option<Hit> = {
         let l = e.last.lock().unwrap();
-        if l.0 != gen {
-            None
-        } else {
-            let at = l.1.get(index.max(0) as usize);
-            match key {
-                Some(k) if at.is_none_or(|h| iconsrc::icon_key(h).as_deref() != Some(k)) => {
-                    l.1.iter().find(|h| iconsrc::icon_key(h).as_deref() == Some(k)).cloned()
-                }
-                _ => at.cloned(),
-            }
-        }
+        if l.0 == gen { l.1.get(index.max(0) as usize).cloned() } else { None }
     };
     let Some(hit) = hit else { return 0 };
     match iconsrc::icon_rgba(&hit) {
