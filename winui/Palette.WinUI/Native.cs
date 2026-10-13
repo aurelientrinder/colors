@@ -25,6 +25,15 @@ public static class Native
     private static extern int pc_launch(ulong gen, int index, int reveal);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_all_apps();
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_actions(ulong gen, int index);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int pc_act(ulong gen, int index, [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern int pc_autostart_get();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -61,7 +70,15 @@ public static class Native
         [property: JsonPropertyName("icon_key")] string? IconKey,
         [property: JsonPropertyName("copy_text")] string? CopyText,
         [property: JsonPropertyName("related")] bool Related = false,
-        [property: JsonPropertyName("path")] string? Path = null);
+        [property: JsonPropertyName("path")] string? Path = null,
+        [property: JsonPropertyName("pinned")] bool Pinned = false);
+
+    /// <summary>One entry of a result's action list; <c>Copy</c> is set for copy actions.</summary>
+    public sealed record ActionRow(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("hint")] string Hint,
+        [property: JsonPropertyName("copy")] string? Copy);
 
     /// <summary>Semantic rows to append after the instant results; Base is the index of the first.</summary>
     public sealed record Appended(
@@ -98,9 +115,30 @@ public static class Native
         }
     }
 
-    public static SearchResult Search(string query)
+    public static SearchResult Search(string query) => ReadResult(pc_search(query));
+
+    /// <summary>Every app, A to Z, as a new generation.</summary>
+    public static SearchResult AllApps() => ReadResult(pc_all_apps());
+
+    public static List<ActionRow> Actions(ulong gen, int index)
     {
-        IntPtr p = pc_search(query);
+        IntPtr p = pc_actions(gen, index);
+        try
+        {
+            return JsonSerializer.Deserialize<List<ActionRow>>(Marshal.PtrToStringUTF8(p) ?? "[]") ?? new();
+        }
+        finally
+        {
+            pc_free(p);
+        }
+    }
+
+    public enum ActResult { NotApplicable = -1, Hide = 1, Refresh = 3 }
+
+    public static ActResult Act(ulong gen, int index, string id) => (ActResult)pc_act(gen, index, id);
+
+    private static SearchResult ReadResult(IntPtr p)
+    {
         try
         {
             string json = Marshal.PtrToStringUTF8(p) ?? "{}";
@@ -112,7 +150,7 @@ public static class Native
         }
     }
 
-    public enum LaunchResult { Nothing = 0, Hide = 1, Quit = 2 }
+    public enum LaunchResult { Nothing = 0, Hide = 1, Quit = 2, AllApps = 4 }
 
     public static LaunchResult Launch(ulong gen, int index, bool reveal) =>
         (LaunchResult)pc_launch(gen, index, reveal ? 1 : 0);

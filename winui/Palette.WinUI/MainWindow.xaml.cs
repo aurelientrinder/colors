@@ -63,6 +63,7 @@ public sealed partial class MainWindow : Window
 
         Activated += OnActivated;
         Input.Loaded += (_, _) => HideClearButton();
+        ResultsList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnListWheel), handledEventsToo: true);
 
         // Created off-screen and hidden; the hotkey brings it up.
         _aw.MoveAndResize(new RectInt32(-32000, -32000, 100, 100));
@@ -159,7 +160,7 @@ public sealed partial class MainWindow : Window
         var vis = rows > 0 ? Visibility.Visible : Visibility.Collapsed;
         Divider.Visibility = vis;
         Footer.Visibility = vis;
-        double need = rows > 0 ? rows * RowDip + PadDip : 0;
+        double need = rows > 0 ? Math.Min(rows, MaxRows) * RowDip + PadDip : 0;   // more rows scroll
         // While typing the list only grows: result counts change with every keystroke, and Related
         // rows arrive a moment after each pause, so following them exactly makes the panel bounce.
         // It shrinks to fit once typing settles (HoldHeight).
@@ -183,7 +184,7 @@ public sealed partial class MainWindow : Window
             var (ox, oy, cw, ch) = Win32.ClientArea(_hwnd);
             int ncw = Math.Max(0, _aw.Size.Width - cw) + ox, nch = Math.Max(0, _aw.Size.Height - ch) + oy;
             int w = (int)(WidthDip * s) + ncw;
-            int ph = (int)((InputDip + DividerDip + crate_MaxRows * RowDip + PadDip + PreviewDip + FooterDip) * s) + nch;
+            int ph = (int)((InputDip + DividerDip + MaxRows * RowDip + PadDip + PreviewDip + FooterDip) * s) + nch;
             // Anchored to the bottom of the work area (above the taskbar), with the panel growing upward.
             int gap = (int)(24 * s);
             ph = Math.Min(ph, wa.Height - 2 * gap);
@@ -194,7 +195,7 @@ public sealed partial class MainWindow : Window
         if (!_animating) ApplyShape();
     }
 
-    private const int crate_MaxRows = 7;      // 5 instant + 2 related
+    private const int MaxRows = 9;            // rows the panel shows; longer lists (All apps) scroll
     private bool _holdHeight;                 // typing: the list height may grow but not shrink
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settle;
 
@@ -441,7 +442,8 @@ public sealed partial class MainWindow : Window
         _previousForeground = fg != _hwnd ? fg : IntPtr.Zero;
         _reassertTries = 0;
 
-        Input.Text = "";
+        SetView(View.Results, SearchPlaceholder);
+        SetInputText("");
         Items.Clear();
         _latestQuery = "";
         ResetPreview();
@@ -566,7 +568,22 @@ public sealed partial class MainWindow : Window
 
     // ------------------------------------------------------------------ input
 
-    private void OnInputChanged(object sender, TextChangedEventArgs e) => Enqueue(Input.Text);
+    private void OnInputChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_ignoreText != null && Input.Text == _ignoreText)
+        {
+            _ignoreText = null;
+            return;
+        }
+        _ignoreText = null;
+        if (_view == View.Actions)
+        {
+            ShowActions(Input.Text);
+            return;
+        }
+        if (_view == View.AllApps) SetView(View.Results, SearchPlaceholder);   // typing searches everything
+        Enqueue(Input.Text);
+    }
 
     private void Enqueue(string q)
     {
@@ -575,9 +592,38 @@ public sealed partial class MainWindow : Window
         _wake.Set();
     }
 
+    private static bool Held(VirtualKey k) =>
+        InputKeyboardSource.GetKeyStateForCurrentThread(k).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
     private void OnInputKeyDown(object sender, KeyRoutedEventArgs e)
     {
         int n = Items.Count;
+        int sel = ResultsList.SelectedIndex;
+        bool empty = Input.Text.Length == 0;
+        switch (e.Key)
+        {
+            case VirtualKey.Tab when !Held(VirtualKey.Shift) && _view != View.Actions && n > 0:
+            case VirtualKey.Application when _view != View.Actions && n > 0:
+            case VirtualKey.F10 when Held(VirtualKey.Shift) && _view != View.Actions && n > 0:
+                if (sel < 0) ResultsList.SelectedIndex = sel = 0;
+                EnterActions(sel);
+                e.Handled = true;
+                return;
+            case VirtualKey.Tab when _view == View.Actions:
+                if (Held(VirtualKey.Shift)) LeaveActions();
+                e.Handled = true;
+                return;
+            case VirtualKey.Back when empty && _view == View.Actions:
+            case VirtualKey.Escape when _view == View.Actions:
+                LeaveActions();
+                e.Handled = true;
+                return;
+            case VirtualKey.Back when empty && _view == View.AllApps:
+            case VirtualKey.Escape when _view == View.AllApps:
+                ShowHome();
+                e.Handled = true;
+                return;
+        }
         switch (e.Key)
         {
             case VirtualKey.Down when n > 0:
@@ -591,10 +637,23 @@ public sealed partial class MainWindow : Window
                 e.Handled = true;
                 break;
             case VirtualKey.Enter:
-                bool ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
-                    .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-                Launch(ResultsList.SelectedIndex, reveal: ctrl);
                 e.Handled = true;
+                if (_view == View.Actions)
+                {
+                    RunAction(sel < 0 ? 0 : sel);
+                }
+                else if (Held(VirtualKey.Control) && sel >= 0)
+                {
+                    // Ctrl+Shift+Enter runs as administrator, Ctrl+Enter opens the file location
+                    // (an app's too); either falls back to the plain behaviour where it does not apply.
+                    string id = Held(VirtualKey.Shift) ? "admin" : "location";
+                    if (Native.Act(_gen, sel, id) == Native.ActResult.Hide) HidePalette(restoreFocus: false);
+                    else Launch(sel, reveal: id == "location");
+                }
+                else
+                {
+                    Launch(sel, reveal: false);
+                }
                 break;
             case VirtualKey.Escape:
                 HidePalette(restoreFocus: true);
@@ -610,15 +669,24 @@ public sealed partial class MainWindow : Window
 
     private void Launch(int index, bool reveal)
     {
+        if (_view == View.Actions)
+        {
+            RunAction(index);
+            return;
+        }
         if (index < 0 || index >= Items.Count) return;
-        var vm = Items[index];
-        if (vm.CopyText is { } text && !reveal)
+        LaunchHit(_gen, index, Items[index].CopyText, reveal);
+    }
+
+    private void LaunchHit(ulong gen, int index, string? copyText, bool reveal)
+    {
+        if (copyText is { } text && !reveal)
         {
             var dp = new DataPackage();
             dp.SetText(text);
             Clipboard.SetContent(dp);
         }
-        switch (Native.Launch(_gen, index, reveal))
+        switch (Native.Launch(gen, index, reveal))
         {
             case Native.LaunchResult.Quit:
                 QuitApp();
@@ -626,7 +694,10 @@ public sealed partial class MainWindow : Window
             case Native.LaunchResult.Hide:
                 // A copied result (calculator) should leave you where you were, ready to paste; a
                 // launched app takes focus by itself.
-                HidePalette(restoreFocus: vm.CopyText is not null && !reveal);
+                HidePalette(restoreFocus: copyText is not null && !reveal);
+                break;
+            case Native.LaunchResult.AllApps:
+                ShowAllApps();
                 break;
         }
     }
@@ -648,10 +719,16 @@ public sealed partial class MainWindow : Window
 
     private void ApplyResults(int version, string query, Native.SearchResult r)
     {
-        if (version != _queryVersion || !_visible) return;
+        if (version != _queryVersion || !_visible || _view == View.Actions) return;
         _gen = r.Gen;
         SyncRows(r.Hits, r.Gen, query);
         SelectFirst();
+        if (_restoreSelection >= 0)
+        {
+            // Back from a result's actions: the same row again.
+            if (_restoreSelection < Items.Count) ResultsList.SelectedIndex = _restoreSelection;
+            _restoreSelection = -1;
+        }
         HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
@@ -760,7 +837,7 @@ public sealed partial class MainWindow : Window
     private void AppendRelated(int version, Native.Appended r)
     {
         // Drop the rows if the user kept typing or the list was rebuilt in the meantime.
-        if (version != _queryVersion || !_visible || r.Gen != _gen) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view == View.Actions) return;
         if (r.Replace)
         {
             // Strong meaning matches lead; the engine rebuilt the whole list around them.

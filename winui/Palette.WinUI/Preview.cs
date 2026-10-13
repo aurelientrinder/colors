@@ -46,7 +46,11 @@ public sealed partial class MainWindow
         ".ipynb", ".dart", ".scala", ".pl", ".hs", ".ex", ".exs", ".clj", ".zig", ".nim", ".srt", ".vtt",
     };
 
-    private void OnSelectionChanged(object sender, SelectionChangedEventArgs e) => UpdatePreview();
+    private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (Items.Count > MaxRows) ScrollToSelection();
+        UpdatePreview();
+    }
 
     private void OnPreviewDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) =>
         Launch(ResultsList.SelectedIndex, reveal: false);
@@ -65,7 +69,8 @@ public sealed partial class MainWindow
     {
         int i = ResultsList.SelectedIndex;
         HitVm? vm = _visible && i >= 0 && i < Items.Count ? Items[i] : null;
-        string? path = vm?.Path;
+        // The preview opens under its row, which assumes the list does not scroll.
+        string? path = Items.Count <= MaxRows ? vm?.Path : null;
         if (path != null && _pvRow != i)
         {
             _pvRow = i;

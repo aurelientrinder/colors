@@ -3,6 +3,7 @@
 
 pub mod actions;
 pub mod ffi;
+pub mod home;
 pub mod iconsrc;
 pub mod index;
 pub mod model;

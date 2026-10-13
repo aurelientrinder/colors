@@ -7,6 +7,7 @@ use crate::index::Catalog;
 use crate::model::{Action, Hit};
 use crate::search::Searcher;
 use crate::usage::Usage;
+use crate::home::{self, Pins};
 use crate::{iconsrc, scan, semantic};
 use serde::Serialize;
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -16,7 +17,9 @@ use std::time::Duration;
 
 struct Engine {
     searcher: Searcher,
+    catalog: Arc<RwLock<Catalog>>,
     usage: Arc<Mutex<Usage>>,
+    pins: Mutex<Pins>,
     sem: Arc<semantic::Client>,
     /// Last generation that already received its related rows (appending twice would duplicate them).
     sem_gen: AtomicU64,
@@ -54,10 +57,18 @@ struct HitJson<'a> {
     related: bool,
     /// Full path of a file hit; the shell previews it.
     path: Option<&'a str>,
+    /// Pinned to the home view.
+    pinned: bool,
 }
 
-fn hit_json(h: &Hit, related: bool) -> HitJson<'_> {
+/// Keys of the pinned items, to flag them in results.
+fn pinned_keys(e: &Engine) -> std::collections::HashSet<String> {
+    e.pins.lock().map(|p| p.list().iter().map(Hit::key).collect()).unwrap_or_default()
+}
+
+fn hit_json<'a>(h: &'a Hit, related: bool, pinned: &std::collections::HashSet<String>) -> HitJson<'a> {
     HitJson {
+        pinned: pinned.contains(&h.key()),
         title: &h.title,
         subtitle: &h.subtitle,
         kind: h.kind.label(),
@@ -92,6 +103,11 @@ pub extern "C" fn pc_init() -> i32 {
             scan::spawn_watcher(catalog.clone(), Arc::new(move |docs| s.touch(docs)));
         }
 
+        // Read the recent files now, so the first home view after startup does not wait on it.
+        std::thread::spawn(|| {
+            home::recent_cached();
+        });
+
         // Start its process a little after launch so the model load and the first indexing
         // pass never compete with the app's own startup.
         if semantic::available() {
@@ -103,8 +119,10 @@ pub extern "C" fn pc_init() -> i32 {
         }
 
         Engine {
-            searcher: Searcher::new(catalog, usage.clone()),
+            searcher: Searcher::new(catalog.clone(), usage.clone()),
+            catalog,
             usage,
+            pins: Mutex::new(Pins::load()),
             sem,
             sem_gen: AtomicU64::new(0),
             last: Mutex::new((0, Vec::new())),
@@ -126,8 +144,16 @@ fn into_c(s: String) -> *mut c_char {
 pub unsafe extern "C" fn pc_search(query: *const c_char) -> *mut c_char {
     let Some(e) = ENGINE.get() else { return into_c("{\"gen\":0,\"hits\":[]}".into()) };
     let q = if query.is_null() { "" } else { CStr::from_ptr(query).to_str().unwrap_or("") };
-    let hits = e.searcher.search(q);
-    let json: Vec<HitJson> = hits.iter().map(|h| hit_json(h, false)).collect();
+    // Nothing typed: the home view (pins, most used, recent files, All apps).
+    let hits = if q.trim().is_empty() {
+        let pins = e.pins.lock().unwrap();
+        let usage = e.usage.lock().unwrap();
+        home::home(&pins, &usage)
+    } else {
+        e.searcher.search(q)
+    };
+    let pinned = pinned_keys(e);
+    let json: Vec<HitJson> = hits.iter().map(|h| hit_json(h, false, &pinned)).collect();
     let gen = e.gen.fetch_add(1, Ordering::SeqCst) + 1;
     let out = serde_json::to_string(&Results { gen, hits: json })
         .unwrap_or_else(|_| "{\"gen\":0,\"hits\":[]}".into());
@@ -160,6 +186,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
         return empty();
     }
 
+    let pinned = pinned_keys(e);
     let mut last = e.last.lock().unwrap();
     if last.0 != gen {
         return empty();
@@ -201,7 +228,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     if !lead {
         let base = last.1.len();
         last.1.extend(new_hits);
-        let json: Vec<HitJson> = last.1[base..].iter().map(|h| hit_json(h, true)).collect();
+        let json: Vec<HitJson> = last.1[base..].iter().map(|h| hit_json(h, true, &pinned)).collect();
         let out = serde_json::to_string(&Appended { gen, base, replace: false, hits: json })
             .unwrap_or_else(|_| format!("{{\"gen\":{gen},\"base\":0,\"hits\":[]}}"));
         return into_c(out);
@@ -226,7 +253,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     rebuilt.truncate(crate::search::MAX_HITS + semantic::MAX_RELATED);
     last.1 = rebuilt;
 
-    let json: Vec<HitJson> = last.1.iter().enumerate().map(|(i, h)| hit_json(h, i < n)).collect();
+    let json: Vec<HitJson> = last.1.iter().enumerate().map(|(i, h)| hit_json(h, i < n, &pinned)).collect();
     let out = serde_json::to_string(&Appended { gen, base: 0, replace: true, hits: json })
         .unwrap_or_else(|_| format!("{{\"gen\":{gen},\"base\":0,\"hits\":[]}}"));
     into_c(out)
@@ -240,8 +267,15 @@ pub extern "C" fn pc_semantic_status() -> *mut c_char {
     into_c(text)
 }
 
+/// Hit `index` of generation `gen`, if that generation is still the latest.
+fn hit_at(e: &Engine, gen: u64, index: i32) -> Option<Hit> {
+    let l = e.last.lock().unwrap();
+    if l.0 == gen { l.1.get(index.max(0) as usize).cloned() } else { None }
+}
+
 /// Launch hit `index` of search generation `gen` (ignored if stale). `reveal != 0` shows a file in
-/// Explorer instead. Returns 1 if the shell should hide the palette, 2 if it should quit.
+/// Explorer instead. Returns 1 if the shell should hide the palette, 2 if it should quit, 4 if it
+/// should show the full app list (`pc_all_apps`).
 #[no_mangle]
 pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     let Some(e) = ENGINE.get() else { return 0 };
@@ -250,6 +284,9 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
         if l.0 == gen { l.1.get(index.max(0) as usize).cloned() } else { None }
     };
     let Some(hit) = hit else { return 0 };
+    if matches!(&hit.action, Action::Builtin(id) if id == home::ALL_APPS) {
+        return 4;
+    }
     if reveal != 0 {
         if let Some(p) = hit.reveal_path() {
             actions::reveal(&p);
@@ -268,6 +305,61 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
         return 2;
     }
     hide as i32
+}
+
+/// Every app, A to Z, as a new generation: `{"gen":N,"hits":[...]}`. Free with `pc_free`.
+#[no_mangle]
+pub extern "C" fn pc_all_apps() -> *mut c_char {
+    let Some(e) = ENGINE.get() else { return into_c("{\"gen\":0,\"hits\":[]}".into()) };
+    let mut apps: Vec<Hit> = e
+        .catalog
+        .read()
+        .unwrap()
+        .items
+        .iter()
+        .filter(|i| i.hit.kind == crate::model::Kind::App)
+        .map(|i| i.hit.clone())
+        .collect();
+    apps.sort_by_cached_key(|h| h.title.to_lowercase());
+    apps.dedup_by(|a, b| a.title.eq_ignore_ascii_case(&b.title));
+    let pinned = pinned_keys(e);
+    let gen = e.gen.fetch_add(1, Ordering::SeqCst) + 1;
+    let json: Vec<HitJson> = apps.iter().map(|h| hit_json(h, false, &pinned)).collect();
+    let out = serde_json::to_string(&Results { gen, hits: json }).unwrap_or_else(|_| "{\"gen\":0,\"hits\":[]}".into());
+    *e.last.lock().unwrap() = (gen, apps);
+    into_c(out)
+}
+
+/// The actions for hit `index` of generation `gen`, as a JSON array of
+/// `{"id","title","hint","copy"}`, the default action first. Free with `pc_free`.
+#[no_mangle]
+pub extern "C" fn pc_actions(gen: u64, index: i32) -> *mut c_char {
+    let Some(e) = ENGINE.get() else { return into_c("[]".into()) };
+    let Some(hit) = hit_at(e, gen, index) else { return into_c("[]".into()) };
+    let pin = {
+        let p = e.pins.lock().unwrap();
+        p.position(&hit.key()).map(|i| (i, p.list().len()))
+    };
+    into_c(serde_json::to_string(&home::actions_for(&hit, pin)).unwrap_or_else(|_| "[]".into()))
+}
+
+/// Run action `id` (from `pc_actions`) on hit `index` of generation `gen`. Returns -1 if it does
+/// not apply, 1 to hide the palette, 3 to show the current list again (pins changed).
+///
+/// # Safety
+/// `id` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_act(gen: u64, index: i32, id: *const c_char) -> i32 {
+    let Some(e) = ENGINE.get() else { return -1 };
+    let id = if id.is_null() { "" } else { CStr::from_ptr(id).to_str().unwrap_or("") };
+    let Some(hit) = hit_at(e, gen, index) else { return -1 };
+    let mut pins = e.pins.lock().unwrap();
+    let mut usage = e.usage.lock().unwrap();
+    match home::act(&hit, id, &mut pins, &mut usage) {
+        home::After::NotApplicable => -1,
+        home::After::Hide => 1,
+        home::After::Refresh => 3,
+    }
 }
 
 /// Write the icon of hit `index` into `buf` as premultiplied RGBA

@@ -74,6 +74,31 @@ Online-only cloud files are not read (that would download them). Double-click it
 
 Anything you launch is remembered and boosted next time (frecency).
 
+## Home, All apps and actions
+
+Opening the palette without typing shows **Home**: your pinned items, the few things you open
+most, files Windows saw you open recently (its Recent folder, as Start's "Recommended" uses),
+and **All apps**, every installed app A to Z (scrolls; Esc or Backspace goes back).
+
+`Tab` (or a right click, the menu key, `Shift+F10`) opens the **actions** for the selected
+result; typing filters them, `Esc` goes back:
+
+| Action | For | Shortcut from the results |
+|---|---|---|
+| Open / Switch to / Run | everything | `Enter` |
+| Run as administrator | desktop apps, exe/bat/cmd/msi files | `Ctrl+Shift+Enter` |
+| Open file location | files, folders, desktop apps | `Ctrl+Enter` |
+| Open with…, Properties | files (Properties for folders too) | |
+| Open in Terminal | folders | |
+| Copy path | files, folders, desktop apps | |
+| Pin to Home / Unpin / Move pin up, down | anything but windows, calculator and web rows | |
+| Uninstall… | apps (opens Settings › Installed apps) | |
+| Close window | open windows | |
+
+Pins live in `%LOCALAPPDATA%\palette\pins.json`. A desktop app's file is the one the shell
+itself reports for it (`System.Link.TargetParsingPath`); Store apps have none, so they get no
+file actions.
+
 ## How it works
 
 - **Instant tier:** all paths live in one string arena; each keystroke is a

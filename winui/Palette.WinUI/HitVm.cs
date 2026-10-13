@@ -18,12 +18,15 @@ public sealed class HitVm : INotifyPropertyChanged
 {
     private ImageSource? _icon;
 
-    public HitVm(Native.Hit h, string query)
+    /// <param name="glyph">Tile glyph overriding the one for the row's kind (action rows).</param>
+    /// <param name="chip">Text of the chip on the right, overriding the kind ("" hides it).</param>
+    public HitVm(Native.Hit h, string query, string? glyph = null, string? chip = null)
     {
         Title = h.Title;
         Subtitle = h.Subtitle;
-        // Rows found by meaning say so instead of their type; the icon still shows the type.
-        Kind = h.Related ? "Related" : h.Kind;
+        // Rows found by meaning say so instead of their type, as do pinned ones; the icon still
+        // shows the type.
+        Kind = chip ?? (h.Related ? "Related" : h.Pinned ? "Pinned" : h.Kind);
         IconKey = h.IconKey;
         CopyText = h.CopyText;
         Path = h.Path;
@@ -38,6 +41,7 @@ public sealed class HitVm : INotifyPropertyChanged
             "Web" => ("", Rgb(74, 170, 232), Rgb(40, 122, 196)),
             _ => ("", Rgb(122, 130, 150), Rgb(86, 94, 114)),
         };
+        if (glyph != null) Glyph = glyph;
         TileBrush = new LinearGradientBrush
         {
             StartPoint = new Windows.Foundation.Point(0, 0),
@@ -99,6 +103,8 @@ public sealed class HitVm : INotifyPropertyChanged
     }
 
     public Visibility IconVisibility => _icon != null ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ChipVisibility => Kind.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
     /// <summary>Glyph tile, only for kinds that never get a shell icon.</summary>
     public Visibility TileVisibility => IconKey == null ? Visibility.Visible : Visibility.Collapsed;

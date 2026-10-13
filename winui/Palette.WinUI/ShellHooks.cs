@@ -49,7 +49,6 @@ internal sealed class ShellHooks
     private readonly HashSet<uint> _bufferedDown = new();
 
     // Start / the search flyout
-    private bool _searchFg;                                // it has the foreground
     private bool _handoff;                                 // it is being closed; the palette opens once it is gone
     private long _handoffAt;
 
@@ -113,7 +112,7 @@ internal sealed class ShellHooks
     {
         bool opening = !_isVisible();
         if (opening) BeginBuffering();
-        if (opening && _searchFg)
+        if (opening && SearchInFront())
         {
             // Start keeps the foreground from the palette, so close it first (Escape goes to it
             // ahead of anything else) and open once it is gone: see OnForeground.
@@ -177,7 +176,7 @@ internal sealed class ShellHooks
                 _winDown = false;
                 // A lone, quick tap. The time limit also covers Win+L, whose L Windows keeps from hooks.
                 // With Start open the tap is left to close it, as it always has.
-                if (!_winChord && _settings.WinKeyOpens && !_searchFg && MsSince(_winDownAt) < TapMs)
+                if (!_winChord && _settings.WinKeyOpens && MsSince(_winDownAt) < TapMs && !SearchInFront())
                 {
                     App.Log("windows key tap");
                     Win32.MaskStartMenu();                 // the shell now sees a chord: no Start menu
@@ -202,8 +201,8 @@ internal sealed class ShellHooks
         if (!down && _swallowedUp.Remove(vk)) return (IntPtr)1;
 
         // Typing into Start: carry on in the palette. The key is buffered below and replayed there.
-        if (down && _searchFg && !_handoff && !_buffering && _settings.ReplaceSearch && Types(vk)
-            && !_winDown && !Held(VK_CONTROL) && !Held(VK_MENU))
+        if (down && !_handoff && !_buffering && _settings.ReplaceSearch && Types(vk)
+            && !_winDown && !Held(VK_CONTROL) && !Held(VK_MENU) && SearchInFront())
         {
             App.Log("typing into Start: handing over");
             Trigger(toggle: false);
@@ -244,9 +243,10 @@ internal sealed class ShellHooks
     private uint _lastPid;
     private bool _lastPidIsSearch;
 
-    private void OnForeground(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+    /// <summary>Is this window Start / the search flyout? One process lookup per new process id.</summary>
+    private bool IsSearch(IntPtr hwnd)
     {
-        if (hwnd == IntPtr.Zero) return;
+        if (hwnd == IntPtr.Zero) return false;
         uint pid = Win32.ProcessOf(hwnd);
         if (pid != _lastPid)
         {
@@ -254,8 +254,19 @@ internal sealed class ShellHooks
             string? exe = Win32.ProcessImageName(pid);
             _lastPidIsSearch = exe != null && SearchHosts.Contains(Path.GetFileName(exe), StringComparer.OrdinalIgnoreCase);
         }
-        _searchFg = _lastPidIsSearch;
-        if (_handoff && !_searchFg)
+        return _lastPidIsSearch;
+    }
+
+    /// <summary>
+    /// Start or the search flyout is in front. Asked of the foreground window itself rather than
+    /// remembered from foreground events, which miss a Start that was open before the hook was in.
+    /// </summary>
+    private bool SearchInFront() => IsSearch(Win32.GetForegroundWindow());
+
+    private void OnForeground(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+    {
+        if (hwnd == IntPtr.Zero) return;
+        if (_handoff && !IsSearch(hwnd))
         {
             _handoff = false;
             if (MsSince(_handoffAt) < BufferMs) _show();       // Start has closed: open in its place
