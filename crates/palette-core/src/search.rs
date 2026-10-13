@@ -112,6 +112,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     if let Some(h) = calculator(q) {
         hits.push(h);
     }
+    hits.extend(crate::quick::hits(q));
 
     let cat = catalog.read().unwrap();
     let usage = usage.lock().unwrap();
@@ -123,11 +124,17 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     {
         let mut m = Matcher::new(Config::DEFAULT);
         let mut buf = Vec::new();
+        let words: Vec<&str> = lq.split_whitespace().collect();
         for it in &cat.items {
-            if let Some(s) = pattern.score(Utf32Str::new(&it.name, &mut buf), &mut m) {
+            let base = match &it.keywords {
+                Some(kw) => word_prefix_score(&it.name, kw, &words),
+                None => pattern
+                    .score(Utf32Str::new(&it.name, &mut buf), &mut m)
+                    .map(|s| s as i32 + prefix_bonus(&it.name, &lq)),
+            };
+            if let Some(b) = base {
                 let mut h = it.hit.clone();
-                let prefix = prefix_bonus(&it.name, &lq);
-                h.score = s as i32 + prefix + h.kind.bonus() + usage.bonus(&h.key());
+                h.score = b + h.kind.bonus() + usage.bonus(&h.key());
                 hits.push(h);
             }
         }
@@ -135,11 +142,17 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
 
     // Open windows, matched on their title and their app's name ("chrome" finds every Chrome
     // window). Listed fresh each time: windows open, close and retitle themselves constantly.
+    // Every typed word must begin a word of either: a long page title contains the scattered
+    // letters of nearly any query, and a window outranks almost everything else.
     {
         let mut m = Matcher::new(Config::DEFAULT);
         let mut buf = Vec::new();
+        let words: Vec<&str> = lq.split_whitespace().collect();
         for w in crate::wins::list() {
             let hay = if w.app.is_empty() { w.title.clone() } else { format!("{} {}", w.title, w.app) };
+            if !words_begin(&hay, &words) {
+                continue;
+            }
             if let Some(s) = pattern.score(Utf32Str::new(&hay, &mut buf), &mut m) {
                 let prefix = prefix_bonus(&w.title, &lq).max(prefix_bonus(&w.app, &lq));
                 hits.push(Hit {
@@ -260,6 +273,44 @@ pub fn web_hit(q: &str) -> Hit {
         action: Action::Open(format!("https://www.google.com/search?q={}", urlencoding::encode(q))),
         score: i32::MIN / 2,
     }
+}
+
+/// Does every one of `words` (lowercase) begin some word of `text`?
+fn words_begin(text: &str, words: &[&str]) -> bool {
+    let tw: Vec<String> =
+        text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect();
+    words.iter().all(|w| {
+        let w: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
+        w.is_empty() || tw.iter().any(|t| t.starts_with(&w))
+    })
+}
+
+/// Settings-index entries: every typed word must begin a word of the name or of its keywords
+/// ("mouse size" finds "Mouse pointer size", "batt" finds "Battery saver"). Words found in the
+/// name count for more than words found only among the keywords.
+fn word_prefix_score(name: &str, keywords: &str, words: &[&str]) -> Option<i32> {
+    if words.is_empty() || words.iter().map(|w| w.len()).sum::<usize>() < 3 {
+        return None;
+    }
+    let split = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+    };
+    let name_words = split(name);
+    let kw_words = split(keywords);
+    let mut score = 120;
+    for w in words {
+        if name_words.iter().any(|n| n.starts_with(w)) {
+            score += 40;
+        } else if kw_words.iter().any(|k| k.starts_with(w)) {
+            score += 15;
+        } else {
+            return None;
+        }
+    }
+    if name_words.first().is_some_and(|n| n.starts_with(words[0])) {
+        score += 60;
+    }
+    Some(score)
 }
 
 /// 140 if the whole name starts with the query, 100 if any word does.

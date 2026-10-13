@@ -105,6 +105,15 @@ pub fn execute(hit: &Hit, copy: &dyn Fn(&str)) -> bool {
         }
         Action::Copy(text) => copy(text),
         Action::Focus { hwnd, .. } => crate::wins::focus(*hwnd),
+        Action::Exec { file, args } => {
+            let (f, a) = (wide(file), wide(args));
+            unsafe {
+                ShellExecuteW(None, w!("open"), PCWSTR(f.as_ptr()), PCWSTR(a.as_ptr()), None, SW_SHOWNORMAL);
+            }
+        }
+        Action::Builtin(id) if id.starts_with("quick:") => {
+            crate::quick::run(&id["quick:".len()..]);
+        }
         Action::Builtin(id) => match id.as_str() {
             "start" => open_start_menu(),
             "lock" => quiet("rundll32.exe", &["user32.dll,LockWorkStation"]),

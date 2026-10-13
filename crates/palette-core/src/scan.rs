@@ -16,6 +16,7 @@ fn item(name: &str, subtitle: &str, kind: Kind, action: Action) -> Item {
     Item {
         name: name.to_string(),
         hit: Hit { title: name.to_string(), subtitle: subtitle.to_string(), kind, action, score: 0 },
+        keywords: None,
     }
 }
 
@@ -447,7 +448,17 @@ pub fn spawn_manager(catalog: Arc<RwLock<Catalog>>, notify: Notify) {
         // The index is up; everything from here on is background upkeep.
         background_thread();
 
-        // 2. Refresh apps.
+        // 2. Every setting Windows' own search knows (cached; rebuilt after Windows updates).
+        let settings = crate::settings_index::load();
+        if !settings.is_empty() {
+            publish(&catalog, |c| {
+                // The hand-picked pages keep their friendlier names; the index adds the rest.
+                let have: std::collections::HashSet<String> = c.items.iter().map(|i| i.name.to_lowercase()).collect();
+                c.items.extend(settings.into_iter().filter(|i| !have.contains(&i.name.to_lowercase())));
+            });
+        }
+
+        // 3. Refresh apps.
         let apps = scan_apps();
         if !apps.is_empty() {
             save_apps_cache(&apps);
@@ -457,7 +468,7 @@ pub fn spawn_manager(catalog: Arc<RwLock<Catalog>>, notify: Notify) {
             });
         }
 
-        // 3. Make sure we have *some* file index, and ask for the fast one.
+        // 4. Make sure we have *some* file index, and ask for the fast one.
         if snapshot_files().is_empty() {
             if catalog.read().unwrap().files.len() == 0 {
                 let walked = walk_profile();

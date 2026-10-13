@@ -12,6 +12,8 @@ pub enum Kind {
     Web,
     /// An open window (the switcher).
     Window,
+    /// A quick setting changed in place: dark mode, Wi-Fi, volume, ...
+    Toggle,
 }
 
 impl Kind {
@@ -25,6 +27,7 @@ impl Kind {
             Kind::Calc => "Calculator",
             Kind::Web => "Web",
             Kind::Window => "Window",
+            Kind::Toggle => "Toggle",
         }
     }
     /// Ranking nudge so apps beat same-scoring files.
@@ -38,7 +41,8 @@ impl Kind {
             Kind::Command => 40,
             Kind::Folder => 20,
             Kind::File => 0,
-            Kind::Calc | Kind::Web => 0,
+            // Quick settings are scored by how well the query names them (see quick.rs).
+            Kind::Calc | Kind::Web | Kind::Toggle => 0,
         }
     }
 }
@@ -56,6 +60,8 @@ pub enum Action {
     /// Bring an open window to the front. `icon` is the app it belongs to (exe path or
     /// shell:AppsFolder\<AUMID>), for its icon.
     Focus { hwnd: isize, icon: String },
+    /// Start a program with arguments, without a console (Control Panel pages and the like).
+    Exec { file: String, args: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,6 +83,7 @@ impl Hit {
             Action::Copy(_) => format!("copy:{}", self.title),
             Action::Builtin(s) => format!("builtin:{s}"),
             Action::Focus { hwnd, .. } => format!("window:{hwnd}"),
+            Action::Exec { file, args } => format!("exec:{file} {args}"),
         }
     }
 
@@ -94,4 +101,8 @@ impl Hit {
 pub struct Item {
     pub name: String,
     pub hit: Hit,
+    /// Set for entries from Windows' settings index: they match by word prefixes over the name
+    /// and these keywords instead of fuzzily (a fuzzy scan of 1,200 long setting names would
+    /// find scattered letters of almost anything).
+    pub keywords: Option<String>,
 }

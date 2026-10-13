@@ -24,4 +24,7 @@ features = [
   "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi",
   "Win32_System_Threading", "Win32_Security", "Win32_Graphics_Dwm", "Win32_UI_Shell_PropertiesSystem",
   "Win32_System_Com_StructuredStorage", "Win32_System_Variant",
+  # quick settings (dark mode, radios, volume) and the settings index
+  "Win32_System_Registry", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_Globalization",
+  "Devices_Radios", "Foundation_Collections",
 ]

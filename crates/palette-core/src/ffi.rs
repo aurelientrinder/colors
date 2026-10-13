@@ -294,7 +294,9 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
         }
     }
     // Windows come and go: remembering one would leave a dead row in the most-used list.
-    if hit.kind != crate::model::Kind::Window {
+    // Quick settings say what they will do in the current state: remembering one would offer
+    // "Turn Wi-Fi off" in the home view while it is already off.
+    if !matches!(hit.kind, crate::model::Kind::Window | crate::model::Kind::Toggle) {
         if let Ok(mut u) = e.usage.lock() {
             u.record(&hit);
         }

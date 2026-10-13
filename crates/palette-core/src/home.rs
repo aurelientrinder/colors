@@ -67,7 +67,7 @@ impl Pins {
 
 /// Can this hit be pinned? Windows come and go; calculator and web rows echo the query.
 pub fn pinnable(hit: &Hit) -> bool {
-    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web)
+    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle)
         && !matches!(&hit.action, Action::Builtin(id) if id == "allapps")
 }
 
@@ -207,7 +207,8 @@ pub fn link_target(lnk: &Path) -> Option<String> {
     }
 }
 
-fn expand_env(s: &str) -> String {
+/// `%WINDIR%\x` -> `C:\Windows\x`; unknown variables are left as they are.
+pub fn expand_env(s: &str) -> String {
     if !s.contains('%') {
         return s.to_string();
     }
@@ -320,6 +321,7 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
         Kind::Command => "Run",
         Kind::Calc => "Copy result",
         Kind::Web => "Search the web",
+        Kind::Toggle => "Apply",
         _ => "Open",
     };
     v.push(row("open", open, "Enter"));

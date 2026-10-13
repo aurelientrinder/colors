@@ -39,6 +39,7 @@ public sealed class HitVm : INotifyPropertyChanged
             "Command" => ("", Rgb(214, 96, 122), Rgb(168, 62, 92)),
             "Calculator" => ("", Rgb(160, 110, 236), Rgb(112, 70, 196)),
             "Web" => ("", Rgb(74, 170, 232), Rgb(40, 122, 196)),
+            "Toggle" => ("", Rgb(46, 178, 120), Rgb(24, 132, 88)),
             _ => ("", Rgb(122, 130, 150), Rgb(86, 94, 114)),
         };
         if (glyph != null) Glyph = glyph;

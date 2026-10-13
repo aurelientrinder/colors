@@ -74,6 +74,29 @@ Online-only cloud files are not read (that would download them). Double-click it
 
 Anything you launch is remembered and boosted next time (frecency).
 
+## Settings and quick toggles
+
+Every setting Windows' own search knows is searchable: about 1,100 Settings pages and individual
+settings ("mouse size" finds Mouse pointer size, "file ext" finds Show file extensions) and the
+classic Control Panel tasks ("env var" finds Edit the system environment variables). The list is
+read from Windows itself (`%WINDIR%\ImmersiveControlPanel\Settings\AllSystemSettings_*.xml`,
+names in your display language, pages linked through the table in SystemSettings.dll) and
+cached in `%LOCALAPPDATA%\palette\settings-index.json` until Windows updates it. These entries
+match by word beginnings over their name and keywords rather than fuzzily.
+
+Some settings change in place, without opening anything; the row says what Enter will do now:
+
+| Type | Does |
+|---|---|
+| `dark`, `light mode`, `theme` | turn dark mode on or off (apps and Windows) |
+| `wifi`, `bluetooth` | turn the radio on or off |
+| `mute` | mute or unmute (shows the volume) |
+| `volume 30`, `vol 30` | set the volume |
+| `brightness 70` | set the built-in display's brightness |
+
+Open windows now also need every typed word to begin a word of their title or app, so a long
+page title no longer matches unrelated searches.
+
 ## Home, All apps and actions
 
 Opening the palette without typing shows **Home**: your pinned items, the few things you open
