@@ -54,6 +54,8 @@ pub enum Step {
     Uri { uri: String, title: String },
     /// A built-in command (lock, sleep).
     Builtin { id: String, title: String },
+    /// Close every window but those of `keep`.
+    CloseAll { keep: Vec<App> },
 }
 
 /// The row leads, as a quick setting asked for does.
@@ -62,9 +64,14 @@ const SCORE: i32 = 1005;
 /// The row for `query`, if it reads as a request.
 pub fn hits(query: &str, items: &[Item]) -> Vec<Hit> {
     let Some(plan) = parse(query, items) else { return Vec::new() };
+    vec![plan_hit(plan)]
+}
+
+/// The row for `plan`: says what Enter will do.
+pub fn plan_hit(plan: Vec<Step>) -> Hit {
     let (title, parts) = describe(&plan);
     let subtitle = if parts.len() > 1 { format!("{} steps", parts.len()) } else { "Runs at once".into() };
-    vec![Hit { title, subtitle, kind: Kind::Plan, action: Action::Plan(plan), score: SCORE }]
+    Hit { title, subtitle, kind: Kind::Plan, action: Action::Plan(plan), score: SCORE }
 }
 
 // ---------------------------------------------------------------- reading the request
@@ -180,7 +187,7 @@ fn special(c: &str) -> Option<(Step, bool)> {
     }
 }
 
-fn shot() -> Step {
+pub(crate) fn shot() -> Step {
     Step::Uri { uri: "ms-screenclip:".into(), title: "Take a screenshot".into() }
 }
 
@@ -366,7 +373,7 @@ pub fn read(query: &str, items: &[Item]) -> Option<(Vec<Step>, bool)> {
 }
 
 /// Words around an app's name that are not part of it ("the", "app", "window").
-fn bare_name(s: &str) -> &str {
+pub(crate) fn bare_name(s: &str) -> &str {
     let mut s = s.trim();
     for p in ["the ", "my ", "a ", "all ", "every ", "both "] {
         s = s.strip_prefix(p).unwrap_or(s);
@@ -378,7 +385,7 @@ fn bare_name(s: &str) -> &str {
 }
 
 /// What people call some apps.
-fn alias(s: &str) -> &str {
+pub(crate) fn alias(s: &str) -> &str {
     match s {
         "explorer" | "files" | "file manager" | "my files" => "file explorer",
         "cmd" | "command line" => "command prompt",
@@ -394,9 +401,73 @@ fn alias(s: &str) -> &str {
     }
 }
 
-fn word_starts(name: &str, words: &[&str]) -> bool {
+pub(crate) fn word_starts(name: &str, words: &[&str]) -> bool {
     let parts: Vec<&str> = name.split(|c: char| !c.is_alphanumeric()).filter(|p| !p.is_empty()).collect();
     words.iter().all(|w| parts.iter().any(|p| p.starts_with(w)))
+}
+
+/// Edits between `a` and `b` (a swap of two letters is one), up to `max`; more is `max + 1`.
+fn edits(a: &str, b: &str, max: usize) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a.len().abs_diff(b.len()) > max {
+        return max + 1;
+    }
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for j in 0..=b.len() {
+        d[0][j] = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()].min(max + 1)
+}
+
+/// As [`find_app`], and failing that a close spelling of the name or one of its words
+/// ("crome", "spotfy", "outlok"). For names a model copied from the request, typos included.
+pub fn find_app_loose(name: &str, items: &[Item]) -> Option<App> {
+    if let Some(a) = find_app(name, items) {
+        return Some(a);
+    }
+    let n = alias(bare_name(name));
+    let n = n.to_lowercase();
+    let len = n.chars().count();
+    if len < 4 {
+        return None;
+    }
+    let max = if len >= 7 { 2 } else { 1 };
+    // An alias spelt close ("vscdoe")
+    for key in ["vscode", "explorer", "calc", "taskmgr", "browser"] {
+        if edits(&n, key, max) <= max {
+            return find_app(key, items);
+        }
+    }
+    let mut best: Option<(usize, usize, &Item)> = None;
+    for it in items.iter().filter(|i| i.hit.kind == Kind::App) {
+        let nm = it.name.to_lowercase();
+        let whole = edits(&n, &nm, max);
+        let word = nm.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 4).map(|w| edits(&n, w, max)).min();
+        let d = whole.min(word.unwrap_or(max + 1));
+        if d > max {
+            continue;
+        }
+        if best.is_none_or(|(bd, bl, _)| d < bd || (d == bd && nm.len() < bl)) {
+            best = Some((d, nm.len(), it));
+        }
+    }
+    let (_, _, it) = best?;
+    match &it.hit.action {
+        Action::Open(t) => Some(App { name: it.name.clone(), target: t.clone() }),
+        _ => None,
+    }
 }
 
 /// The app `name` means: by its full name, its beginning, or the start of its words.
@@ -523,6 +594,11 @@ fn describe(plan: &[Step]) -> (String, Vec<String>) {
                 (t.into(), t.into())
             }
             Step::Quick { title, .. } | Step::Uri { title, .. } | Step::Builtin { title, .. } => (title.clone(), title.clone()),
+            Step::CloseAll { keep } => {
+                let refs: Vec<&App> = keep.iter().collect();
+                let t = if keep.is_empty() { "Close all windows".to_string() } else { format!("Close all windows except {}", names(&refs)) };
+                (t.clone(), t)
+            }
         };
         parts.push(p);
         short.push(s);
@@ -589,6 +665,8 @@ pub fn to_line(plan: &[Step]) -> String {
             Step::Uri { uri, .. } if uri == "ms-screenclip:" => "shot".into(),
             Step::Uri { uri, .. } => format!("url {uri}"),
             Step::Builtin { id, .. } => id.clone(),
+            Step::CloseAll { keep } if keep.is_empty() => "closeall".into(),
+            Step::CloseAll { keep } => format!("closeall except {}", keep.iter().map(n).collect::<Vec<_>>().join(", ")),
         };
         out.push(s);
     }
@@ -630,11 +708,7 @@ pub fn run(plan: &[Step]) {
                     Some(h) => wins::focus(h),
                     None => crate::actions::shell_open(&a.target),
                 },
-                Step::Close(a) => each_window(a, |h| unsafe {
-                    use windows::Win32::Foundation::{LPARAM, WPARAM};
-                    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
-                    let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
-                }),
+                Step::Close(a) => each_window(a, |h| close_window(h.0 as isize)),
                 Step::Minimize(a) => each_window(a, |h| unsafe {
                     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
                     let _ = ShowWindow(h, SW_MINIMIZE);
@@ -650,6 +724,13 @@ pub fn run(plan: &[Step]) {
                     crate::quick::run(id);
                 }
                 Step::Uri { uri, .. } => crate::actions::shell_open(uri),
+                Step::CloseAll { keep } => {
+                    for w in wins::list() {
+                        if !keep.iter().any(|a| belongs(&w, a)) {
+                            close_window(w.hwnd);
+                        }
+                    }
+                }
                 Step::Builtin { id, title } => {
                     let hit = Hit { title: title.clone(), subtitle: String::new(), kind: Kind::Command, action: Action::Builtin(id.clone()), score: 0 };
                     crate::actions::execute(&hit, &|_| {});
@@ -657,6 +738,15 @@ pub fn run(plan: &[Step]) {
             }
         }
     });
+}
+
+/// Ask a window to close, as its close button does: it may still ask to save first.
+fn close_window(hwnd: isize) {
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    unsafe {
+        let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+    }
 }
 
 fn file_name(p: &str) -> &str {

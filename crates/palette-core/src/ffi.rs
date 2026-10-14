@@ -26,6 +26,9 @@ struct Engine {
     /// (generation, hits) of the most recent search.
     last: Mutex<(u64, Vec<Hit>)>,
     gen: AtomicU64,
+    /// The plan the model wrote for generation N: (generation, request, line, row title). Run, it
+    /// is remembered for the request.
+    model_plan: Mutex<Option<(u64, String, String, String)>>,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -118,6 +121,14 @@ pub extern "C" fn pc_init() -> i32 {
             });
         }
 
+        // The plan model too, so the first request it reads does not wait for it to load.
+        if crate::planner::available() {
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_secs(25));
+                crate::planner::get().ensure_started();
+            });
+        }
+
         Engine {
             searcher: Searcher::new(catalog.clone(), usage.clone()),
             catalog,
@@ -127,6 +138,7 @@ pub extern "C" fn pc_init() -> i32 {
             sem_gen: AtomicU64::new(0),
             last: Mutex::new((0, Vec::new())),
             gen: AtomicU64::new(0),
+            model_plan: Mutex::new(None),
         }
     });
     1
@@ -264,6 +276,57 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     into_c(out)
 }
 
+/// A plan from the language model for a request the rules did not read, put first in the hits
+/// of search generation `gen`. About 60 ms (a second or two if its process must start), so call
+/// it from a worker thread after showing the instant results. Returns the whole new list as
+/// `{"gen":N,"base":0,"replace":true,"hits":[...]}`, or empty `hits` when there is no plan or
+/// `gen` is stale. Free with `pc_free`.
+///
+/// # Safety
+/// `query` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_plan(gen: u64, query: *const c_char) -> *mut c_char {
+    let empty = || into_c(format!("{{\"gen\":{gen},\"base\":0,\"hits\":[]}}"));
+    let Some(e) = ENGINE.get() else { return empty() };
+    let q = if query.is_null() { "" } else { CStr::from_ptr(query).to_str().unwrap_or("") }.trim();
+    if !crate::planner::available() || !crate::planner::worth_asking(q) {
+        return empty();
+    }
+    // Already answered as typed: a plan from the rules, a sum, a quick setting asked for.
+    let answered = |hits: &[Hit]| {
+        hits.first().is_some_and(|h| match h.kind {
+            crate::model::Kind::Plan | crate::model::Kind::Calc => true,
+            crate::model::Kind::Toggle => h.score >= 900,
+            _ => false,
+        })
+    };
+    {
+        let last = e.last.lock().unwrap();
+        if last.0 != gen || answered(&last.1) {
+            return empty();
+        }
+    }
+    let Some(line) = crate::planner::get().line(q) else { return empty() };
+    let Some(hit) = ({
+        let cat = e.catalog.read().unwrap();
+        crate::planner::hit(&line, &cat.items)
+    }) else {
+        return empty();
+    };
+
+    let pinned = pinned_keys(e);
+    let mut last = e.last.lock().unwrap();
+    if last.0 != gen || answered(&last.1) {
+        return empty();
+    }
+    *e.model_plan.lock().unwrap() = Some((gen, q.to_string(), line, hit.title.clone()));
+    last.1.insert(0, hit);
+    let json: Vec<HitJson> = last.1.iter().map(|h| hit_json(h, false, &pinned)).collect();
+    let out = serde_json::to_string(&Appended { gen, base: 0, replace: true, hits: json })
+        .unwrap_or_else(|_| format!("{{\"gen\":{gen},\"base\":0,\"hits\":[]}}"));
+    into_c(out)
+}
+
 /// Footer text describing the semantic index ("Indexing documents 120 / 2000", ...).
 /// Empty if the tier is unavailable. Free with `pc_free`.
 #[no_mangle]
@@ -303,6 +366,14 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     // "Turn Wi-Fi off" in the home view while it is already off.
     // Requests say what they will do with what was typed: remembering one would offer it again
     // on the home view, out of the blue.
+    // A plan the model wrote, run: the same request gets it at once next time.
+    if hit.kind == crate::model::Kind::Plan {
+        if let Some((g, q, line, title)) = e.model_plan.lock().unwrap().clone() {
+            if g == gen && title == hit.title {
+                crate::planner::get().remember(&q, &line);
+            }
+        }
+    }
     if !matches!(hit.kind, crate::model::Kind::Window | crate::model::Kind::Toggle | crate::model::Kind::Plan) {
         if let Ok(mut u) = e.usage.lock() {
             u.record(&hit);

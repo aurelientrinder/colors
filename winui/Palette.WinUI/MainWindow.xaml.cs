@@ -99,6 +99,7 @@ public sealed partial class MainWindow : Window
         for (int i = 0; i < IconThreads; i++) new Thread(IconLoop) { IsBackground = true, Name = "icons" }.Start();
         new Thread(WarmIcons) { IsBackground = true, Name = "icon-warmup", Priority = ThreadPriority.BelowNormal }.Start();
         new Thread(SemanticLoop) { IsBackground = true, Name = "semantic" }.Start();
+        new Thread(PlanLoop) { IsBackground = true, Name = "plan" }.Start();
         // Highest: it runs the keyboard hook, which Windows silently unhooks if it answers late.
         new Thread(HotkeyLoop) { IsBackground = true, Name = "hotkey", Priority = ThreadPriority.Highest }.Start();
         new Thread(ShowRequestLoop) { IsBackground = true, Name = "show-requests" }.Start();
@@ -838,6 +839,7 @@ public sealed partial class MainWindow : Window
             _semQuery = q;
             _semGen = r.Gen;
             _semWake.Set();
+            _planWake.Set();
         }
     }
 
@@ -936,6 +938,49 @@ public sealed partial class MainWindow : Window
         UpdatePreview();
     }
 
+
+    // ------------------------------------------------------------- plans from the model
+
+    private readonly AutoResetEvent _planWake = new(false);
+
+    /// <summary>
+    /// Once typing pauses, asks the engine whether the language model reads the request as a plan
+    /// ("get me outlook and teams", "make it quieter"); the engine only asks it when the rules did
+    /// not. The plan row then leads the list.
+    /// </summary>
+    private void PlanLoop()
+    {
+        ulong served = 0;
+        while (true)
+        {
+            _planWake.WaitOne();
+            Thread.Sleep(150);
+            int version = _semVersion;
+            if (version != _queryVersion) continue;
+            ulong gen = _semGen;
+            if (gen == served) continue;
+            served = gen;
+            var r = Native.Plan(gen, _semQuery);
+            if (r.Hits.Count == 0) continue;
+            DispatcherQueue.TryEnqueue(() => ShowPlan(version, r));
+        }
+    }
+
+    private void ShowPlan(int version, Native.Appended r)
+    {
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done) return;
+        // Enter runs the plan unless a row further down was chosen meanwhile.
+        int sel = ResultsList.SelectedIndex;
+        bool lead = sel <= AnswerOffset;
+        SyncRows(r.Hits);
+        // The plan went in above: the row that was chosen moved down one.
+        ResultsList.SelectedIndex = Math.Min(lead ? AnswerOffset : sel + 1, Items.Count - 1);
+        UpdateOpenButton();
+        UpdateCondensed();
+        HoldHeight();
+        Resize(recenter: false);
+        UpdatePreview();
+    }
 
     // ------------------------------------------------------------------ icons
 

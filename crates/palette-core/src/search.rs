@@ -132,6 +132,12 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
 
     // "open notepad and weather side by side", "show desktop": one row that does it.
     hits.extend(crate::intent::hits(q, &cat.items));
+    // A request the model wrote a plan for, and that plan was run: offer it again at once.
+    if !hits.iter().any(|h| h.kind == Kind::Plan) {
+        if let Some(h) = crate::planner::get().remembered(q).and_then(|l| crate::planner::hit(&l, &cat.items)) {
+            hits.push(h);
+        }
+    }
 
     // Apps, commands and settings: a few thousand entries, always a full scan.
     {

@@ -159,8 +159,18 @@ pub fn run(id: &str) -> bool {
         "dark" => set_dark_mode(on),
         "wifi" | "bluetooth" => set_radio(what, on),
         "mute" => set_mute(on),
-        "volume" => value.parse::<u32>().is_ok_and(set_volume),
-        "brightness" => value.parse::<u32>().is_ok_and(set_brightness),
+        "volume" => match value {
+            "up" | "down" => volume().is_some_and(|(l, _)| {
+                let now = (l * 100.0).round() as i32;
+                set_volume((now + if value == "up" { STEP } else { -STEP }).clamp(0, 100) as u32)
+            }),
+            _ => value.parse::<u32>().is_ok_and(set_volume),
+        },
+        "brightness" => match value {
+            "up" => change_brightness(STEP),
+            "down" => change_brightness(-STEP),
+            _ => value.parse::<u32>().is_ok_and(set_brightness),
+        },
         _ => false,
     }
 }
@@ -280,6 +290,22 @@ fn set_volume(percent: u32) -> bool {
 }
 
 // ---------------------------------------------------------------- brightness
+
+/// How far "volume up" and "dim the screen" go.
+const STEP: i32 = 10;
+
+/// The built-in display's brightness, `by` points up or down.
+fn change_brightness(by: i32) -> bool {
+    use std::os::windows::process::CommandExt;
+    let script = format!(
+        "$b = (Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness).CurrentBrightness;          $n = [Math]::Max(0, [Math]::Min(100, $b + ({by})));          Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods |          Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{Timeout=1; Brightness=$n}} | Out-Null"
+    );
+    std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .is_ok()
+}
 
 /// Built-in displays only (external monitors do not take brightness over WMI). Runs in the
 /// background: WMI through PowerShell takes a few hundred ms.

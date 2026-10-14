@@ -27,6 +27,26 @@ pub fn semantic_exe() -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
+/// Folder holding `llama-server.exe` and `plan.gguf`, the model that writes plans (fetched by
+/// scripts\get-planner.ps1). Looked for as `models\planner` beside the exe or above it.
+pub fn planner_dir() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("PALETTE_PLANNER_DIR").map(PathBuf::from) {
+        return p.join("plan.gguf").exists().then_some(p);
+    }
+    let mut dir = exe_dir();
+    let mut bases: Vec<PathBuf> = Vec::new();
+    for _ in 0..9 {
+        let Some(d) = dir else { break };
+        bases.push(d.join("models"));
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+    bases.push(data_dir().join("models"));
+    bases
+        .into_iter()
+        .map(|b| b.join("planner"))
+        .find(|c| c.join("plan.gguf").exists() && c.join("llama-server.exe").exists())
+}
+
 /// Newest first. The semantic index is per model, so switching rebuilds it.
 const MODEL_NAMES: [&str; 2] = ["embeddinggemma-2-text-q4", "embeddinggemma-300m-q4"];
 

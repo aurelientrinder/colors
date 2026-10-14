@@ -29,4 +29,6 @@ features = [
   "Devices_Radios", "Foundation_Collections",
   # requests carried out in steps (intent.rs): media keys
   "Win32_UI_Input_KeyboardAndMouse",
+  # the plan model's helper process ends with the launcher (planner.rs)
+  "Win32_System_JobObjects",
 ]

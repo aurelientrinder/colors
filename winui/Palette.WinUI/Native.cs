@@ -22,6 +22,9 @@ public static class Native
     private static extern IntPtr pc_semantic_status();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_plan(ulong gen, [MarshalAs(UnmanagedType.LPUTF8Str)] string query);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern int pc_launch(ulong gen, int index, int reveal);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -97,6 +100,24 @@ public static class Native
     public static Appended Semantic(ulong gen, string query)
     {
         IntPtr p = pc_semantic(gen, query);
+        try
+        {
+            string json = Marshal.PtrToStringUTF8(p) ?? "{}";
+            return JsonSerializer.Deserialize<Appended>(json) ?? new Appended(gen, 0, new());
+        }
+        finally
+        {
+            pc_free(p);
+        }
+    }
+
+    /// <summary>
+    /// The language model's plan for a request the rules did not read, as the whole new list
+    /// (the plan first). About 60 ms; seconds if its process has to start: call off the UI thread.
+    /// </summary>
+    public static Appended Plan(ulong gen, string query)
+    {
+        IntPtr p = pc_plan(gen, query);
         try
         {
             string json = Marshal.PtrToStringUTF8(p) ?? "{}";

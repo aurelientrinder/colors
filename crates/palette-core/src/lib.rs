@@ -9,6 +9,7 @@ pub mod index;
 pub mod intent;
 pub mod model;
 pub mod paths;
+pub mod planner;
 pub mod quick;
 pub mod scan;
 pub mod search;
