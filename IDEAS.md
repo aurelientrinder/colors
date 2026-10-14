@@ -37,9 +37,9 @@ Cross one off (or move it to the README) when it ships.
   arrange step so Undo can put them back.
 
 ## Polish and reach
-- **Key-hint footer** for the selected row (`↵ Open · → Browse · Tab Actions`), a rotating tip on
-  Home and a short first-run card. Tab for actions, Ctrl+Shift+Enter, requests in plain words,
-  `vol 30` and `>` are invisible unless you have read the README.
+- **Teach the invisible parts**: a rotating tip on Home and a short first-run card. The footer
+  covers the selected row's keys; Ctrl+Shift+Enter, requests in plain words, `vol 30` and `>` are
+  still invisible unless you have read the README.
 - **A settings page** (`Palette: Settings`): the hotkey (still on the README's "Not yet done"
   list), the semantic tier on or off, indexing on battery, excluded folders. Replaces the tray
   menu plus about ten environment variables.
@@ -55,3 +55,6 @@ Cross one off (or move it to the README) when it ships.
 - "Open file location" works for paths with spaces.
 - Results learn what you pick for what you type: every prefix of the query (up to 8 characters)
   boosts what you opened, so `n` finds Notepad first once you have chosen it for `note`.
+- Key-hint footer in the search card: the keys that apply to the selected row (`-> Browse`,
+  `<- Show folder`, `Ctrl+Enter Location`, `Hold Tab Actions`). "Palette: Hide or show key hints"
+  or the tray menu turns it off.
