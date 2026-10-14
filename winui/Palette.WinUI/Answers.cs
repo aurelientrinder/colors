@@ -31,6 +31,8 @@ public sealed partial class MainWindow
 
     private int AnswerOffset => Items.Count > 0 && Items[0].IsAnswer ? 1 : 0;
     private HitVm? AnswerRow => AnswerOffset == 1 ? Items[0] : null;
+    /// <summary>The leading row's card, whether on an answer row or on the Weather app's own row.</summary>
+    private WebAnswers.Answer? LeadAnswer => Items.Count > 0 ? Items[0].Answer : null;
 
     private void InitAnswers()
     {
@@ -52,7 +54,9 @@ public sealed partial class MainWindow
     /// <summary>Before showing results for <paramref name="query"/>: an answer to another query goes.</summary>
     private void DropStaleAnswer(string query)
     {
-        if (AnswerRow is { Answer: { } a } && !SameQuery(a.Query, query)) Items.RemoveAt(0);
+        if (LeadAnswer is not { } a || SameQuery(a.Query, query)) return;
+        if (Items[0].IsAnswer) Items.RemoveAt(0);
+        else Items[0].AttachWeather(null);
     }
 
     /// <summary>After showing results for <paramref name="query"/>: look for an answer once typing pauses.</summary>
@@ -60,7 +64,7 @@ public sealed partial class MainWindow
     {
         _answerCts?.Cancel();
         _answerCts = null;
-        if (!_settings.WebAnswers || _view != View.Results || AnswerRow != null || WebAnswers.Detect(query) == null) return;
+        if (!_settings.WebAnswers || _view != View.Results || LeadAnswer != null || WebAnswers.Detect(query) == null) return;
         if (WebAnswers.TryCached(query, out var cached))
         {
             if (cached != null) ShowAnswerRow(cached);
@@ -77,7 +81,7 @@ public sealed partial class MainWindow
             await Task.Delay(300, ct);   // a pause in typing, not every keystroke
             var a = await WebAnswers.Fetch(query, ct);
             if (a == null || ct.IsCancellationRequested || !_visible || _view != View.Results || !SameQuery(_latestQuery, query)) return;
-            if (AnswerRow == null) ShowAnswerRow(a);
+            if (LeadAnswer == null) ShowAnswerRow(a);
         }
         catch (OperationCanceledException) { }
     }
@@ -86,8 +90,23 @@ public sealed partial class MainWindow
     {
         string url = "https://www.google.com/search?q=" + Uri.EscapeDataString(answer.Query.Trim());
         int sel = ResultsList.SelectedIndex;
-        var vm = HitVm.ForAnswer(answer, url);
-        Items.Insert(0, vm);
+        if (answer is WebAnswers.Weather w && WebAnswers.HasWeatherApp)
+        {
+            // Weather is the Weather app's: its card goes under the app's own row when the engine
+            // led with it ("weather"), or under a row for the app put on top ("weather in Paris").
+            var top = Items.Count > 0 ? Items[0] : null;
+            if (top != null && WebAnswers.IsWeatherApp(top.RawKind, top.Title, top.IconKey)) top.AttachWeather(w);
+            else
+            {
+                var vm = HitVm.ForWeatherApp(w, url);
+                FillIcon(vm);
+                Items.Insert(0, vm);
+            }
+        }
+        else
+        {
+            Items.Insert(0, HitVm.ForAnswer(answer, url));
+        }
         if (sel <= 0) ResultsList.SelectedIndex = 0;
         else _expandedQuery = _latestQuery;   // the user has moved on down the list: leave it open
         UpdateCondensed();
@@ -112,7 +131,7 @@ public sealed partial class MainWindow
             && !(_expandedQuery != null && SameQuery(_expandedQuery, _latestQuery)))
         {
             var top = Items[0];
-            n = top.IsAnswer || top.IsCalc ? 1 : top.IsToggle ? 2 : 0;
+            n = top.Answer != null || top.IsCalc ? 1 : top.IsToggle ? 2 : 0;
         }
         if (n >= Items.Count) n = 0;   // nothing more to see
         if (n == _condensedRows) return;

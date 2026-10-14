@@ -96,7 +96,7 @@ public sealed partial class MainWindow
         // Files show themselves once Tab asks; a sum or a web answer always shows its card.
         string? key = vm switch
         {
-            { IsAnswer: true } => $"answer:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(vm)}",
+            { Answer: { } a } => $"answer:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(vm)}:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(a)}",
             { IsCalc: true } => $"calc:{vm.Title}={vm.CopyText}",
             _ => _previewOn ? vm?.Path : null,
         };
@@ -114,7 +114,7 @@ public sealed partial class MainWindow
             _ = ClosePreviewSoon(v);
             return;
         }
-        if (vm!.IsAnswer) ShowWebAnswer(vm);
+        if (vm!.Answer != null) ShowWebAnswer(vm);
         else if (vm.IsCalc) ShowAnswer(vm);
         else _ = LoadPreview(vm.Path!, vm, v);
         SetPreviewOpen(true);

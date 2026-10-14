@@ -90,6 +90,32 @@ public sealed class HitVm : INotifyPropertyChanged
         return vm;
     }
 
+    /// <summary>
+    /// The Weather app's row with its card, for when the engine did not list the app itself
+    /// ("weather in Paris"): it opens the app on that place; its second button searches the web.
+    /// </summary>
+    public static HitVm ForWeatherApp(WebAnswers.Weather w, string searchUrl)
+    {
+        var vm = new HitVm(new Native.Hit("Weather", w.Place, "App", WebAnswers.WeatherAppKey, null), chip: "")
+        {
+            IsAnswer = true,
+            Answer = w,
+            AnswerUrl = WebAnswers.WeatherAppUrl(w),
+            AnswerAltUrl = searchUrl,
+        };
+        vm.SubText = $"{w.Place} • App";
+        vm.SecondGlyph = "\uE721";
+        vm.SecondLabel = "Search the web";
+        return vm;
+    }
+
+    /// <summary>Put <paramref name="w"/>'s card under this row, the engine's Weather app, which then opens on that place.</summary>
+    public void AttachWeather(WebAnswers.Weather? w)
+    {
+        Answer = w;
+        AnswerUrl = w != null ? WebAnswers.WeatherAppUrl(w) : null;
+    }
+
     private static string KindLabel(string kind, string? path) => kind switch
     {
         "File" when System.IO.Path.GetExtension(path ?? "") is { Length: > 1 } ext => ext[1..].ToUpperInvariant() + " File",
@@ -136,8 +162,13 @@ public sealed class HitVm : INotifyPropertyChanged
         SecondLabel = o.SecondLabel;
         Reveals = o.Reveals;
         IsActionRow = o.IsActionRow;
+        IsStatus = o.IsStatus;   // the Done line becomes a result again when typing resumes
+        CanUndo = o.CanUndo;
         if (IconKey != o.IconKey) _icon = o._icon;
         IconKey = o.IconKey;
+        Answer = o.Answer;
+        AnswerUrl = o.AnswerUrl;
+        AnswerAltUrl = o.AnswerAltUrl;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));   // every property
     }
 
@@ -167,8 +198,12 @@ public sealed class HitVm : INotifyPropertyChanged
     public bool CanUndo { get; private set; }
     /// <summary>A web answer's row (<see cref="ForAnswer"/>); it sits above the engine's rows.</summary>
     public bool IsAnswer { get; private set; }
+    /// <summary>The card open under the row: on an answer row, or on the engine's Weather app row.</summary>
     public WebAnswers.Answer? Answer { get; set; }
+    /// <summary>Where Enter goes instead of the engine's launch.</summary>
     public string? AnswerUrl { get; private set; }
+    /// <summary>Where the second button goes, if not to <see cref="AnswerUrl"/>.</summary>
+    public string? AnswerAltUrl { get; private set; }
     /// <summary>A row of a result's action list (no buttons of its own).</summary>
     public bool IsActionRow { get; private set; }
 

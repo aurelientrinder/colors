@@ -24,8 +24,35 @@ public static class WebAnswers
     public abstract record Answer(string Query);
 
     /// <summary>Temperatures are kept in Celsius and converted for display.</summary>
-    public sealed record Weather(string Query, string Place, DateTime LocalTime, double TempC, double HighC, double LowC,
-        string Condition, string Icon) : Answer(Query);
+    public sealed record Weather(string Query, string Place, double Lat, double Lon, DateTime LocalTime, double TempC,
+        double HighC, double LowC, string Condition, string Icon) : Answer(Query);
+
+    /// <summary>The Weather app (MSN Weather): when it is installed, weather is its answer and opens in it.</summary>
+    public const string WeatherAppKey = @"shell:AppsFolder\Microsoft.BingWeather_8wekyb3d8bbwe!App";
+
+    private static bool? _hasWeatherApp;
+
+    public static bool HasWeatherApp => _hasWeatherApp ??= HasProtocol("msnweather");
+
+    private static bool HasProtocol(string scheme)
+    {
+        try
+        {
+            using var k = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(scheme);
+            return k?.GetValue("URL Protocol") != null;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Is this engine row the Weather app?</summary>
+    public static bool IsWeatherApp(string kind, string title, string? iconKey) =>
+        kind == "App" && (iconKey?.Contains("Microsoft.BingWeather_", StringComparison.OrdinalIgnoreCase) == true
+            || iconKey == null && title is "Weather" or "MSN Weather");
+
+    /// <summary>The Weather app opened on the forecast for <paramref name="w"/>'s place.</summary>
+    public static string WeatherAppUrl(Weather w) =>
+        "msnweather://forecast?la=" + w.Lat.ToString(CultureInfo.InvariantCulture) +
+        "&lo=" + w.Lon.ToString(CultureInfo.InvariantCulture);
 
     public sealed record Stock(string Query, string Symbol, string Name, string Currency, double Price, double Change,
         double ChangePct, double PreviousClose, IReadOnlyList<double> Series, string Note, string Range) : Answer(Query);
@@ -192,7 +219,7 @@ public static class WebAnswers
             // No place named: here, if Windows lets desktop apps know the location.
             var here = await Here(ct);
             if (here is not { } h) return null;
-            (lat, lon, name) = (h.lat, h.lon, "Your location");
+            (lat, lon, name) = (h.lat, h.lon, await PlaceName(h.lat, h.lon, ct) ?? "Your location");
         }
 
         var f = await GetJson(
@@ -205,11 +232,29 @@ public static class WebAnswers
         bool day = cur.GetProperty("is_day").GetInt32() == 1;
         var local = DateTime.UtcNow.AddSeconds(f.GetProperty("utc_offset_seconds").GetInt32());
         var (condition, icon) = Describe(code, day);
-        return new Weather(query, name, local,
+        return new Weather(query, name, lat, lon, local,
             cur.GetProperty("temperature_2m").GetDouble(),
             daily.GetProperty("temperature_2m_max")[0].GetDouble(),
             daily.GetProperty("temperature_2m_min")[0].GetDouble(),
             condition, icon);
+    }
+
+    /// <summary>The town at a point, as the Weather app names where you are.</summary>
+    private static async Task<string?> PlaceName(double lat, double lon, CancellationToken ct)
+    {
+        try
+        {
+            var r = await GetJson("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=" +
+                lat.ToString(CultureInfo.InvariantCulture) + "&longitude=" + lon.ToString(CultureInfo.InvariantCulture) +
+                "&localityLanguage=en", ct);
+            foreach (var f in new[] { "city", "locality", "principalSubdivision" })
+                if (r.TryGetProperty(f, out var v) && v.GetString() is { Length: > 0 } n) return n;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            App.Log("no place name: " + ex.Message);
+        }
+        return null;
     }
 
     private static async Task<(double lat, double lon)?> Here(CancellationToken ct)

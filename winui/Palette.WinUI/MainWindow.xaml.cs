@@ -749,9 +749,9 @@ public sealed partial class MainWindow : Window
         }
         if (_view == View.Done || index < 0 || index >= Items.Count) return;
         var vm = Items[index];
-        if (vm.IsAnswer)
+        if (vm.AnswerUrl != null && (!reveal || vm.IsAnswer))
         {
-            OpenUrl(vm.AnswerUrl!);
+            OpenUrl(reveal ? vm.AnswerAltUrl ?? vm.AnswerUrl : vm.AnswerUrl);
             HidePalette(restoreFocus: false);
             return;
         }

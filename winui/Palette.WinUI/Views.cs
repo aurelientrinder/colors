@@ -92,7 +92,12 @@ public sealed partial class MainWindow
         }
         int i = Items.IndexOf(vm);
         if (i < 0) return;
-        if (vm.Reveals) ActOrLaunch(i, "location");
+        if (vm.AnswerAltUrl != null)
+        {
+            OpenUrl(vm.AnswerAltUrl);
+            HidePalette(restoreFocus: false);
+        }
+        else if (vm.Reveals) ActOrLaunch(i, "location");
         else Launch(i, reveal: false);
     }
 

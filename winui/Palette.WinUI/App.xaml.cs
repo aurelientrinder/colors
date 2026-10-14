@@ -11,6 +11,7 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
+        UnhandledException += (_, e) => Log($"unhandled: {e.Message} {e.Exception}");
     }
 
     // Diagnostics only: set PALETTE_LOG=1 to write %LOCALAPPDATA%\palette\winui.log.

@@ -37,6 +37,12 @@ internal sealed class GlassBackdrop : SystemBackdrop
         _acrylic = null;
     }
 
+    // The acrylic runs on our own configuration (always active, theme from ActualThemeChanged).
+    // The base would apply the default one to the target when the system theme changes, and that
+    // throws "The parameter is incorrect" for a target we drive ourselves, taking the app down.
+    protected override void OnDefaultSystemBackdropConfigurationChanged(ICompositionSupportsSystemBackdrop target, XamlRoot xamlRoot) =>
+        ApplyTheme();
+
     private void OnThemeChanged(FrameworkElement sender, object args) => ApplyTheme();
 
     private void ApplyTheme()
