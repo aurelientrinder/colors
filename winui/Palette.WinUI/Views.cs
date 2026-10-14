@@ -69,6 +69,7 @@ public sealed partial class MainWindow
             "Calculator" => "Copy result",
             "Web" => "Search the web",
             "Toggle" => "Apply",
+            "Plan" => "Run",
             _ => "Open",
         };
     }

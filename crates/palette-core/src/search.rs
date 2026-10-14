@@ -130,6 +130,9 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
 
     let words: Vec<&str> = lq.split_whitespace().collect();
 
+    // "open notepad and weather side by side", "show desktop": one row that does it.
+    hits.extend(crate::intent::hits(q, &cat.items));
+
     // Apps, commands and settings: a few thousand entries, always a full scan.
     {
         let mut m = Matcher::new(Config::DEFAULT);

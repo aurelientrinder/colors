@@ -215,7 +215,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     let typed: Vec<String> = q.split_whitespace().map(&norm).filter(|w| !w.is_empty()).collect();
     let instant_is_real = last.1.first().is_some_and(|h| match h.kind {
         // A calculator result or a quick setting answers the query as typed.
-        crate::model::Kind::Calc | crate::model::Kind::Toggle => true,
+        crate::model::Kind::Calc | crate::model::Kind::Toggle | crate::model::Kind::Plan => true,
         crate::model::Kind::Web => false, // the fallback row says nothing about relevance
         _ => {
             let t = norm(&h.title);
@@ -301,7 +301,9 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     // Windows come and go: remembering one would leave a dead row in the most-used list.
     // Quick settings say what they will do in the current state: remembering one would offer
     // "Turn Wi-Fi off" in the home view while it is already off.
-    if !matches!(hit.kind, crate::model::Kind::Window | crate::model::Kind::Toggle) {
+    // Requests say what they will do with what was typed: remembering one would offer it again
+    // on the home view, out of the blue.
+    if !matches!(hit.kind, crate::model::Kind::Window | crate::model::Kind::Toggle | crate::model::Kind::Plan) {
         if let Ok(mut u) = e.usage.lock() {
             u.record(&hit);
         }

@@ -6,6 +6,7 @@ pub mod ffi;
 pub mod home;
 pub mod iconsrc;
 pub mod index;
+pub mod intent;
 pub mod model;
 pub mod paths;
 pub mod quick;

@@ -131,7 +131,7 @@ public sealed partial class MainWindow
             && !(_expandedQuery != null && SameQuery(_expandedQuery, _latestQuery)))
         {
             var top = Items[0];
-            n = top.Answer != null || top.IsCalc ? 1 : top.IsToggle ? 2 : 0;
+            n = top.Answer != null || top.IsCalc || top.IsPlan ? 1 : top.IsToggle ? 2 : 0;
         }
         if (n >= Items.Count) n = 0;   // nothing more to see
         if (n == _condensedRows) return;

@@ -67,7 +67,7 @@ impl Pins {
 
 /// Can this hit be pinned? Windows come and go; calculator and web rows echo the query.
 pub fn pinnable(hit: &Hit) -> bool {
-    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle)
+    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan)
         && !matches!(&hit.action, Action::Builtin(id) if id == "allapps")
 }
 
@@ -327,6 +327,7 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
         Kind::Calc => "Copy result",
         Kind::Web => "Search the web",
         Kind::Toggle => "Apply",
+        Kind::Plan => "Run",
         _ => "Open",
     };
     v.push(row("open", open, "Enter"));

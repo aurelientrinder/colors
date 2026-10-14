@@ -111,6 +111,7 @@ pub fn execute(hit: &Hit, copy: &dyn Fn(&str)) -> bool {
                 ShellExecuteW(None, w!("open"), PCWSTR(f.as_ptr()), PCWSTR(a.as_ptr()), None, SW_SHOWNORMAL);
             }
         }
+        Action::Plan(steps) => crate::intent::run(steps),
         Action::Builtin(id) if id.starts_with("quick:") => {
             crate::quick::run(&id["quick:".len()..]);
         }

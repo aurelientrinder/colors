@@ -36,7 +36,7 @@ public sealed class HitVm : INotifyPropertyChanged
             Title = at > 0 ? h.Subtitle[..at] : h.Title;
             SubText = "Calculator";
         }
-        else if (IsToggle)
+        else if (IsToggle || IsPlan)
         {
             // "Bluetooth is off • [bolt] Action": the badge and its word are separate elements.
             SubText = h.Subtitle.Length > 0 ? h.Subtitle + " •" : "";
@@ -50,6 +50,7 @@ public sealed class HitVm : INotifyPropertyChanged
         (SecondGlyph, SecondLabel, Reveals) = h.Kind switch
         {
             "Toggle" => ("\uE751", "Apply", false),
+            "Plan" => ("\uE768", "Run", false),
             "Command" => ("\uE751", "Run", false),
             "Calculator" => ("\uE8C8", "Copy result", false),
             "Window" => ("\uE8A7", "Switch to", false),
@@ -120,7 +121,7 @@ public sealed class HitVm : INotifyPropertyChanged
     {
         "File" when System.IO.Path.GetExtension(path ?? "") is { Length: > 1 } ext => ext[1..].ToUpperInvariant() + " File",
         "Setting" => "Settings",
-        "Toggle" or "Status" => "",
+        "Toggle" or "Status" or "Plan" => "",
         _ => kind,
     };
 
@@ -141,6 +142,7 @@ public sealed class HitVm : INotifyPropertyChanged
         return kind switch
         {
             "Command" => "\uE756",
+            "Plan" => "\uE945",
             "Calculator" => "\uE8EF",
             "Web" => "\uE721",
             "Window" => "\uE737",
@@ -194,6 +196,8 @@ public sealed class HitVm : INotifyPropertyChanged
     public bool Reveals { get; private set; }
     public bool IsToggle => RawKind == "Toggle";
     public bool IsCalc => RawKind == "Calculator";
+    /// <summary>A request carried out in steps ("open notepad and weather side by side").</summary>
+    public bool IsPlan => RawKind == "Plan";
     public bool IsStatus { get; private set; }
     public bool CanUndo { get; private set; }
     /// <summary>A web answer's row (<see cref="ForAnswer"/>); it sits above the engine's rows.</summary>
@@ -264,7 +268,7 @@ public sealed class HitVm : INotifyPropertyChanged
     /// <summary>Glyph, only for rows that never get a shell icon.</summary>
     public Visibility GlyphVisibility => Vis(IconKey == null && !IsStatus);
     public Visibility StatusVisibility => Vis(IsStatus);
-    public Visibility ActionVisibility => Vis(IsToggle);
+    public Visibility ActionVisibility => Vis(IsToggle || IsPlan);
     public Visibility SubTextVisibility => Vis(SubText.Length > 0);
     /// <summary>Whether the row has buttons at all; they fade in on selection (<see cref="ButtonsOpacity"/>).</summary>
     public Visibility ButtonsVisibility => Vis(IsStatus ? CanUndo : !IsActionRow);
