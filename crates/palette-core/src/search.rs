@@ -123,6 +123,11 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
         return hits;
     }
 
+    // "C:\Users\me\Projects\": what is in that folder (the arrow keys walk in and out this way).
+    if let Some(hits) = crate::browse::hits(q) {
+        return hits;
+    }
+
     if let Some(h) = calculator(q) {
         hits.push(h);
     }

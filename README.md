@@ -42,6 +42,10 @@ works exactly as before, just without "Related" results.
 | `Up` / `Down` (or `Ctrl+N` / `Ctrl+P`) | move selection |
 | `Enter` | open / run |
 | `Ctrl+Enter` | reveal file in Explorer |
+| `Left` on a file or folder | shows the folder it is in, with it selected; `Left` again goes up another folder |
+| `Right` on a folder | goes into it: lists what is in it (folders first, as Explorer orders them); typing filters the list |
+| `Right` on a file, while browsing | back to the search you started from, with its row selected |
+| `C:\path\` or `~\path\` | lists that folder; text after the last `\` filters it (no match: the usual index search) |
 | `Esc` or click away | hide |
 | part of a window title or app name | switch to that open window (restored if minimised); an open window ranks above launching its app again |
 | `2*(3+4)` | calculator, Enter copies the result |

@@ -2,6 +2,7 @@
 //! The WinUI 3 shell is a thin layer over this crate, through the C ABI in `ffi`.
 
 pub mod actions;
+pub mod browse;
 pub mod ffi;
 pub mod home;
 pub mod iconsrc;

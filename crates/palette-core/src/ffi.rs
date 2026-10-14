@@ -60,6 +60,8 @@ struct HitJson<'a> {
     related: bool,
     /// Full path of a file hit; the shell previews it.
     path: Option<&'a str>,
+    /// Full path of a folder hit; the right arrow browses into it.
+    folder: Option<&'a str>,
     /// Pinned to the home view.
     pinned: bool,
 }
@@ -83,6 +85,10 @@ fn hit_json<'a>(h: &'a Hit, related: bool, pinned: &std::collections::HashSet<St
         related,
         path: match (&h.action, h.kind) {
             (Action::Open(p), crate::model::Kind::File) => Some(p.as_str()),
+            _ => None,
+        },
+        folder: match (&h.action, h.kind) {
+            (Action::Open(p), crate::model::Kind::Folder) => Some(p.as_str()),
             _ => None,
         },
     }

@@ -81,7 +81,8 @@ public static class Native
         [property: JsonPropertyName("copy_text")] string? CopyText,
         [property: JsonPropertyName("related")] bool Related = false,
         [property: JsonPropertyName("path")] string? Path = null,
-        [property: JsonPropertyName("pinned")] bool Pinned = false);
+        [property: JsonPropertyName("pinned")] bool Pinned = false,
+        [property: JsonPropertyName("folder")] string? Folder = null);
 
     /// <summary>One entry of a result's action list; <c>Copy</c> is set for copy actions.</summary>
     public sealed record ActionRow(
