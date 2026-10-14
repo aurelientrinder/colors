@@ -305,7 +305,7 @@ impl Client {
                     serde_json::json!({"key": i.hit.key(), "title": i.name, "text": text})
                 })
                 .collect();
-            (cat.version, items)
+            (cat.items_version, items)
         };
         if items.is_empty() {
             return;
@@ -332,7 +332,7 @@ impl Client {
         if !self.ensure_started() {
             return Vec::new();
         }
-        if self.catalog.read().unwrap().version != self.items_version.load(Ordering::Relaxed) {
+        if self.catalog.read().unwrap().items_version != self.items_version.load(Ordering::Relaxed) {
             self.sync_items();
         }
 

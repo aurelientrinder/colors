@@ -70,4 +70,7 @@ pub struct Catalog {
     pub files: FileIndex,
     /// Bumped on every mutation so search can invalidate its narrowing cache.
     pub version: u64,
+    /// Bumped only when `items` change (files change far more often), so the semantic tier is
+    /// sent the items again only then.
+    pub items_version: u64,
 }

@@ -106,9 +106,11 @@ pub extern "C" fn pc_init() -> i32 {
             scan::spawn_watcher(catalog.clone(), Arc::new(move |docs| s.touch(docs)));
         }
 
-        // Read the recent files now, so the first home view after startup does not wait on it.
+        // Read the recent files and find the radios now, so neither the first home view nor the
+        // first "wifi" typed waits on them.
         std::thread::spawn(|| {
             home::recent_cached();
+            crate::quick::warm();
         });
 
         // Start its process a little after launch so the model load and the first indexing
@@ -442,7 +444,7 @@ pub unsafe extern "C" fn pc_act(gen: u64, index: i32, id: *const c_char) -> i32 
     }
 }
 
-/// Write the icon of hit `index` into `buf` as premultiplied RGBA
+/// Write the icon of hit `index` into `buf` as premultiplied BGRA
 /// (`pc_icon_size()^2 * 4` bytes). Returns 1 on success.
 ///
 /// # Safety
@@ -455,7 +457,7 @@ pub unsafe extern "C" fn pc_icon(gen: u64, index: i32, buf: *mut u8) -> i32 {
         if l.0 == gen { l.1.get(index.max(0) as usize).cloned() } else { None }
     };
     let Some(hit) = hit else { return 0 };
-    match iconsrc::icon_rgba(&hit) {
+    match iconsrc::icon_bgra(&hit) {
         Some(px) if !buf.is_null() => {
             std::ptr::copy_nonoverlapping(px.as_ptr(), buf, px.len());
             1
@@ -474,7 +476,7 @@ pub unsafe extern "C" fn pc_icon_key(key: *const c_char, buf: *mut u8) -> i32 {
         return 0;
     }
     let Ok(key) = CStr::from_ptr(key).to_str() else { return 0 };
-    match iconsrc::icon_rgba_for_key(key) {
+    match iconsrc::icon_bgra_for_key(key) {
         Some(px) => {
             std::ptr::copy_nonoverlapping(px.as_ptr(), buf, px.len());
             1

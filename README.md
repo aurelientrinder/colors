@@ -126,13 +126,19 @@ file actions.
 
 - **Instant tier:** all paths live in one string arena; each keystroke is a
   parallel fuzzy scan (nucleo) on a worker thread, narrowed by the previous
-  query's matches. ~2-9 ms on ~200k files.
+  query's matches. The best 3,000 file matches are ranked on their path without
+  building a row; only the few shown become rows and have their existence checked
+  (answers kept for a few seconds). Typed paths (`c:\users\...`) match greedily, in
+  linear time, and the 3,000 picked are scored again properly. ~2-6 ms a keystroke
+  on ~200k files; `cargo run -p palette-core --release --example bench_search`
+  measures it on your own index.
 - **File index:** `palette-mft.exe` (admin) enumerates the NTFS MFT via
   `FSCTL_ENUM_USN_DATA` and writes `%LOCALAPPDATA%\palette\index\<drive>.txt`.
   First run prompts UAC once and registers a logon task (`PaletteMftRefresh`,
   highest privileges) so later refreshes need no prompt. Without the helper it
   falls back to walking your user profile.
-- **Between snapshots:** a file watcher on your profile adds new files live. It and the other
+- **Between snapshots:** a file watcher on your profile adds new files live, by the snapshot's
+  own rules (no build output, dot-folders or noise extensions), a burst of them at once. It and the other
   upkeep threads (snapshot reloads, drive walks) run in efficiency mode at below-normal priority,
   so only searching itself runs at full speed.
 - **Drives without an MFT** (FAT/exFAT, and virtual drives such as Google Drive, which

@@ -136,10 +136,11 @@ internal sealed class ShellHooks
 
     private static long MsSince(long ts) => (Stopwatch.GetTimestamp() - ts) * 1000 / Stopwatch.Frequency;
 
-    private IntPtr OnKey(int code, IntPtr wParam, IntPtr lParam)
+    private unsafe IntPtr OnKey(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code < 0) return Win32.CallNextHookEx(IntPtr.Zero, code, wParam, lParam);
-        var k = Marshal.PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam);
+        // Read in place: this runs for every key pressed anywhere, and PtrToStructure boxes a copy.
+        var k = *(Win32.KBDLLHOOKSTRUCT*)lParam;
         if (k.dwExtraInfo == Win32.InjectMarker) return Win32.CallNextHookEx(IntPtr.Zero, code, wParam, lParam);
 
         int m = (int)wParam;

@@ -1052,18 +1052,11 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static WriteableBitmap MakeBitmap(byte[] rgba)
+    /// <param name="bgra">Premultiplied BGRA from the engine: the bitmap's own layout.</param>
+    private static WriteableBitmap MakeBitmap(byte[] bgra)
     {
         int n = Native.IconSize;
         var wb = new WriteableBitmap(n, n);
-        var bgra = new byte[rgba.Length];
-        for (int i = 0; i < rgba.Length; i += 4)
-        {
-            bgra[i] = rgba[i + 2];
-            bgra[i + 1] = rgba[i + 1];
-            bgra[i + 2] = rgba[i];
-            bgra[i + 3] = rgba[i + 3];
-        }
         bgra.CopyTo(wb.PixelBuffer);
         wb.Invalidate();
         return wb;

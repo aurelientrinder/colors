@@ -10,11 +10,7 @@ use palette_core::model::{Action, Hit, Item, Kind};
 use serde_json::Value;
 
 fn item(name: &str, kind: Kind, target: String) -> Item {
-    Item {
-        name: name.into(),
-        hit: Hit { title: name.into(), subtitle: String::new(), kind, action: Action::Open(target), score: 0 },
-        keywords: None,
-    }
+    Item::new(name, Hit { title: name.into(), subtitle: String::new(), kind, action: Action::Open(target), score: 0 }, None)
 }
 
 fn main() {

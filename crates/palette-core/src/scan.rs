@@ -13,11 +13,7 @@ use std::time::{Duration, SystemTime};
 const NO_WINDOW: u32 = 0x0800_0000;
 
 fn item(name: &str, subtitle: &str, kind: Kind, action: Action) -> Item {
-    Item {
-        name: name.to_string(),
-        hit: Hit { title: name.to_string(), subtitle: subtitle.to_string(), kind, action, score: 0 },
-        keywords: None,
-    }
+    Item::new(name, Hit { title: name.to_string(), subtitle: subtitle.to_string(), kind, action, score: 0 }, None)
 }
 
 // ---------------------------------------------------------------- built-ins
@@ -399,6 +395,14 @@ fn publish(cat: &Arc<RwLock<Catalog>>, f: impl FnOnce(&mut Catalog)) {
     g.version += 1;
 }
 
+/// `publish` for a change to the apps, settings or commands.
+fn publish_items(cat: &Arc<RwLock<Catalog>>, f: impl FnOnce(&mut Catalog)) {
+    publish(cat, |c| {
+        f(c);
+        c.items_version += 1;
+    });
+}
+
 /// Start the helper: scheduled task if installed (no UAC), otherwise one UAC
 /// prompt. Only prompts once per machine (recorded in `elevation-asked`).
 pub fn request_mft_snapshot(force_prompt: bool) {
@@ -440,7 +444,7 @@ pub fn spawn_manager(catalog: Arc<RwLock<Catalog>>, notify: Notify) {
             load_snapshots(&all)
         };
         let mut last_mtime = newest_mtime(&all);
-        publish(&catalog, |c| {
+        publish_items(&catalog, |c| {
             c.items = items;
             c.files = std::mem::take(&mut files);
         });
@@ -451,22 +455,25 @@ pub fn spawn_manager(catalog: Arc<RwLock<Catalog>>, notify: Notify) {
         // 2. Every setting Windows' own search knows (cached; rebuilt after Windows updates).
         let settings = crate::settings_index::load();
         if !settings.is_empty() {
-            publish(&catalog, |c| {
+            publish_items(&catalog, |c| {
                 // The hand-picked pages keep their friendlier names; the index adds the rest.
                 let have: std::collections::HashSet<String> = c.items.iter().map(|i| i.name.to_lowercase()).collect();
                 c.items.extend(settings.into_iter().filter(|i| !have.contains(&i.name.to_lowercase())));
             });
         }
 
-        // 3. Refresh apps.
-        let apps = scan_apps();
-        if !apps.is_empty() {
-            save_apps_cache(&apps);
-            publish(&catalog, |c| {
-                c.items.retain(|i| i.hit.kind != Kind::App || !matches!(&i.hit.action, Action::Open(t) if t.contains("shell:AppsFolder") || t.ends_with(".lnk")));
-                c.items.extend(apps);
-            });
-        }
+        // 3. Refresh apps (again every 6 hours below, so apps installed meanwhile turn up).
+        let refresh_apps = || {
+            let apps = scan_apps();
+            if !apps.is_empty() {
+                save_apps_cache(&apps);
+                publish_items(&catalog, |c| {
+                    c.items.retain(|i| i.hit.kind != Kind::App || !matches!(&i.hit.action, Action::Open(t) if t.contains("shell:AppsFolder") || t.ends_with(".lnk")));
+                    c.items.extend(apps);
+                });
+            }
+        };
+        refresh_apps();
 
         // 4. Make sure we have *some* file index, and ask for the fast one.
         if snapshot_files().is_empty() {
@@ -498,13 +505,37 @@ pub fn spawn_manager(catalog: Arc<RwLock<Catalog>>, notify: Notify) {
                 publish(&catalog, |c| c.files = idx);
             }
             if ticks % (6 * 60 * 4) == 0 {
-                let apps = scan_apps();
-                if !apps.is_empty() {
-                    save_apps_cache(&apps);
-                }
+                refresh_apps();
             }
         }
     });
+}
+
+/// Folders and file types the MFT snapshot leaves out (`SKIP_DIRS`, `SKIP_EXT` and dot-folders in
+/// crates/palette-mft/src/main.rs; keep these in step), so that live additions follow the same rules.
+const LIVE_SKIP_DIRS: &[&str] = &[
+    "$recycle.bin", "system volume information", "$windows.~bt", "$windows.~ws", "node_modules", ".git",
+    "__pycache__", "site-packages", ".venv", "appdata", "programdata", "windows", "program files",
+    "program files (x86)", "recovery", "perflogs", "$sysreset", "windowsapps", "miniconda3", "anaconda3",
+    "miniforge3", "vcpkg", "$recycle.bin.old",
+];
+const LIVE_SKIP_EXT: &[&str] = &[
+    "dll", "sys", "mui", "pdb", "tmp", "cat", "manifest", "mum", "lib", "obj", "pyc", "pyo", "o", "d", "rlib", "rmeta",
+    "etl", "log", "dat", "idx", "pack", "lock", "map", "cache",
+];
+
+/// Would the MFT snapshot list this path? `l` is the path, lowercased.
+fn indexable(l: &str, dir: bool) -> bool {
+    let mut parts = l.split('\\');
+    let name = parts.next_back().unwrap_or("");
+    let skipped = |p: &str| p.starts_with('.') || LIVE_SKIP_DIRS.contains(&p);
+    if parts.any(skipped) {
+        return false;
+    }
+    if dir {
+        return !skipped(name);
+    }
+    !name.rsplit_once('.').is_some_and(|(_, ext)| LIVE_SKIP_EXT.contains(&ext))
 }
 
 /// Live additions between snapshots: new files under the user profile. `on_docs` receives
@@ -519,28 +550,32 @@ pub fn spawn_watcher(catalog: Arc<RwLock<Catalog>>, on_docs: Arc<dyn Fn(Vec<Stri
         if w.watch(Path::new(&home), RecursiveMode::Recursive).is_err() {
             return;
         }
-        while let Ok(ev) = rx.recv() {
-            let Ok(ev) = ev else { continue };
-            let is_new = matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(notify::event::ModifyKind::Name(_)));
-            let is_write = matches!(ev.kind, EventKind::Modify(_));
-            if !is_new && !is_write {
-                continue;
-            }
+        while let Ok(first) = rx.recv() {
+            // A build or an unzip makes thousands of events at once: take every one already waiting
+            // and add them in one go, rather than taking the index from searches once per file.
             let mut batch: Vec<(String, bool)> = Vec::new();
             let mut docs: Vec<String> = Vec::new();
-            for p in ev.paths {
-                let s = p.display().to_string();
-                let l = s.to_lowercase();
-                if l.contains("\\appdata\\") || l.contains("\\node_modules\\") || l.contains("\\.git\\") {
+            for ev in std::iter::once(first).chain(rx.try_iter()) {
+                let Ok(ev) = ev else { continue };
+                let is_new = matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(notify::event::ModifyKind::Name(_)));
+                let is_write = matches!(ev.kind, EventKind::Modify(_));
+                if !is_new && !is_write {
                     continue;
                 }
-                if let Ok(md) = std::fs::symlink_metadata(&p) {
-                    if md.is_file() && crate::semantic::is_doc_path(&s) {
-                        docs.push(s.clone());
+                for p in ev.paths {
+                    let s = p.display().to_string();
+                    let l = s.to_lowercase();
+                    if l.contains("\\appdata\\") || l.contains("\\node_modules\\") || l.contains("\\.git\\") {
+                        continue;
                     }
-                    // Plain writes to existing files must not add duplicate index entries.
-                    if is_new {
-                        batch.push((s, md.is_dir()));
+                    if let Ok(md) = std::fs::symlink_metadata(&p) {
+                        if md.is_file() && crate::semantic::is_doc_path(&s) {
+                            docs.push(s.clone());
+                        }
+                        // Plain writes to existing files must not add duplicate index entries.
+                        if is_new && indexable(&l, md.is_dir()) {
+                            batch.push((s, md.is_dir()));
+                        }
                     }
                 }
             }
@@ -557,4 +592,19 @@ pub fn spawn_watcher(catalog: Arc<RwLock<Catalog>>, on_docs: Arc<dyn Fn(Vec<Stri
         }
         drop(w);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::indexable;
+
+    #[test]
+    fn live_additions_follow_the_snapshot() {
+        assert!(indexable(r"c:\users\me\documents\notes.txt", false));
+        assert!(indexable(r"c:\users\me\documents\new folder", true));
+        assert!(!indexable(r"c:\users\me\code\app\target\release\deps\app.rlib", false));
+        assert!(!indexable(r"c:\users\me\.cache\pip\x.txt", false));
+        assert!(!indexable(r"c:\users\me\code\app\__pycache__", true));
+        assert!(!indexable(r"c:\users\me\code\.venv", true));
+    }
 }

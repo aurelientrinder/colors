@@ -489,11 +489,7 @@ mod tests {
     use super::*;
 
     fn app(n: &str) -> Item {
-        Item {
-            name: n.into(),
-            hit: Hit { title: n.into(), subtitle: String::new(), kind: Kind::App, action: Action::Open(format!("shell:AppsFolder\\{n}")), score: 0 },
-            keywords: None,
-        }
+        Item::new(n, Hit { title: n.into(), subtitle: String::new(), kind: Kind::App, action: Action::Open(format!("shell:AppsFolder\\{n}")), score: 0 }, None)
     }
 
     fn items() -> Vec<Item> {
