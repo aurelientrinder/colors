@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Palette;
 
@@ -80,7 +81,8 @@ public static class Native
         [property: JsonPropertyName("copy_text")] string? CopyText,
         [property: JsonPropertyName("related")] bool Related = false,
         [property: JsonPropertyName("path")] string? Path = null,
-        [property: JsonPropertyName("pinned")] bool Pinned = false);
+        [property: JsonPropertyName("pinned")] bool Pinned = false,
+        [property: JsonPropertyName("folder")] string? Folder = null);
 
     /// <summary>One entry of a result's action list; <c>Copy</c> is set for copy actions.</summary>
     public sealed record ActionRow(
@@ -97,37 +99,15 @@ public static class Native
         [property: JsonPropertyName("replace")] bool Replace = false);
 
     /// <summary>Blocks (tens of ms; seconds if the model process has to start): call off the UI thread.</summary>
-    public static Appended Semantic(ulong gen, string query)
-    {
-        IntPtr p = pc_semantic(gen, query);
-        try
-        {
-            string json = Marshal.PtrToStringUTF8(p) ?? "{}";
-            return JsonSerializer.Deserialize<Appended>(json) ?? new Appended(gen, 0, new());
-        }
-        finally
-        {
-            pc_free(p);
-        }
-    }
+    public static Appended Semantic(ulong gen, string query) =>
+        Read(pc_semantic(gen, query), NativeJson.Default.Appended) ?? new Appended(gen, 0, new());
 
     /// <summary>
     /// The language model's plan for a request the rules did not read, as the whole new list
     /// (the plan first). About 60 ms; seconds if its process has to start: call off the UI thread.
     /// </summary>
-    public static Appended Plan(ulong gen, string query)
-    {
-        IntPtr p = pc_plan(gen, query);
-        try
-        {
-            string json = Marshal.PtrToStringUTF8(p) ?? "{}";
-            return JsonSerializer.Deserialize<Appended>(json) ?? new Appended(gen, 0, new());
-        }
-        finally
-        {
-            pc_free(p);
-        }
-    }
+    public static Appended Plan(ulong gen, string query) =>
+        Read(pc_plan(gen, query), NativeJson.Default.Appended) ?? new Appended(gen, 0, new());
 
     public static string SemanticStatus()
     {
@@ -147,29 +127,30 @@ public static class Native
     /// <summary>Every app, A to Z, as a new generation.</summary>
     public static SearchResult AllApps() => ReadResult(pc_all_apps());
 
-    public static List<ActionRow> Actions(ulong gen, int index)
-    {
-        IntPtr p = pc_actions(gen, index);
-        try
-        {
-            return JsonSerializer.Deserialize<List<ActionRow>>(Marshal.PtrToStringUTF8(p) ?? "[]") ?? new();
-        }
-        finally
-        {
-            pc_free(p);
-        }
-    }
+    public static List<ActionRow> Actions(ulong gen, int index) =>
+        Read(pc_actions(gen, index), NativeJson.Default.ListActionRow) ?? new();
 
     public enum ActResult { NotApplicable = -1, Hide = 1, Refresh = 3 }
 
     public static ActResult Act(ulong gen, int index, string id) => (ActResult)pc_act(gen, index, id);
 
-    private static SearchResult ReadResult(IntPtr p)
+    private static SearchResult ReadResult(IntPtr p) =>
+        Read(p, NativeJson.Default.SearchResult) ?? new SearchResult(0, new());
+
+    /// <summary>
+    /// Parse the engine's JSON reply in place, as the UTF-8 it is (no string copy, no reflection:
+    /// the parser is generated at build time), then free it. Null for a null or malformed reply.
+    /// </summary>
+    private static unsafe T? Read<T>(IntPtr p, JsonTypeInfo<T> type) where T : class
     {
+        if (p == IntPtr.Zero) return null;
         try
         {
-            string json = Marshal.PtrToStringUTF8(p) ?? "{}";
-            return JsonSerializer.Deserialize<SearchResult>(json) ?? new SearchResult(0, new());
+            return JsonSerializer.Deserialize(MemoryMarshal.CreateReadOnlySpanFromNullTerminated((byte*)p), type);
+        }
+        catch (JsonException)
+        {
+            return null;
         }
         finally
         {
@@ -186,7 +167,7 @@ public static class Native
     public static bool SetAutostart(bool enable) => pc_autostart_set(enable ? 1 : 0) != 0;
     public static void Reindex() => pc_reindex();
 
-    /// <summary>Premultiplied RGBA, IconSize x IconSize, or null.</summary>
+    /// <summary>Premultiplied BGRA, IconSize x IconSize, or null.</summary>
     public static unsafe byte[]? Icon(ulong gen, int index)
     {
         var buf = new byte[IconSize * IconSize * 4];
@@ -207,16 +188,14 @@ public static class Native
     }
 
     /// <summary>The icon keys of every app, setting and folder, for warming the cache.</summary>
-    public static List<string> IconKeys()
-    {
-        IntPtr p = pc_icon_keys();
-        try
-        {
-            return JsonSerializer.Deserialize<List<string>>(Marshal.PtrToStringUTF8(p) ?? "[]") ?? new();
-        }
-        finally
-        {
-            pc_free(p);
-        }
-    }
+    public static List<string> IconKeys() => Read(pc_icon_keys(), NativeJson.Default.ListString) ?? new();
+}
+
+/// <summary>Parsers for the engine's replies, generated at build time.</summary>
+[JsonSerializable(typeof(Native.SearchResult))]
+[JsonSerializable(typeof(Native.Appended))]
+[JsonSerializable(typeof(List<Native.ActionRow>))]
+[JsonSerializable(typeof(List<string>))]
+internal sealed partial class NativeJson : JsonSerializerContext
+{
 }

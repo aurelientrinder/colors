@@ -59,14 +59,14 @@ pub fn icon_key(hit: &Hit) -> Option<String> {
     source_for(hit).map(|(k, _)| k)
 }
 
-/// Premultiplied RGBA, ICON_SIZE x ICON_SIZE. Blocks until extracted.
-pub fn icon_rgba(hit: &Hit) -> Option<Vec<u8>> {
+/// Premultiplied BGRA (the layout bitmaps take as is), ICON_SIZE x ICON_SIZE. Blocks until extracted.
+pub fn icon_bgra(hit: &Hit) -> Option<Vec<u8>> {
     let (_, src) = source_for(hit)?;
     extract(src)
 }
 
 /// The icon a key from [`icon_key`] stands for, so it can be fetched whatever result it came from.
-pub fn icon_rgba_for_key(key: &str) -> Option<Vec<u8>> {
+pub fn icon_bgra_for_key(key: &str) -> Option<Vec<u8>> {
     extract(source_for_key(key)?)
 }
 
@@ -78,7 +78,7 @@ fn source_for_key(key: &str) -> Option<Src> {
         _ if key.starts_with("shell:") => Src::Shell(key.into()),
         _ => {
             if let Some(p) = key.strip_prefix("path:") {
-                Src::Path(resolve_bare(p))
+                Src::Path(p.into())
             } else {
                 let ext = key.strip_prefix("ext:")?;
                 Src::Attrs { name: format!("file.{ext}"), dir: false }
@@ -98,7 +98,7 @@ const SETTINGS_APP: &str =
 
 #[derive(Clone)]
 pub enum Src {
-    /// A real path (exe, lnk, ...).
+    /// A real path (exe, lnk, ...), or a bare program name ("taskmgr.exe"), found when extracted.
     Path(String),
     /// A shell parsing name such as shell:AppsFolder\<AUMID>.
     Shell(String),
@@ -117,7 +117,7 @@ pub fn source_for(hit: &Hit) -> Option<(String, Src)> {
             if t.starts_with("shell:") {
                 Some((t.clone(), Src::Shell(t.clone())))
             } else {
-                Some((format!("path:{t}"), Src::Path(resolve_bare(t))))
+                Some((format!("path:{t}"), Src::Path(t.clone())))
             }
         }
         (Kind::File, Action::Open(p)) => {
@@ -159,7 +159,7 @@ unsafe fn icon_index(src: &Src) -> Option<i32> {
     let size = std::mem::size_of::<SHFILEINFOW>() as u32;
     let ok = match src {
         Src::Path(p) => {
-            let w = wide(p);
+            let w = wide(&resolve_bare(p));
             SHGetFileInfoW(PCWSTR(w.as_ptr()), Default::default(), Some(&mut sfi), size, SHGFI_SYSICONINDEX)
         }
         Src::Attrs { name, dir } => {
@@ -191,7 +191,7 @@ unsafe fn icon_index(src: &Src) -> Option<i32> {
     (ok != 0).then_some(sfi.iIcon)
 }
 
-/// Returns premultiplied RGBA at SIZE x SIZE.
+/// Returns premultiplied BGRA at SIZE x SIZE.
 unsafe fn extract_raw(src: &Src) -> Option<Vec<u8>> {
     let idx = icon_index(src)?;
     let list: IImageList = SHGetImageList(SHIL_EXTRALARGE as i32).ok()?;
@@ -232,9 +232,10 @@ unsafe fn extract_raw(src: &Src) -> Option<Vec<u8>> {
             for i in (0..n).step_by(4) {
                 let d = (0..3).map(|c| white[i + c].saturating_sub(black[i + c])).max().unwrap_or(0);
                 let a = 255 - d;
-                out[i] = black[i + 2].min(a); // R (BGRA -> RGBA, premultiplied)
-                out[i + 1] = black[i + 1].min(a);
-                out[i + 2] = black[i].min(a);
+                // Premultiplied: no channel may exceed alpha.
+                for c in 0..3 {
+                    out[i + c] = black[i + c].min(a);
+                }
                 out[i + 3] = a;
             }
             SelectObject(dc, old);

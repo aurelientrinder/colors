@@ -19,7 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const BATCH: usize = 4;
-const QUERY_TOKENS: usize = 64;
+pub const QUERY_TOKENS: usize = 64;
 const ITEM_TOKENS: usize = 48;
 /// Chunks per model call: bounds how long a query can wait behind the background indexer.
 const EMBED_GROUP: usize = 8;
@@ -88,6 +88,10 @@ pub struct Shared {
     /// new index has not reached yet, then dropped.
     legacy: RwLock<Option<Store>>,
     items: RwLock<Store>,
+    /// Item lists are indexed one at a time, newest first: the number of the latest list sent,
+    /// and the lock an item pass holds.
+    items_sent: AtomicU64,
+    items_pass: Mutex<()>,
     status: Mutex<Status>,
     stop: AtomicBool,
     /// Paths the launcher's file watcher reported as created or modified.
@@ -149,6 +153,8 @@ impl Shared {
             legacy: RwLock::new(legacy),
             docs: RwLock::new(Store::open(&dir.join(docs_file))),
             items: RwLock::new(Store::open(&dir.join(items_file))),
+            items_sent: AtomicU64::new(0),
+            items_pass: Mutex::new(()),
             cfg,
             emb: Mutex::new(None),
             waiting: AtomicUsize::new(0),
@@ -178,10 +184,11 @@ impl Shared {
         };
         let mut g = self.emb.lock().unwrap_or_else(|e| e.into_inner());
         if g.is_none() {
-            let mut e = Embedder::load(&self.cfg.model, self.cfg.threads, self.cfg.device)?;
+            let budgets = [QUERY_TOKENS, ITEM_TOKENS, self.cfg.doc_tokens];
+            let mut e = Embedder::load(&self.cfg.model, self.cfg.threads, self.cfg.device, &budgets)?;
             if e.device != embed::Device::Cpu {
-                // DirectML compiles kernels for each new input shape; do the query shape now, so
-                // the first real query does not wait for it.
+                // DirectML compiles kernels for each new input shape, and the NPU's first run is
+                // slow too; do the query shape now, so the first real query does not wait for it.
                 let _ = e.embed(&[embed::query_prompt("warm up")], QUERY_TOKENS);
             }
             *g = Some(e);
@@ -649,8 +656,16 @@ pub fn serve(sh: Arc<Shared>) {
             }
             "items" => {
                 if let Some(items) = req.items {
+                    // Passes overlapping would embed the same items twice over and append each
+                    // twice; one waiting behind a newer list has nothing left to do.
+                    let n = sh.items_sent.fetch_add(1, Ordering::SeqCst) + 1;
                     let sh = sh.clone();
-                    std::thread::spawn(move || sh.index_items(&items));
+                    std::thread::spawn(move || {
+                        let _pass = sh.items_pass.lock().unwrap_or_else(|e| e.into_inner());
+                        if sh.items_sent.load(Ordering::SeqCst) == n {
+                            sh.index_items(&items);
+                        }
+                    });
                 }
             }
             "ping" => println!("{}", serde_json::json!({"pong": true})),

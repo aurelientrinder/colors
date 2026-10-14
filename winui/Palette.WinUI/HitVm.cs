@@ -26,6 +26,7 @@ public sealed class HitVm : INotifyPropertyChanged
         IconKey = h.IconKey;
         CopyText = h.CopyText;
         Path = h.Path;
+        Folder = h.Folder;
         IsActionRow = glyph != null;
 
         string label = chip ?? (h.Related ? "Related" : h.Pinned ? "Pinned" : KindLabel(h.Kind, h.Path));
@@ -159,6 +160,7 @@ public sealed class HitVm : INotifyPropertyChanged
         SubText = o.SubText;
         CopyText = o.CopyText;
         Path = o.Path;
+        Folder = o.Folder;
         Glyph = o.Glyph;
         SecondGlyph = o.SecondGlyph;
         SecondLabel = o.SecondLabel;
@@ -176,7 +178,7 @@ public sealed class HitVm : INotifyPropertyChanged
 
     /// <summary>Would this row look identical to <paramref name="o"/>? (Then the list can keep it.)</summary>
     public bool SameRow(HitVm o) =>
-        RawKind == o.RawKind && Title == o.Title && SubText == o.SubText && IconKey == o.IconKey && Path == o.Path;
+        RawKind == o.RawKind && Title == o.Title && SubText == o.SubText && IconKey == o.IconKey && Path == o.Path && Folder == o.Folder;
 
     /// <summary>The engine's kind ("File", "Toggle", ...).</summary>
     public string RawKind { get; private set; }
@@ -188,6 +190,8 @@ public sealed class HitVm : INotifyPropertyChanged
     public string? CopyText { get; private set; }
     /// <summary>Full path when the row is a file (it gets a preview).</summary>
     public string? Path { get; private set; }
+    /// <summary>Full path when the row is a folder (the right arrow browses into it).</summary>
+    public string? Folder { get; private set; }
     public string Glyph { get; private set; }
     /// <summary>The button beside "More options" on the selected row.</summary>
     public string SecondGlyph { get; private set; }

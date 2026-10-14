@@ -30,26 +30,34 @@ impl Store {
             out: None,
         };
         let mut dead = 0usize;
+        let mut torn = false;
         if let Ok(mut f) = File::open(path) {
             let mut buf = Vec::new();
             if f.read_to_end(&mut buf).is_ok() {
-                dead = s.parse(&buf);
+                let (d, read, bad) = s.parse(&buf);
+                dead = d;
+                torn = read < buf.len() || bad > 0;
             }
         }
-        if dead > s.keys.len() / 4 + 16 {
+        // A torn tail (a write cut short) must go: records appended after it could never be read
+        // back, so they would be computed again on every start. So must damaged vectors.
+        if torn || dead > s.keys.len() / 4 + 16 {
             s.rewrite();
         }
         s
     }
 
-    /// Returns the number of superseded records. Stops quietly at a torn tail.
-    fn parse(&mut self, b: &[u8]) -> usize {
+    /// Returns the number of superseded records, how many bytes held whole records (less than
+    /// the file at a torn tail, 0 for a file of another layout) and the number of damaged vectors
+    /// left out.
+    fn parse(&mut self, b: &[u8]) -> (usize, usize, usize) {
         let header = 8;
         if b.len() < header || &b[..4] != MAGIC || u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize != DIM {
-            return 0;
+            return (0, 0, 0);
         }
         let mut p = header;
         let mut dead = 0;
+        let mut bad = 0;
         while p + 4 <= b.len() {
             let kl = u32::from_le_bytes(b[p..p + 4].try_into().unwrap()) as usize;
             let end = p + 4 + kl + 16 + DIM * 4;
@@ -64,12 +72,19 @@ impl Store {
                 .chunks_exact(4)
                 .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
                 .collect();
+            p = end;
+            // Vectors are stored unit length: anything else was damaged (and would outscore every
+            // real match). Left out, the entry is simply computed again.
+            let n2: f32 = v.iter().map(|x| x * x).sum();
+            if !n2.is_finite() || (n2 > 1e-6 && !(0.9..=1.1).contains(&n2)) {
+                bad += 1;
+                continue;
+            }
             if self.put(&key, stamp, size, &v) {
                 dead += 1;
             }
-            p = end;
         }
-        dead
+        (dead, p, bad)
     }
 
     /// In-memory insert/replace. Returns true if it replaced an existing key.
@@ -192,5 +207,54 @@ impl Store {
         scored.truncate(k);
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         scored.into_iter().map(|(i, s)| (self.keys[i].as_str(), s)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// After a write cut short, records added later are still there on the next start.
+    #[test]
+    fn a_torn_tail_does_not_hide_later_records() {
+        let path = std::env::temp_dir().join(format!("palette-store-{}.psm", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let v = vec![1.0 / (DIM as f32).sqrt(); DIM];
+        {
+            let mut s = Store::open(&path);
+            s.upsert("a", 1, 0, &v);
+            s.flush();
+        }
+        // Half a record, as a killed process leaves it.
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(&[0xff, 0xff, 0xff, 0x7f, 1, 2, 3]).unwrap();
+        drop(f);
+        {
+            let mut s = Store::open(&path);
+            assert_eq!(s.len(), 1);
+            s.upsert("b", 1, 0, &v);
+            s.flush();
+        }
+        let s = Store::open(&path);
+        assert!(s.stamp("a").is_some() && s.stamp("b").is_some());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn damaged_vectors_are_left_out() {
+        let path = std::env::temp_dir().join(format!("palette-store-bad-{}.psm", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut unit = vec![0.0f32; DIM];
+        unit[0] = 1.0;
+        {
+            let mut s = Store::open(&path);
+            s.upsert("good", 1, 0, &unit);
+            s.upsert("bad", 1, 0, &vec![1e16f32; DIM]);
+            s.flush();
+        }
+        let s = Store::open(&path);
+        assert!(s.stamp("good").is_some() && s.stamp("bad").is_none());
+        assert_eq!(s.search(&unit, 5).len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 }

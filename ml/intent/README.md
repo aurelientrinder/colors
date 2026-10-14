@@ -41,11 +41,27 @@ One request at a time, all 227 test requests, median / 95th percentile, after a 
 | OpenVINO GenAI | NPU | int4 | 71 ms | 150 ms (10 s first load) | 98.7% |
 | OpenVINO GenAI | CPU | int8 | 56 ms | 133 ms | 98.7% |
 | llama.cpp OpenVINO build | NPU | Q4_0 | 258 ms | 522 ms | 97.4% |
+| **palette-plan** (OpenVINO, own loop) | **NPU** | int4, no output layer | **30–33 ms** | **58–62 ms** | 98.7% |
 
-Chosen: llama.cpp on the CPU. It is steady (no GPU wake-ups), loads in a second, uses about
-125 MB of private memory, and the grammar keeps every plan well formed. OpenVINO's own grammar
-support cut plans short, so its rows are without one.
+First chosen: llama.cpp on the CPU. It is steady (no GPU wake-ups), loads in a second, uses
+about 125 MB of private memory, and the grammar keeps every plan well formed. OpenVINO's own
+grammar support cut plans short, so its rows are without one.
+
+Now, on PCs with an NPU: `palette-plan` (crates/palette-plan), twice as fast as llama.cpp on the
+CPU measured the same day (62–65 ms median, 133–154 ms p95), and the CPU stays free. On the NPU
+a step costs a fixed overhead more than arithmetic, so two changes make the difference:
+
+- **No 262k-token output layer.** Plans use 2,419 distinct tokens in all the training data,
+  and every test plan's tokens are among those or in its own request (names are copied as
+  typed). The NPU returns the last hidden state, and the CPU scores just those tokens (~1.5M
+  multiply-adds). Plans are identical to the full model's.
+- **`NPUW_LLM_GENERATE_HINT=BEST_PERF`**, and inputs written into the request's own tensors.
+
+Together a token goes from 8 ms to about 3 ms on the NPU (the same cut model on the CPU: 4 ms).
+The model is made by `ml/npu/export.py`; the first compile takes ~15 s and is cached. llama.cpp
+stays as the fallback on other PCs and while the NPU's model is first compiled.
 
 ```
 python bench.py llama --build cpu        # tools/ holds the llama.cpp builds (not in git)
+python bench.py llama --build npu --name palette-plan-npu   # target/release/palette-plan.exe
 ```

@@ -27,8 +27,13 @@ pub fn shell_execute_elevated(exe: &Path, args: &str) {
     }
 }
 
+/// Show `path` selected in its folder in Explorer.
+///
+/// The argument is passed as is, `/select,"C:\a b\c.txt"`: with `.arg`, Rust quotes the whole
+/// `/select,...` when the path has a space, which Explorer cannot read, so it opens its default
+/// folder instead.
 pub fn reveal(path: &Path) {
-    let _ = Command::new("explorer.exe").arg(format!("/select,{}", path.display())).spawn();
+    let _ = Command::new("explorer.exe").raw_arg(format!("/select,\"{}\"", path.display())).spawn();
 }
 
 fn quiet(program: &str, args: &[&str]) {

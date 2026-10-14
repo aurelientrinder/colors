@@ -227,6 +227,11 @@ fn set_dark_mode(dark: bool) -> bool {
 
 // ---------------------------------------------------------------- radios
 
+/// Ask Windows for the radios now, off the keystroke path: the first time takes ~15 ms.
+pub fn warm() {
+    radios();
+}
+
 /// Wi-Fi and Bluetooth radios, asked for once (access is granted to desktop apps without a prompt).
 fn radios() -> &'static [windows::Devices::Radios::Radio] {
     static RADIOS: OnceLock<Vec<windows::Devices::Radios::Radio>> = OnceLock::new();
@@ -271,18 +276,31 @@ fn endpoint() -> Option<windows::Win32::Media::Audio::Endpoints::IAudioEndpointV
     }
 }
 
+/// The last reading of the volume: typing "volume 30" asks on every keystroke, and each reading
+/// costs a millisecond or more of COM calls. Changing it here forgets the reading.
+static VOLUME: std::sync::Mutex<Option<(std::time::Instant, (f32, bool))>> = std::sync::Mutex::new(None);
+
 /// (level 0..1, muted) of the default output.
 fn volume() -> Option<(f32, bool)> {
+    if let Some((at, v)) = *VOLUME.lock().unwrap() {
+        if at.elapsed() < std::time::Duration::from_millis(1500) {
+            return Some(v);
+        }
+    }
     let ep = endpoint()?;
-    unsafe { Some((ep.GetMasterVolumeLevelScalar().ok()?, ep.GetMute().ok()?.as_bool())) }
+    let v = unsafe { (ep.GetMasterVolumeLevelScalar().ok()?, ep.GetMute().ok()?.as_bool()) };
+    *VOLUME.lock().unwrap() = Some((std::time::Instant::now(), v));
+    Some(v)
 }
 
 fn set_mute(mute: bool) -> bool {
+    *VOLUME.lock().unwrap() = None;
     endpoint().is_some_and(|ep| unsafe { ep.SetMute(mute, std::ptr::null()).is_ok() })
 }
 
 /// Setting a level also unmutes, as dragging the slider does.
 fn set_volume(percent: u32) -> bool {
+    *VOLUME.lock().unwrap() = None;
     endpoint().is_some_and(|ep| unsafe {
         ep.SetMasterVolumeLevelScalar(percent as f32 / 100.0, std::ptr::null()).is_ok()
             && (percent == 0 || ep.SetMute(false, std::ptr::null()).is_ok())

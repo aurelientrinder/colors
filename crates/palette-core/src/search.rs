@@ -1,12 +1,14 @@
 use crate::index::Catalog;
 use crate::Notify;
-use crate::model::{Action, Hit, Kind};
+use crate::model::{Action, Hit, Item, Kind, Words};
 use crate::usage::Usage;
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 pub struct Request {
     pub gen: u64,
@@ -18,7 +20,9 @@ pub struct Response {
     pub hits: Vec<Hit>,
 }
 
-const CHUNK: usize = 16 * 1024;
+/// Paths per parallel task: small enough that the efficient cores, which finish later, do not
+/// leave the others waiting at the end of a scan.
+const CHUNK: usize = 4 * 1024;
 /// File matches ranked on their path as well (location, depth, recent use): enough that a
 /// hundred equally good "Downloads" folders cannot crowd out yours.
 const FILE_POOL: usize = 3000;
@@ -90,6 +94,8 @@ impl Searcher {
 struct Narrow {
     query: String,
     version: u64,
+    /// Whether `matches` were matched on whole paths rather than names.
+    path_query: bool,
     matches: Vec<u32>,
     valid: bool,
 }
@@ -117,6 +123,11 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
         return hits;
     }
 
+    // "C:\Users\me\Projects\": what is in that folder (the arrow keys walk in and out this way).
+    if let Some(hits) = crate::browse::hits(q) {
+        return hits;
+    }
+
     if let Some(h) = calculator(q) {
         hits.push(h);
     }
@@ -139,27 +150,44 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
         }
     }
 
-    // Apps, commands and settings: a few thousand entries, always a full scan.
+    // Apps, commands and settings: a few thousand entries, always a full scan. Scored first, and
+    // only the few that can make the list are copied out.
     {
         let mut m = Matcher::new(Config::DEFAULT);
         let mut buf = Vec::new();
+        let mut found: Vec<(i32, &Item)> = Vec::new();
         for it in &cat.items {
             let scored = match &it.keywords {
                 // Every word already begins a word: always a good match.
-                Some(kw) => word_prefix_score(&it.name, kw, &words).map(|s| (s, GOOD)),
+                Some(_) => word_prefix_score(&it.words, &words).map(|s| (s, GOOD)),
                 None => pattern.score(Utf32Str::new(&it.name, &mut buf), &mut m).map(|s| {
-                    let f = fit(&it.name, &lq, &words);
+                    let f = fit(&it.words.name, &lq, &words);
                     (s as i32 + f, f)
                 }),
             };
             if let Some((base, f)) = scored {
-                let mut h = it.hit.clone();
-                h.score = base + kind_bonus(h.kind, f) + coverage(&it.name, &lq) + usage.bonus(&h.key());
-                if h.kind == Kind::App && secondary(&it.name, &lq) {
-                    h.score -= 60;
+                let mut score = base + kind_bonus(it.hit.kind, f) + coverage(&it.name, &lq) + usage.bonus(&it.hit.key());
+                if it.hit.kind == Kind::App && secondary(&it.words.name, &lq) {
+                    score -= 60;
                 }
-                hits.push(h);
+                found.push((score, it));
             }
+        }
+        found.sort_by(|a, b| b.0.cmp(&a.0));
+        // One row per app (see the end): a second "Task Manager" never makes the list.
+        let mut titles = HashSet::new();
+        let mut kept = 0;
+        for (score, it) in found {
+            if kept >= max {
+                break;
+            }
+            if matches!(it.hit.kind, Kind::App | Kind::Command) && !titles.insert(it.hit.title.to_lowercase()) {
+                continue;
+            }
+            kept += 1;
+            let mut h = it.hit.clone();
+            h.score = score;
+            hits.push(h);
         }
     }
 
@@ -197,15 +225,36 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
 
     // Files: parallel scan, narrowed by the previous query when possible.
     let n = cat.files.len();
+    // Not after a query ending in `$` (an exact ending: "foo$x" is no narrower than "foo$"), nor
+    // across a switch between matching names and whole paths. The same query again ("foo" then
+    // "foo ", trimmed) rescans just its own matches.
     let can_narrow = cache.valid
         && cache.version == cat.version
+        && cache.path_query == path_query
         && !q.contains('!')
-        && q.len() > cache.query.len()
+        && !cache.query.ends_with('$')
         && q.starts_with(&cache.query);
 
+    // A path being typed ("c:\users\") matches nearly every path, and the best alignment of a
+    // query in a path takes time in proportion to both lengths: tens of ms a keystroke. The greedy
+    // one finds exactly the same matches in linear time; its scores are a little rougher, which
+    // the ranking on location below evens out. (ASCII only: then each atom ignores case exactly
+    // when its needle has no capitals, and is normalized.)
+    let greedy = path_query && q.is_ascii() && pattern.atoms.iter().all(|a| a.kind == AtomKind::Fuzzy && !a.negative);
     let scan = |m: &mut Matcher, buf: &mut Vec<char>, i: usize| -> Option<(u32, u32)> {
-        let hay = if path_query { cat.files.path(i) } else { cat.files.name(i) };
-        pattern.score(Utf32Str::new(hay, buf), m).map(|s| (i as u32, s))
+        if !greedy {
+            let hay = if path_query { cat.files.path(i) } else { cat.files.name(i) };
+            return pattern.score(Utf32Str::new(hay, buf), m).map(|s| (i as u32, s));
+        }
+        let hay = Utf32Str::new(cat.files.path(i), buf);
+        let mut score = 0;
+        for a in &pattern.atoms {
+            let needle = a.needle_text();
+            m.config.ignore_case = !needle.chars().any(|c| c.is_ascii_uppercase());
+            m.config.normalize = true;
+            score += m.fuzzy_match_greedy(hay, needle)? as u32;
+        }
+        Some((i as u32, score))
     };
     let cfg = Config::DEFAULT.match_paths();
 
@@ -238,6 +287,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
 
     cache.query = q.to_string();
     cache.version = cat.version;
+    cache.path_query = path_query;
     cache.matches = scored.iter().map(|&(i, _)| i).collect();
     cache.valid = true;
 
@@ -249,61 +299,55 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     }
     // What you opened lately (Windows' Recent folder, newest first) counts for a lot.
     let recent = crate::home::recent_cached();
-    let recent_rank: std::collections::HashMap<String, i32> = recent
-        .iter()
-        .enumerate()
-        .filter_map(|(i, h)| match &h.action {
-            Action::Open(p) => Some((p.to_lowercase(), i as i32)),
-            _ => None,
-        })
+    let usage: &Usage = &usage;
+    // Ranked without building a row: only the few shown need one. Paths picked by the greedy
+    // scores are scored again properly: a few thousand cost a millisecond.
+    let mut cands: Vec<(i32, Cand)> = top
+        .par_iter()
+        .map_init(
+            || (Scratch::default(), Matcher::new(cfg.clone()), Vec::new()),
+            |(sc, m, buf), &(i, raw)| {
+                let path = cat.files.path(i as usize);
+                let raw = if greedy { pattern.score(Utf32Str::new(path, buf), m).unwrap_or(raw) } else { raw };
+                let score = file_score(path, cat.files.is_dir(i as usize), raw, &lq, usage, &recent.rank, sc);
+                (score, Cand::Indexed(i))
+            },
+        )
         .collect();
-    let file_hit = |path: &str, dir: bool, raw: u32| -> Hit {
-        let (parent, name) = path.rsplit_once('\\').unwrap_or(("", path));
-        let kind = if dir { Kind::Folder } else { Kind::File };
-        let lp = path.to_lowercase();
-        let mut h = Hit {
-            title: name.to_string(),
-            subtitle: parent.to_string(),
-            kind,
-            action: Action::Open(path.to_string()),
-            score: 0,
-        };
-        h.score = raw as i32 + prefix_bonus(name, &lq) + kind.bonus() + path_prior(&lp) + usage.bonus(&h.key());
-        if let Some(r) = recent_rank.get(&lp) {
-            h.score += RECENT - r / 2;
-        }
-        h
-    };
-    let mut cands: Vec<Hit> =
-        top.into_iter().map(|(i, s)| file_hit(cat.files.path(i as usize), cat.files.is_dir(i as usize), s)).collect();
     // Recent files the index has not caught up with yet.
     {
         let mut m = Matcher::new(cfg.clone());
         let mut buf = Vec::new();
-        for h in &recent {
+        let mut sc = Scratch::default();
+        for (j, h) in recent.hits.iter().enumerate() {
             let Action::Open(p) = &h.action else { continue };
             let hay = if path_query { p.as_str() } else { h.title.as_str() };
             if let Some(s) = pattern.score(Utf32Str::new(hay, &mut buf), &mut m) {
-                cands.push(file_hit(p, h.kind == Kind::Folder, s));
+                cands.push((file_score(p, h.kind == Kind::Folder, s, &lq, usage, &recent.rank, &mut sc), Cand::Recent(j)));
             }
         }
     }
-    cands.sort_by(|a, b| b.score.cmp(&a.score));
+    cands.sort_by(|a, b| b.0.cmp(&a.0));
     // Score first, stat later: only verify existence for candidates that actually make the
     // visible list (the index can be a little stale).
     let mut kept = 0usize;
-    let mut seen = std::collections::HashSet::new();
-    for h in cands {
+    let mut seen = HashSet::new();
+    for (score, c) in cands {
         if kept >= max {
             break;
         }
-        if let Action::Open(p) = &h.action {
-            if !seen.insert(p.to_lowercase()) || std::fs::symlink_metadata(p).is_err() {
-                continue;
-            }
+        let (path, dir) = match c {
+            Cand::Indexed(i) => (cat.files.path(i as usize), cat.files.is_dir(i as usize)),
+            Cand::Recent(j) => match &recent.hits[j].action {
+                Action::Open(p) => (p.as_str(), recent.hits[j].kind == Kind::Folder),
+                _ => continue,
+            },
+        };
+        if !seen.insert(path.to_lowercase()) || !exists(path) {
+            continue;
         }
         kept += 1;
-        hits.push(h);
+        hits.push(file_hit(path, dir, score));
     }
 
     // Always offer a web search as the last resort.
@@ -315,6 +359,74 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     hits.retain(|h| !matches!(h.kind, Kind::App | Kind::Command) || apps.insert(h.title.to_lowercase()));
     hits.truncate(max);
     hits
+}
+
+/// A file match before it becomes a row: an index entry, or one of the recent files.
+#[derive(Clone, Copy)]
+enum Cand {
+    Indexed(u32),
+    Recent(usize),
+}
+
+/// Reused buffers for `file_score`.
+#[derive(Default)]
+struct Scratch {
+    lower: String,
+    key: String,
+}
+
+/// How good a file match is: its name match, the query beginning its name, where it lives, how
+/// often and lately it was opened.
+fn file_score(path: &str, dir: bool, raw: u32, lq: &str, usage: &Usage, recent: &HashMap<String, i32>, sc: &mut Scratch) -> i32 {
+    let lp = &mut sc.lower;
+    lp.clear();
+    if path.is_ascii() {
+        lp.push_str(path);
+        lp.make_ascii_lowercase();
+    } else {
+        lp.push_str(&path.to_lowercase());
+    }
+    let lname = &lp[lp.rfind('\\').map_or(0, |i| i + 1)..];
+    sc.key.clear();
+    sc.key.push_str("open:");
+    sc.key.push_str(path);
+    let kind = if dir { Kind::Folder } else { Kind::File };
+    let mut s = raw as i32 + prefix_bonus_lower(lname, lq) + kind.bonus() + path_prior(lp) + usage.bonus(&sc.key);
+    if let Some(r) = recent.get(lp.as_str()) {
+        s += RECENT - r / 2;
+    }
+    s
+}
+
+fn file_hit(path: &str, dir: bool, score: i32) -> Hit {
+    let (parent, name) = path.rsplit_once('\\').unwrap_or(("", path));
+    Hit {
+        title: name.to_string(),
+        subtitle: parent.to_string(),
+        kind: if dir { Kind::Folder } else { Kind::File },
+        action: Action::Open(path.to_string()),
+        score,
+    }
+}
+
+/// Does `path` still exist? While typing, the same files make the list keystroke after
+/// keystroke, so answers are kept for a few seconds instead of asking the disk each time.
+fn exists(path: &str) -> bool {
+    const FRESH: Duration = Duration::from_secs(5);
+    static KNOWN: Mutex<Option<HashMap<String, (bool, Instant)>>> = Mutex::new(None);
+    if let Some(&(e, at)) = KNOWN.lock().unwrap().get_or_insert_with(HashMap::new).get(path) {
+        if at.elapsed() < FRESH {
+            return e;
+        }
+    }
+    let e = std::fs::symlink_metadata(path).is_ok();
+    let mut known = KNOWN.lock().unwrap();
+    let known = known.get_or_insert_with(HashMap::new);
+    if known.len() >= 4096 {
+        known.clear();
+    }
+    known.insert(path.to_string(), (e, Instant::now()));
+    e
 }
 
 fn starts_ci(s: &str, lq: &str) -> bool {
@@ -344,21 +456,21 @@ const RECENT: i32 = 100;
 /// How the query sits in a name, beyond nucleo's letter-by-letter score. Whole words are what
 /// people type; letters scattered through a long name ("readme" in "Inventor Read-only Mode",
 /// "teams" in "Steam Support Center") are a last resort.
-fn fit(name: &str, lq: &str, words: &[&str]) -> i32 {
-    let l = name.to_lowercase();
+/// `l` is the name, lowercased.
+fn fit(l: &str, lq: &str, words: &[&str]) -> i32 {
     if l == lq {
         return 200;
     }
-    let p = prefix_bonus(&l, lq);
+    let p = prefix_bonus_lower(l, lq);
     if p > 0 {
         return p;
     }
     let compact = |s: &str| -> String { s.chars().filter(|c| c.is_alphanumeric()).collect() };
     let cq = compact(lq);
-    if cq.len() >= 2 && compact(&l).starts_with(&cq) {
+    if cq.len() >= 2 && compact(l).starts_with(&cq) {
         return 120; // "wifi" for "Wi-Fi"
     }
-    if words.len() > 1 && words_begin(&l, words) {
+    if words.len() > 1 && words_begin(l, words) {
         return GOOD; // "vis code" for "Visual Studio Code"
     }
     let initials: String = l.split(|c: char| !c.is_alphanumeric()).filter_map(|w| w.chars().next()).collect();
@@ -385,13 +497,13 @@ fn coverage(name: &str, lq: &str) -> i32 {
 }
 
 /// Start-menu entries that come along with an app rather than being one: uninstallers, help,
-/// release notes. Still found, just after the app itself, unless asked for by name.
-fn secondary(name: &str, lq: &str) -> bool {
+/// release notes. Still found, just after the app itself, unless asked for by name. `l` is the
+/// name, lowercased.
+fn secondary(l: &str, lq: &str) -> bool {
     const WORDS: &[&str] = &[
         "uninstall", "readme", "read me", "release notes", "help", "documentation", "faq", "license",
         "manual", "what's new", "website", "installer", "repair", "migrat", "support center",
     ];
-    let l = name.to_lowercase();
     WORDS.iter().any(|w| l.contains(w) && !lq.contains(w.split(' ').next().unwrap_or(w)))
 }
 
@@ -443,39 +555,37 @@ pub fn web_hit(q: &str) -> Hit {
     }
 }
 
-/// Does every one of `words` (lowercase) begin some word of `text`?
+/// Does every one of `words` (lowercase) begin some word of `text`? Compared letter by letter,
+/// without copies: it runs for every open window on every keystroke.
 fn words_begin(text: &str, words: &[&str]) -> bool {
-    let tw: Vec<String> =
-        text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect();
     words.iter().all(|w| {
-        let w: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
-        w.is_empty() || tw.iter().any(|t| t.starts_with(&w))
+        let letters = || w.chars().filter(|c| c.is_alphanumeric());
+        letters().next().is_none()
+            || text.split(|c: char| !c.is_alphanumeric()).any(|t| {
+                let mut tc = t.chars().flat_map(char::to_lowercase);
+                letters().all(|c| tc.next() == Some(c))
+            })
     })
 }
 
 /// Settings-index entries: every typed word must begin a word of the name or of its keywords
 /// ("mouse size" finds "Mouse pointer size", "batt" finds "Battery saver"). Words found in the
 /// name count for more than words found only among the keywords.
-fn word_prefix_score(name: &str, keywords: &str, words: &[&str]) -> Option<i32> {
+fn word_prefix_score(w: &Words, words: &[&str]) -> Option<i32> {
     if words.is_empty() || words.iter().map(|w| w.len()).sum::<usize>() < 3 {
         return None;
     }
-    let split = |s: &str| -> Vec<String> {
-        s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
-    };
-    let name_words = split(name);
-    let kw_words = split(keywords);
     let mut score = 120;
-    for w in words {
-        if name_words.iter().any(|n| n.starts_with(w)) {
+    for q in words {
+        if w.name_words.split(' ').any(|n| n.starts_with(q)) {
             score += 40;
-        } else if kw_words.iter().any(|k| k.starts_with(w)) {
+        } else if w.keywords.split(' ').any(|k| k.starts_with(q)) {
             score += 15;
         } else {
             return None;
         }
     }
-    if name_words.first().is_some_and(|n| n.starts_with(words[0])) {
+    if w.name_words.split(' ').next().is_some_and(|n| n.starts_with(words[0])) {
         score += 60;
     }
     Some(score)
@@ -483,7 +593,11 @@ fn word_prefix_score(name: &str, keywords: &str, words: &[&str]) -> Option<i32> 
 
 /// 140 if the whole name starts with the query, 100 if any word does.
 fn prefix_bonus(name: &str, lq: &str) -> i32 {
-    let l = name.to_lowercase();
+    prefix_bonus_lower(&name.to_lowercase(), lq)
+}
+
+/// `prefix_bonus` of a name already lowercased.
+fn prefix_bonus_lower(l: &str, lq: &str) -> i32 {
     if l.starts_with(lq) {
         return 140;
     }
@@ -528,10 +642,10 @@ mod tests {
 
     #[test]
     fn whole_words_beat_scattered_letters() {
-        assert!(fit("README.md", "readme", &["readme"]) > fit("Inventor Read-only Mode", "readme", &["readme"]));
-        assert_eq!(fit("Inventor Read-only Mode", "readme", &["readme"]), 0);
-        assert!(fit("Wi-Fi settings", "wifi", &["wifi"]) >= GOOD);
-        assert!(fit("Visual Studio Code", "vsc", &["vsc"]) >= GOOD);
+        assert!(fit("readme.md", "readme", &["readme"]) > fit("inventor read-only mode", "readme", &["readme"]));
+        assert_eq!(fit("inventor read-only mode", "readme", &["readme"]), 0);
+        assert!(fit("wi-fi settings", "wifi", &["wifi"]) >= GOOD);
+        assert!(fit("visual studio code", "vsc", &["vsc"]) >= GOOD);
         assert!(coverage("Photos", "photo") > coverage("Photometric Calc 2026 R1", "photo"));
     }
 
@@ -552,9 +666,45 @@ mod tests {
     }
 
     #[test]
+    fn words_begin_by_word() {
+        assert!(words_begin("Inbox - Google Chrome", &["goo", "inb"]));
+        assert!(words_begin("Wi-Fi settings", &["fi"]));
+        assert!(!words_begin("Inbox - Google Chrome", &["oogle"]));
+        assert!(words_begin("Ünïcode Tïtle", &["ünï"]));
+        assert!(words_begin("anything", &["--"]));
+    }
+
+    /// Matches of a longer query are found among the last query's matches only when they must be
+    /// among them: not after switching from names to whole paths, nor after an exact ending (`$`).
+    #[test]
+    fn narrowing_never_loses_matches() {
+        let dir = std::env::temp_dir().join(format!("palette-narrow-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("foo")).unwrap();
+        let bar = dir.join("foo").join("bar.txt");
+        let foo = dir.join("foo.txt");
+        let odd = dir.join("foo$x.txt");
+        for f in [&bar, &foo, &odd] {
+            std::fs::write(f, b"").unwrap();
+        }
+        let mut cat = Catalog::default();
+        for f in [&bar, &foo, &odd] {
+            cat.files.push(f.to_str().unwrap(), false);
+        }
+        let s = Searcher::new(Arc::new(RwLock::new(cat)), Arc::new(Mutex::new(Usage::default())));
+        let titles = |q: &str| -> Vec<String> { s.search_all(q, 20).into_iter().map(|h| h.title).collect() };
+
+        assert!(!titles("foo").contains(&"bar.txt".to_string()));
+        assert!(titles("foo\\b").contains(&"bar.txt".to_string()), "by its path, after a search by name");
+        // No name ends in "foo"; "foo$x" is no exact ending, so it matches "foo$x.txt" fuzzily.
+        assert!(!titles("foo$").iter().any(|t| t.ends_with(".txt")));
+        assert!(titles("foo$x").contains(&"foo$x.txt".to_string()), "after an exact ending");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn helpers_rank_after_their_app() {
-        assert!(secondary("Visual Studio Installer", "vis"));
-        assert!(!secondary("Visual Studio Installer", "installer"));
-        assert!(!secondary("Visual Studio", "vis"));
+        assert!(secondary("visual studio installer", "vis"));
+        assert!(!secondary("visual studio installer", "installer"));
+        assert!(!secondary("visual studio", "vis"));
     }
 }

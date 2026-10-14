@@ -17,7 +17,7 @@ internal sealed unsafe class ShadowWindow : IDisposable
     private uint* _bits;
     private int _bw, _bh;                    // bitmap size
     private (int x0, int y0, int x1, int y1) _dirty;  // area painted last time
-    private string _last = "";
+    private (int, int, int, int, double, double, double, double, double, bool) _last;   // what was painted last
     private byte _lastAlpha;
     private double[] _sideD = [], _sideS = [];
 
@@ -54,8 +54,9 @@ internal sealed unsafe class ShadowWindow : IDisposable
         if (_hwnd == IntPtr.Zero) return;
         int m = Margin(scale);
         int bw = win.Width + 2 * m, bh = win.Height + 2 * m;
-        // The fade is the window's constant alpha: a frame that only fades skips the repaint.
-        string key = $"{win.X},{win.Y},{bw},{bh},{l:F1},{t:F1},{r:F1},{b:F1},{radius:F1},{dark}";
+        // The fade is the window's constant alpha: a frame that only fades skips the repaint. A
+        // tuple rather than a formatted string: this runs every animation frame.
+        var key = (win.X, win.Y, bw, bh, Math.Round(l, 1), Math.Round(t, 1), Math.Round(r, 1), Math.Round(b, 1), Math.Round(radius, 1), dark);
         byte alpha = (byte)Math.Clamp(opacity * 255, 0, 255);
         if (key == _last && alpha == _lastAlpha) return;
         if (key == _last)

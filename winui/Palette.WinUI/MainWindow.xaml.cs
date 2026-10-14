@@ -21,8 +21,12 @@ public sealed partial class MainWindow : Window
 {
     // Measured on the new Windows Search: a 500-wide panel, 56-high rows 4 apart (RowDip is the
     // pitch), the list 10 above and 4 below its rows (PadDip), and a 100-high search card with 6
-    // around it (SearchDip). The list never grows past MaxBodyDip; it scrolls instead.
-    private const double WidthDip = 500, SearchDip = 112, RowDip = 60, PadDip = 14, MaxBodyDip = 600;
+    // around it (SearchDip). The list never grows past MaxBodyDip; it scrolls instead, to bring a
+    // preview opened low in a long list into view. It is room for a search's rows and a file
+    // preview. The window is this size whole (the shadow window repaints and copies its entire
+    // bitmap on every animation frame, so a taller window makes every frame dearer).
+    private const double WidthDip = 500, SearchDip = 112, RowDip = 60, PadDip = 14,
+        MaxBodyDip = InstantRows * RowDip + PadDip + FilePaneDip;
 
     private readonly AppWindow _aw;
     private readonly IntPtr _hwnd;
@@ -325,6 +329,8 @@ public sealed partial class MainWindow : Window
             double step = dt / PreviewMs;
             _pvU = _pvTarget > _pvU ? Math.Min(_pvTarget, _pvU + step) : Math.Max(_pvTarget, _pvU - step);
             busy |= _pvU != _pvTarget;
+            // Fully open: a row near the bottom of a long list has its preview below the fold.
+            if (_pvU == _pvTarget && _pvTarget > 0) DispatcherQueue.TryEnqueue(ScrollToSelection);
         }
         if (_listShownDip != _listBodyDip)
         {
@@ -368,7 +374,10 @@ public sealed partial class MainWindow : Window
         double pvDip = rows && _pvVm != null ? _pvFull * p : 0;
         if (_pvVm != null) _pvVm.PreviewHeight = pvDip;
         PreviewPane.Opacity = p * p;
-        double bodyDip = Math.Min(_listShownDip + pvDip + ClosingPreviewDip(), MaxBodyDip);
+        // Never taller than the window: the panel grows upward from the bottom, and the search
+        // field must stay on screen.
+        double roomDip = Math.Max(0, wh / s - SearchDip);
+        double bodyDip = Math.Min(_listShownDip + pvDip + ClosingPreviewDip(), Math.Min(MaxBodyDip, roomDip));
         Body.Height = bodyDip;
 
         // Pop: the whole window fades in (a window-level alpha that DWM applies for free) while the
@@ -456,6 +465,9 @@ public sealed partial class MainWindow : Window
         SetInputText("");
         Items.Clear();
         _latestQuery = "";
+        _walkText = null;
+        _walkSelected.Clear();
+        _reselectTitle = null;
         ResetPreview();
         Resize(recenter: true);
         _shownAt = DateTime.UtcNow;
@@ -666,6 +678,12 @@ public sealed partial class MainWindow : Window
                 ResultsList.SelectedIndex = sel < 0 ? 0 : (sel - 1 + n) % n;
                 e.Handled = true;
                 break;
+            case VirtualKey.Right:
+                e.Handled = TryBrowseDown(sel);   // into the selected folder (Browse.cs)
+                break;
+            case VirtualKey.Left:
+                e.Handled = TryBrowseUp(sel);     // to the folder the selected result is in
+                break;
             case VirtualKey.Enter:
                 e.Handled = true;
                 if (_view == View.Actions)
@@ -825,6 +843,7 @@ public sealed partial class MainWindow : Window
             if (i < Items.Count) ResultsList.SelectedIndex = i;
             _restoreSelection = -1;
         }
+        ReselectByTitle();
         UpdateCondensed();
         HoldHeight();
         Resize(recenter: false);
@@ -833,7 +852,8 @@ public sealed partial class MainWindow : Window
 
         // The instant tier is on screen; ask for meaning-based matches in the background.
         string q = query.Trim();
-        if (q.Length >= 3 && !q.StartsWith('>'))
+        // A folder being browsed lists only what is in it.
+        if (q.Length >= 3 && !q.StartsWith('>') && !IsBrowsePath(q))
         {
             _semVersion = version;
             _semQuery = q;
@@ -1052,18 +1072,11 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static WriteableBitmap MakeBitmap(byte[] rgba)
+    /// <param name="bgra">Premultiplied BGRA from the engine: the bitmap's own layout.</param>
+    private static WriteableBitmap MakeBitmap(byte[] bgra)
     {
         int n = Native.IconSize;
         var wb = new WriteableBitmap(n, n);
-        var bgra = new byte[rgba.Length];
-        for (int i = 0; i < rgba.Length; i += 4)
-        {
-            bgra[i] = rgba[i + 2];
-            bgra[i + 1] = rgba[i + 1];
-            bgra[i + 2] = rgba[i];
-            bgra[i + 3] = rgba[i + 3];
-        }
         bgra.CopyTo(wb.PixelBuffer);
         wb.Invalidate();
         return wb;

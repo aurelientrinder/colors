@@ -109,7 +109,8 @@ pub fn home(pins: &Pins, usage: &Usage) -> Vec<Hit> {
     };
     let mut pinned = pins.list().iter().cloned();
     let mut used = usage.top(room + pins.list().len()).into_iter();
-    let mut recent = recent_cached().into_iter();
+    let recent = recent_cached();
+    let mut recent = recent.hits.iter().cloned();
     add(&mut out, &mut pinned, room);
     let until = (out.len() + MOST_USED).min(room);
     add(&mut out, &mut used, until);
@@ -119,14 +120,36 @@ pub fn home(pins: &Pins, usage: &Usage) -> Vec<Hit> {
     out
 }
 
+/// The recent files, newest first, and each one's place in that order by lowercased path (for
+/// ranking search results).
+pub struct Recent {
+    pub hits: Vec<Hit>,
+    pub rank: std::collections::HashMap<String, i32>,
+}
+
+impl Recent {
+    fn new(hits: Vec<Hit>) -> Recent {
+        let rank = hits
+            .iter()
+            .enumerate()
+            .filter_map(|(i, h)| match &h.action {
+                Action::Open(p) => Some((p.to_lowercase(), i as i32)),
+                _ => None,
+            })
+            .collect();
+        Recent { hits, rank }
+    }
+}
+
 /// Recent files without waiting on the disk: reading the Recent folder takes ~15 ms, so the home
-/// view uses the last reading and refreshes it in the background when it is over 30 s old.
-pub fn recent_cached() -> Vec<Hit> {
-    use std::sync::Mutex;
+/// view uses the last reading and refreshes it in the background when it is over 30 s old. Shared,
+/// not copied: every keystroke's search reads it.
+pub fn recent_cached() -> std::sync::Arc<Recent> {
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
-    static CACHE: Mutex<Option<(Instant, Vec<Hit>)>> = Mutex::new(None);
+    static CACHE: Mutex<Option<(Instant, Arc<Recent>)>> = Mutex::new(None);
     static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let read = || recent_files(RECENT_RANKED);
+    let read = || Arc::new(Recent::new(recent_files(RECENT_RANKED)));
 
     let mut c = CACHE.lock().unwrap();
     match &*c {

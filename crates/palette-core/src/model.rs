@@ -111,4 +111,42 @@ pub struct Item {
     /// and these keywords instead of fuzzily (a fuzzy scan of 1,200 long setting names would
     /// find scattered letters of almost anything).
     pub keywords: Option<String>,
+    /// The name and keywords lowercased and cut into words, once rather than on every keystroke.
+    pub(crate) words: Words,
+}
+
+/// Lowercased forms of an item's text, for matching it (see `Item::new`).
+#[derive(Clone, Default)]
+pub(crate) struct Words {
+    /// The whole name, lowercased.
+    pub name: String,
+    /// The name's words, lowercased, separated by single spaces.
+    pub name_words: String,
+    /// The keywords' words, lowercased, separated by single spaces.
+    pub keywords: String,
+}
+
+impl Words {
+    fn split(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        for w in s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()) {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.extend(w.chars().flat_map(char::to_lowercase));
+        }
+        out
+    }
+}
+
+impl Item {
+    pub fn new(name: impl Into<String>, hit: Hit, keywords: Option<String>) -> Item {
+        let name = name.into();
+        let words = Words {
+            name: name.to_lowercase(),
+            name_words: Words::split(&name),
+            keywords: keywords.as_deref().map(Words::split).unwrap_or_default(),
+        };
+        Item { name, hit, keywords, words }
+    }
 }

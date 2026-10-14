@@ -1,6 +1,7 @@
 """How fast each runtime writes a plan, one request at a time as typed, and whether it stays right.
 
     python bench.py llama  --build cpu|vulkan|openvino-2026.4.1 --gguf runs/gguf/plan-Q8_0.gguf [--device NPU]
+    python bench.py llama  --build npu --name palette-plan-npu    # target/release/palette-plan.exe
     python bench.py torch  --model runs/gemma270m-v2 --device cpu|xpu
     python bench.py ov     --model runs/ov/int8 --device CPU|GPU|NPU
 
@@ -29,9 +30,13 @@ def post(url, body):
 
 
 def llama(args):
-    exe = HERE / "tools" / args.build / "llama-server.exe"
-    cmd = [str(exe), "-m", args.gguf, "-c", "512", "-np", "1", "--port", "8091", "-t", str(args.threads), "--no-webui"]
-    cmd += ["-ngl", "99"] if args.build != "cpu" else ["-ngl", "0"]
+    if args.build == "npu":
+        # palette-plan (crates/palette-plan, model from ml/npu/export.py): llama-server's interface.
+        cmd = [str(HERE.parents[1] / "target" / "release" / "palette-plan.exe"), "serve", "--port", "8091"]
+    else:
+        exe = HERE / "tools" / args.build / "llama-server.exe"
+        cmd = [str(exe), "-m", args.gguf, "-c", "512", "-np", "1", "--port", "8091", "-t", str(args.threads), "--no-webui"]
+        cmd += ["-ngl", "99"] if args.build != "cpu" else ["-ngl", "0"]
     env = None
     if args.device:
         import os

@@ -2,11 +2,16 @@
 //! (Gemma 3 270M fine-tuned on ml/intent): "get me outlook and teams", "make it quieter",
 //! "close everything but spotify", "opne notepad and wether side by side".
 //!
-//! The model runs in `llama-server.exe` (llama.cpp, on the CPU), its own process: started a
-//! little after launch, stopped after a long quiet spell, killed with the launcher (a job
-//! object). It writes one line in the plan format of ml/intent/plan.py, held to it by a
-//! grammar; here the names in that line are matched to real apps, Settings pages and folders.
-//! A plan naming anything that cannot be found is dropped: the model never invents a step.
+//! The model runs in a helper process: `palette-plan.exe` on the NPU (crates/palette-plan, about
+//! 30 ms a plan) when the PC has one, else `llama-server.exe` (llama.cpp, on the CPU, about 60 ms).
+//! Both answer the same HTTP calls. The helper is started a little after launch, stopped after a
+//! long quiet spell, and killed with the launcher (a job object). The NPU's model is compiled
+//! once, in the background, the first time (about a minute); llama.cpp answers until then.
+//!
+//! The model writes one line in the plan format of ml/intent/plan.py (llama.cpp is held to it by
+//! a grammar, palette-plan by scoring only plan tokens); here the names in that line are matched
+//! to real apps, Settings pages and folders. A plan naming anything that cannot be found is
+//! dropped: the model never invents a step.
 //!
 //! Plans that were run are remembered, so the same request is a plan as soon as it is typed.
 
@@ -14,10 +19,13 @@ use crate::intent::{self, App, Layout, Media, Step};
 use crate::model::{Action, Hit, Item, Kind};
 use crate::paths;
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -31,7 +39,12 @@ const REMEMBERED: usize = 300;
 struct Proc {
     child: Child,
     port: u16,
+    /// palette-plan on the NPU, not llama-server.
+    npu: bool,
 }
+
+/// palette-plan stopped working this session (no NPU after all, a driver error): llama.cpp only.
+static NPU_FAILED: AtomicBool = AtomicBool::new(false);
 
 pub struct Planner {
     proc: Mutex<Option<Proc>>,
@@ -43,7 +56,68 @@ pub struct Planner {
 }
 
 pub fn available() -> bool {
-    paths::planner_dir().is_some()
+    paths::planner_dir().is_some() || npu_parts().is_some()
+}
+
+/// palette-plan.exe and its model folder.
+fn npu_parts() -> Option<(PathBuf, PathBuf)> {
+    Some((paths::plan_exe()?, paths::planner_npu_dir()?))
+}
+
+/// palette-plan and its model, if the model is compiled for the NPU. If it is not, it is
+/// compiled now in the background (once a session; on a PC without an NPU that ends at once).
+fn npu_ready() -> Option<(PathBuf, PathBuf)> {
+    static COMPILING: AtomicBool = AtomicBool::new(false);
+    if NPU_FAILED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let (exe, dir) = npu_parts()?;
+    if palette_ov::is_cached(&palette_ov::cache_key(&dir.join("openvino_model.xml"), "plan")) {
+        return Some((exe, dir));
+    }
+    if !COMPILING.swap(true, Ordering::SeqCst) {
+        let child = Command::new(&exe)
+            .arg("compile")
+            .arg("--model")
+            .arg(&dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(NO_WINDOW)
+            .spawn();
+        if let Ok(child) = child {
+            kill_with_us(&child); // and otherwise left to finish
+        }
+    }
+    None
+}
+
+/// Start `exe` with the arguments `args(port)` and wait until it answers `/health`.
+fn launch(exe: &Path, args: impl FnOnce(u16) -> Vec<OsString>, dir: &Path) -> Option<(Child, u16)> {
+    // A free port on this PC only.
+    let port = TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
+    let mut child = Command::new(exe)
+        .args(args(port))
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(NO_WINDOW)
+        .spawn()
+        .ok()?;
+    kill_with_us(&child);
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(20) {
+        if http(port, "GET", "/health", "", Duration::from_millis(500)).is_some_and(|b| b.contains("\"ok\"")) {
+            return Some((child, port));
+        }
+        if !matches!(child.try_wait(), Ok(None)) {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    None
 }
 
 pub fn get() -> &'static Planner {
@@ -80,39 +154,50 @@ impl Planner {
     /// Start the helper if it is not running. Returns its port.
     pub fn ensure_started(&self) -> Option<u16> {
         let mut g = self.proc.lock().ok()?;
+        let npu = npu_ready();
         if let Some(p) = g.as_mut() {
-            if matches!(p.child.try_wait(), Ok(None)) {
+            let alive = matches!(p.child.try_wait(), Ok(None));
+            if alive && (p.npu || npu.is_none()) {
                 return Some(p.port);
             }
+            if p.npu {
+                NPU_FAILED.store(true, Ordering::Relaxed); // it ended on its own
+            }
+            // Gone, or llama.cpp while the NPU's model has become ready.
+            let _ = p.child.kill();
             *g = None;
         }
-        let dir = paths::planner_dir()?;
-        // A free port on this PC only.
-        let port = TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
-        let threads = std::thread::available_parallelism().map(|n| n.get().clamp(2, 8) / 2).unwrap_or(4).max(2);
-        let child = Command::new(dir.join("llama-server.exe"))
-            .args(["-m", &dir.join("plan.gguf").to_string_lossy(), "--host", "127.0.0.1", "--port", &port.to_string()])
-            .args(["-c", "512", "-np", "1", "-ngl", "0", "-t", &threads.to_string(), "--no-webui"])
-            .current_dir(&dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(NO_WINDOW)
-            .spawn()
-            .ok()?;
-        kill_with_us(&child);
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(20) {
-            if http(port, "GET", "/health", "", Duration::from_millis(500)).is_some_and(|b| b.contains("\"ok\"")) {
-                *g = Some(Proc { child, port });
-                *self.last_used.lock().ok()? = Instant::now();
-                return Some(port);
+        if let Some((exe, dir)) = npu {
+            let model = dir.clone();
+            let args = move |port: u16| -> Vec<OsString> {
+                vec!["serve".into(), "--port".into(), port.to_string().into(), "--model".into(), model.into()]
+            };
+            match launch(&exe, args, &dir) {
+                Some((child, port)) => {
+                    // The NPU's first run takes half a second; take it now, not on a request.
+                    let _ = http(port, "POST", "/completion", r#"{"prompt":"open notepad\n","n_predict":8}"#, Duration::from_secs(5));
+                    *g = Some(Proc { child, port, npu: true });
+                    *self.last_used.lock().ok()? = Instant::now();
+                    return Some(port);
+                }
+                None => NPU_FAILED.store(true, Ordering::Relaxed),
             }
-            std::thread::sleep(Duration::from_millis(100));
         }
-        let mut child = child;
-        let _ = child.kill();
-        None
+        let dir = paths::planner_dir()?;
+        let threads = std::thread::available_parallelism().map(|n| n.get().clamp(2, 8) / 2).unwrap_or(4).max(2);
+        let model = dir.join("plan.gguf");
+        let args = move |port: u16| -> Vec<OsString> {
+            let mut a: Vec<OsString> = vec!["-m".into(), model.into()];
+            for s in ["--host", "127.0.0.1", "--port", &port.to_string(), "-c", "512", "-np", "1", "-ngl", "0"] {
+                a.push(s.into());
+            }
+            a.extend(["-t".into(), threads.to_string().into(), "--no-webui".into()]);
+            a
+        };
+        let (child, port) = launch(&dir.join("llama-server.exe"), args, &dir)?;
+        *g = Some(Proc { child, port, npu: false });
+        *self.last_used.lock().ok()? = Instant::now();
+        Some(port)
     }
 
     fn stop_if_idle(&self) {
@@ -127,7 +212,7 @@ impl Planner {
     }
 
     /// The line the model writes for `q` ("none" when it is not a request). Blocks for about
-    /// 60 ms, a second or two when the helper has to start.
+    /// 30 ms on the NPU, 60 on the CPU; a second or two when the helper has to start.
     pub fn line(&self, q: &str) -> Option<String> {
         let k = key(q);
         if let Some(l) = self.lines.lock().ok()?.get(&k) {
@@ -489,11 +574,7 @@ mod tests {
     use super::*;
 
     fn app(n: &str) -> Item {
-        Item {
-            name: n.into(),
-            hit: Hit { title: n.into(), subtitle: String::new(), kind: Kind::App, action: Action::Open(format!("shell:AppsFolder\\{n}")), score: 0 },
-            keywords: None,
-        }
+        Item::new(n, Hit { title: n.into(), subtitle: String::new(), kind: Kind::App, action: Action::Open(format!("shell:AppsFolder\\{n}")), score: 0 }, None)
     }
 
     fn items() -> Vec<Item> {

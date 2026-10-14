@@ -94,17 +94,17 @@ pub fn load() -> Vec<Item> {
 }
 
 fn into_item(e: Entry) -> Item {
-    Item {
-        name: e.title.clone(),
-        hit: Hit {
+    Item::new(
+        e.title.clone(),
+        Hit {
             title: e.title,
             subtitle: if e.control_panel { "Control Panel".into() } else { "Windows Settings".into() },
             kind: Kind::Setting,
             action: e.action,
             score: 0,
         },
-        keywords: Some(e.keywords),
-    }
+        Some(e.keywords),
+    )
 }
 
 // ---------------------------------------------------------------- building
