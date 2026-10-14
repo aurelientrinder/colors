@@ -1,6 +1,6 @@
 ﻿[workspace]
 resolver = "2"
-members = ["crates/palette-core", "crates/palette-mft", "crates/palette-semantic"]
+members = ["crates/palette-core", "crates/palette-mft", "crates/palette-ov", "crates/palette-plan", "crates/palette-semantic"]
 
 [profile.release]
 opt-level = 3

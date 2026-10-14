@@ -63,10 +63,10 @@ fn config(args: &[String]) -> Cfg {
         data,
         model: model_dir(args),
         home,
-        // CPU threads, used only when no DirectML GPU is available (the GPU path needs one).
+        // CPU threads, used only when neither the NPU nor a DirectML GPU is available.
         // Half the cores: a rebuild takes longer but leaves the machine quiet.
         threads: env_usize("PALETTE_SEM_THREADS").unwrap_or((cores / 2).max(2)),
-        device: std::env::var("PALETTE_SEM_DEVICE").ok().and_then(|v| embed::Device::parse(&v)).unwrap_or(embed::Device::Gpu),
+        device: std::env::var("PALETTE_SEM_DEVICE").ok().and_then(|v| embed::Device::parse(&v)).unwrap_or(embed::Device::Npu),
         doc_tokens: env_usize("PALETTE_SEM_DOC_TOKENS").unwrap_or(224),
         max_chunks: env_usize("PALETTE_SEM_MAX_CHUNKS").unwrap_or(8),
         max_docs: env_usize("PALETTE_SEM_MAX_DOCS").unwrap_or(40_000),
@@ -116,8 +116,16 @@ fn main() {
 fn embed_test(cfg: &Cfg) {
     use std::time::Instant;
     eprintln!("model dir: {}  threads: {}", cfg.model.display(), cfg.threads);
+    const BUDGETS: [usize; 3] = [64, 160, 224];
+    if cfg.device == embed::Device::Npu {
+        let t = Instant::now();
+        match embed::Embedder::compile_npu(&cfg.model, &BUDGETS) {
+            Ok(()) => eprintln!("NPU shapes ready in {} ms", t.elapsed().as_millis()),
+            Err(e) => eprintln!("NPU: {e}"),
+        }
+    }
     let t = Instant::now();
-    let mut e = match embed::Embedder::load(&cfg.model, cfg.threads, cfg.device) {
+    let mut e = match embed::Embedder::load(&cfg.model, cfg.threads, cfg.device, &BUDGETS) {
         Ok(e) => e,
         Err(err) => {
             eprintln!("load failed: {err}");

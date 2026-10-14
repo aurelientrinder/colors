@@ -19,7 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const BATCH: usize = 4;
-const QUERY_TOKENS: usize = 64;
+pub const QUERY_TOKENS: usize = 64;
 const ITEM_TOKENS: usize = 48;
 /// Chunks per model call: bounds how long a query can wait behind the background indexer.
 const EMBED_GROUP: usize = 8;
@@ -184,10 +184,11 @@ impl Shared {
         };
         let mut g = self.emb.lock().unwrap_or_else(|e| e.into_inner());
         if g.is_none() {
-            let mut e = Embedder::load(&self.cfg.model, self.cfg.threads, self.cfg.device)?;
+            let budgets = [QUERY_TOKENS, ITEM_TOKENS, self.cfg.doc_tokens];
+            let mut e = Embedder::load(&self.cfg.model, self.cfg.threads, self.cfg.device, &budgets)?;
             if e.device != embed::Device::Cpu {
-                // DirectML compiles kernels for each new input shape; do the query shape now, so
-                // the first real query does not wait for it.
+                // DirectML compiles kernels for each new input shape, and the NPU's first run is
+                // slow too; do the query shape now, so the first real query does not wait for it.
                 let _ = e.embed(&[embed::query_prompt("warm up")], QUERY_TOKENS);
             }
             *g = Some(e);

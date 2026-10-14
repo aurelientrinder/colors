@@ -47,6 +47,18 @@ pub fn planner_dir() -> Option<PathBuf> {
         .find(|c| c.join("plan.gguf").exists() && c.join("llama-server.exe").exists())
 }
 
+/// palette-plan.exe (the plan model on the NPU) sits next to the shell exe.
+pub fn plan_exe() -> Option<PathBuf> {
+    let p = exe_dir()?.join("palette-plan.exe");
+    p.exists().then_some(p)
+}
+
+/// Folder holding the plan model for the NPU (`openvino_model.xml`, `plan.json`, made by
+/// ml\npu\export.py), as `models\planner-npu` beside the exe or above it.
+pub fn planner_npu_dir() -> Option<PathBuf> {
+    palette_ov::find_models("planner-npu", "plan.json").filter(|d| d.join("openvino_model.xml").exists())
+}
+
 /// Newest first. The semantic index is per model, so switching rebuilds it.
 const MODEL_NAMES: [&str; 2] = ["embeddinggemma-2-text-q4", "embeddinggemma-300m-q4"];
 

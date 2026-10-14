@@ -1420,6 +1420,7 @@ dependencies = [
  "meval",
  "notify",
  "nucleo-matcher",
+ "palette-ov",
  "rayon",
  "serde",
  "serde_json",
@@ -1435,11 +1436,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "palette-ov"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
+name = "palette-plan"
+version = "0.1.0"
+dependencies = [
+ "palette-ov",
+ "serde_json",
+ "tokenizers",
+]
+
+[[package]]
 name = "palette-semantic"
 version = "0.1.0"
 dependencies = [
  "lopdf",
  "ort",
+ "palette-ov",
  "pdf-extract",
  "serde",
  "serde_json",

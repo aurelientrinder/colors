@@ -16,6 +16,8 @@ ignore = "0.4"
 notify = "8"
 meval = "0.2"
 urlencoding = "2"
+# only to tell whether the NPU's plan model is compiled (planner.rs); the runtime is not loaded here
+palette-ov = { path = "../palette-ov" }
 
 [dependencies.windows]
 version = "0.62"

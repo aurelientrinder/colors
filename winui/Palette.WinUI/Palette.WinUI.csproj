@@ -38,6 +38,8 @@
     <None Include="..\..\target\release\palette_core.dll" Link="palette_core.dll" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\target\release\palette-mft.exe" Link="palette-mft.exe" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\target\release\palette-semantic.exe" Link="palette-semantic.exe" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The plan model on the NPU (needs models\openvino and models\planner-npu; see scripts\get-openvino.ps1). -->
+    <None Include="..\..\target\release\palette-plan.exe" Link="palette-plan.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\target\release\palette-plan.exe')" />
     <!-- DirectML runtime for palette-semantic's GPU path (placed next to it by ort's build). -->
     <None Include="..\..\target\release\DirectML.dll" Link="DirectML.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\target\release\DirectML.dll')" />
   </ItemGroup>

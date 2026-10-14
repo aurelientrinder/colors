@@ -1,0 +1,13 @@
+[package]
+name = "palette-plan"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "palette-plan"
+path = "src/main.rs"
+
+[dependencies]
+palette-ov = { path = "../palette-ov" }
+serde_json = "1"
+tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }

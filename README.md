@@ -10,14 +10,20 @@ Resident, instant on a tap of the Windows key, `Alt+Space` (falls back to `Ctrl+
 crates/palette-core      Rust engine: index, search, usage, actions, icons (+ C ABI DLL)
 crates/palette-mft       elevated NTFS MFT snapshot helper
 crates/palette-semantic  semantic tier: EmbeddingGemma host + document indexer (own process)
+crates/palette-plan      the plan model on the NPU (own process; llama-server's interface)
+crates/palette-ov        the parts of OpenVINO's C API both use, loaded at run time
 winui/Palette.WinUI      WinUI 3 app (C#, PaletteWinUI.exe), calls palette_core.dll
 scripts/get-model.ps1    downloads the embedding model into models\
+scripts/get-openvino.ps1 sets up the OpenVINO runtime (NPU) in models\openvino
+ml/npu/export.py         makes the NPU versions of both models
 ```
 
 ## Build & run
 
 ```
 .\scripts\get-model.ps1    # once: EmbeddingGemma 2 text, 4-bit ONNX, ~207 MB (optional)
+.\scripts\get-openvino.ps1 # once, Intel Core Ultra: OpenVINO for the NPU, ~25 MB (optional)
+ml\intent\.venv\Scripts\python ml\npu\export.py   # once: the NPU versions of the models
 .\build.ps1                # engine + helpers + WinUI app
 
 winui\Palette.WinUI\bin\x64\Release\net10.0-windows10.0.19041.0\win-x64\PaletteWinUI.exe
@@ -151,7 +157,12 @@ file actions.
   EmbeddingGemma-300m if that is the only model present) in its own process. Its index is
   per model and rebuilds itself when the model changes. It indexes apps, settings, commands and the
   text of documents (`.txt .md .rst .tex .docx .pptx .pdf` under your profile), most
-  recently modified first, only while on AC power. The model runs on the GPU through DirectML
+  recently modified first, only while on AC power. The model runs on the NPU through OpenVINO
+  when there is one (Intel Core Ultra; `model_npu.xml` from ml\npu\export.py): a query takes
+  ~15 ms and indexing ~35 chunks/s, against ~55 ms and ~5 chunks/s on the GPU. The NPU runs fixed
+  shapes, one compiled per token budget, the first time in the background (about a minute
+  each, then cached in `%LOCALAPPDATA%\palette\npu-cache`); the GPU stands in until then.
+  Without an NPU it runs on the GPU through DirectML
   when one is available (any DirectX 12 GPU, integrated ones included), which takes ~7x less CPU
   time than the CPU path at the same or better speed; otherwise on half the CPU cores. Either way
   the helper runs at below-normal priority in Windows' efficiency mode (EcoQoS), so a rebuild
@@ -189,8 +200,8 @@ and show/hide/activation diagnostics to `%LOCALAPPDATA%\palette\winui.log`.
 Semantic tier knobs (environment variables): `PALETTE_SEMANTIC=0` disables it,
 `PALETTE_SEM_MIN` overrides the similarity floor (EmbeddingGemma 2: 0.72 docs / 0.70
 items; the original model's score band is lower, so its floors are 0.42),
-`PALETTE_SEM_ON_BATTERY=1` lets indexing run on battery, `PALETTE_SEM_DEVICE` (`gpu`
-default, falls back to the CPU; `cpu`; `npu`, where DirectML exposes one),
+`PALETTE_SEM_ON_BATTERY=1` lets indexing run on battery, `PALETTE_SEM_DEVICE` (`npu`
+default, falls back to the GPU, then the CPU; `gpu`; `cpu`),
 `PALETTE_SEM_THREADS` (CPU path, default half the cores),
 `PALETTE_SEM_DOC_TOKENS` (tokens per chunk, default 224), `PALETTE_SEM_MAX_CHUNKS`
 (default 8), `PALETTE_SEM_MAX_DOCS` (default 40000).
