@@ -61,7 +61,9 @@ public sealed partial class MainWindow
         bool show = _view != View.Done && i >= 0 && i < Items.Count;
         OpenButton.Opacity = show ? 1 : 0;   // fades (OpacityTransition)
         OpenButton.IsHitTestVisible = show;
+        KeyHints.Opacity = show && _settings.KeyHints ? 1 : 0;
         if (!show) return;
+        KeyHints.Text = KeyHintsFor(Items[i]);
         OpenButton.Content = _view == View.Actions ? "Run" : Items[i].IsAnswer ? "Open" : Items[i].RawKind switch
         {
             "Window" => "Switch to",
@@ -72,6 +74,20 @@ public sealed partial class MainWindow
             "Plan" => "Run",
             _ => "Open",
         };
+    }
+
+    /// <summary>The keys that do something for this row, as a footer line in the search card.</summary>
+    private string KeyHintsFor(HitVm row)
+    {
+        if (_view == View.Actions) return "Esc Back";
+        var keys = new List<string>();
+        if (!row.IsAnswer && PathOf(row) is var (_, isFolder))
+        {
+            keys.Add(isFolder ? "→ Browse" : "← Show folder");
+        }
+        if (!row.IsAnswer && row.Reveals) keys.Add("Ctrl+↵ Location");
+        keys.Add("Hold Tab Actions");
+        return string.Join("  ·  ", keys);
     }
 
     private void OnOpenButtonClick(object sender, RoutedEventArgs e) => Launch(ResultsList.SelectedIndex, reveal: false);

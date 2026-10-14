@@ -361,6 +361,22 @@
                         <ScalarTransition Duration="0:0:0.15" />
                     </Button.OpacityTransition>
                 </Button>
+
+                <!-- the keys for the selected row, beside the button that says what Enter does -->
+                <TextBlock
+                    x:Name="KeyHints"
+                    Margin="18,0,128,17"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Bottom"
+                    FontSize="11"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    IsHitTestVisible="False"
+                    Opacity="0"
+                    TextTrimming="CharacterEllipsis">
+                    <TextBlock.OpacityTransition>
+                        <ScalarTransition Duration="0:0:0.15" />
+                    </TextBlock.OpacityTransition>
+                </TextBlock>
             </Grid>
         </Grid>
 

@@ -97,6 +97,7 @@ public sealed partial class MainWindow : Window
                 new("Replace Windows Search (Win+S, taskbar search)", () => _settings.ReplaceSearch, on => { _settings.ReplaceSearch = on; _settings.Save(); }),
                 new("Hide the taskbar search box", Settings.TaskbarSearchHidden, on => _settings.ApplyTaskbarSearch(on)),
                 new("Answers from the web (weather, stocks, facts)", () => _settings.WebAnswers, on => { _settings.WebAnswers = on; _settings.Save(); }),
+                new("Key hints under the search field", () => _settings.KeyHints, on => { _settings.KeyHints = on; _settings.Save(); UpdateOpenButton(); }),
             });
 
         new Thread(SearchLoop) { IsBackground = true, Name = "search" }.Start();
@@ -767,6 +768,8 @@ public sealed partial class MainWindow : Window
         else Launch(index, reveal: id == "location");
     }
 
+    private const string KeyHintsCommand = "Palette: Hide or show key hints";
+
     private void Launch(int index, bool reveal)
     {
         if (_view == View.Actions)
@@ -776,6 +779,14 @@ public sealed partial class MainWindow : Window
         }
         if (_view == View.Done || index < 0 || index >= Items.Count) return;
         var vm = Items[index];
+        if (vm.RawKind == "Command" && vm.Title == KeyHintsCommand && !reveal)
+        {
+            // The footer is the shell's: flip it here, and say so on the Done line.
+            _settings.KeyHints = !_settings.KeyHints;
+            _settings.Save();
+            ShowDone(_settings.KeyHints ? "Key hints shown" : "Key hints hidden");
+            return;
+        }
         if (vm.AnswerUrl != null && (!reveal || vm.IsAnswer))
         {
             OpenUrl(reveal ? vm.AnswerAltUrl ?? vm.AnswerUrl : vm.AnswerUrl);
