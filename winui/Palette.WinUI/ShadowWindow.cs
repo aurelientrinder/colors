@@ -162,8 +162,8 @@ internal sealed unsafe class ShadowWindow : IDisposable
         public Shape(double cx, double cy, double hx, double hy, double r, double scale, bool dark)
         {
             Cx = cx; Cy = cy; Hx = hx; Hy = hy; R = r;
-            KeyBlur = 18 * scale; KeyDy = 8 * scale; KeyA = dark ? 0.42 : 0.22;
-            AmbBlur = 3 * scale; AmbA = dark ? 0.30 : 0.12;
+            KeyBlur = 14 * scale; KeyDy = 6 * scale; KeyA = dark ? 0.32 : 0.15;
+            AmbBlur = 3 * scale; AmbA = dark ? 0.24 : 0.09;
             Rim = RimWidth(scale);
         }
 
