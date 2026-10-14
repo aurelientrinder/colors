@@ -30,6 +30,8 @@ pub fn builtins() -> Vec<Item> {
         c("Shut down", "Shut down this PC", "shutdown"),
         c("Palette: Reindex files", "Refresh the file index now", "reindex"),
         c("Palette: Run at startup", "Start Palette when you sign in", "autostart"),
+        // The shell flips the setting itself (it owns the footer); this row only lists it.
+        c("Palette: Hide or show key hints", "The keys shown under the search field", "keyhints"),
         c("Palette: Quit", "Exit the launcher", "quit"),
         s("Settings", "ms-settings:"),
         s("Display settings", "ms-settings:display"),
