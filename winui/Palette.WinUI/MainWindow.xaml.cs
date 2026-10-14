@@ -260,7 +260,7 @@ public sealed partial class MainWindow : Window
     // an ease-out. Selecting a file opens its preview inside its row's card: the card grows, pushing
     // the rows below down, and shrinks back when the selection moves to something else.
 
-    private const double CornerDip = 24, PopMs = 230, PreviewMs = 200, ListMs = 45, HideMs = 110;
+    private const double CornerDip = 24, PopMs = 280, PreviewMs = 200, ListMs = 45, HideMs = 110;
     private readonly System.Diagnostics.Stopwatch _popClock = new();
     private readonly System.Diagnostics.Stopwatch _frameClock = System.Diagnostics.Stopwatch.StartNew();
     private double _popT = 1;                 // pop progress, 0..1
@@ -385,11 +385,15 @@ public sealed partial class MainWindow : Window
         Body.Height = bodyDip;
 
         // Pop: the whole window fades in (a window-level alpha that DWM applies for free) while the
-        // content grows from 92% with an ease-out quartic on the GPU. The glass, rim and shadow
+        // content grows from 94% on the GPU. The glass, rim and shadow
         // keep their final shape throughout: reshaping a window every frame makes DWM recompose
         // it, which cost a third of each frame at 90-120 Hz.
-        double ease = 1 - Math.Pow(1 - _popT, 4);
-        double k = 0.92 + 0.08 * ease;
+        // The content swells a hair past full size and settles back (ease-out-back, about 1.2% over):
+        // a soft bubble pop rather than a plain zoom.
+        const double Overshoot = 3.0;
+        double u1 = _popT - 1;
+        double ease = 1 + (Overshoot + 1) * u1 * u1 * u1 + Overshoot * u1 * u1;
+        double k = 0.94 + 0.06 * ease;
         double alpha = Math.Clamp(_popT / 0.45, 0, 1);
         // Hiding fades out and settles back a little, the pop in reverse but quicker.
         double hide = _hideT * _hideT;
