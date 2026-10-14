@@ -4,10 +4,6 @@ Things we could add or refine, so they are not forgotten. Roughly in the order w
 Cross one off (or move it to the README) when it ships.
 
 ## Results that learn
-- **Learn what you pick for what you type.** Frecency (`crates/palette-core/src/usage.rs`) counts
-  how often you open something, not what you typed first. Typing `n` and always choosing Notepad
-  should rank Notepad first for `n`. Small: a map from query prefix to the chosen item, used as a
-  ranking boost in `search.rs`.
 - **Conversions in the calculator.** It is plain `meval` (`search.rs`, `calculator`). Add units
   (`10 km in mi`, `72f to c`), dates (`3 weeks from today`, `days until 25 dec`), time zones
   (`time in tokyo`) offline, and currency (`50 usd to eur`) with the quiet-fail fetch pattern of
@@ -57,3 +53,5 @@ Cross one off (or move it to the README) when it ships.
   Right goes down into a folder, Right on a file returns to the search. Typed paths (`C:\...`,
   `~\...`) list the folder.
 - "Open file location" works for paths with spaces.
+- Results learn what you pick for what you type: every prefix of the query (up to 8 characters)
+  boosts what you opened, so `n` finds Notepad first once you have chosen it for `note`.

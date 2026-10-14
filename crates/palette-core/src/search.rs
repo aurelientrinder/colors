@@ -1,7 +1,7 @@
 use crate::index::Catalog;
 use crate::Notify;
 use crate::model::{Action, Hit, Item, Kind, Words};
-use crate::usage::Usage;
+use crate::usage::{Picks, Usage};
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use rayon::prelude::*;
@@ -138,6 +138,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     let pattern = Pattern::parse(q, CaseMatching::Smart, Normalization::Smart);
     let path_query = q.contains('\\') || q.contains('/');
     let lq = q.to_lowercase();
+    let picks = usage.picks_for(&lq);
 
     let words: Vec<&str> = lq.split_whitespace().collect();
 
@@ -166,7 +167,9 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
                 }),
             };
             if let Some((base, f)) = scored {
-                let mut score = base + kind_bonus(it.hit.kind, f) + coverage(&it.name, &lq) + usage.bonus(&it.hit.key());
+                let mut score = base + kind_bonus(it.hit.kind, f) + coverage(&it.name, &lq) + usage.bonus(&it.hit.key()) + {
+                    Usage::pick_bonus(picks, &it.hit.key())
+                };
                 if it.hit.kind == Kind::App && secondary(&it.words.name, &lq) {
                     score -= 60;
                 }
@@ -309,7 +312,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
             |(sc, m, buf), &(i, raw)| {
                 let path = cat.files.path(i as usize);
                 let raw = if greedy { pattern.score(Utf32Str::new(path, buf), m).unwrap_or(raw) } else { raw };
-                let score = file_score(path, cat.files.is_dir(i as usize), raw, &lq, usage, &recent.rank, sc);
+                let score = file_score(path, cat.files.is_dir(i as usize), raw, &lq, usage, picks, &recent.rank, sc);
                 (score, Cand::Indexed(i))
             },
         )
@@ -323,7 +326,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
             let Action::Open(p) = &h.action else { continue };
             let hay = if path_query { p.as_str() } else { h.title.as_str() };
             if let Some(s) = pattern.score(Utf32Str::new(hay, &mut buf), &mut m) {
-                cands.push((file_score(p, h.kind == Kind::Folder, s, &lq, usage, &recent.rank, &mut sc), Cand::Recent(j)));
+                cands.push((file_score(p, h.kind == Kind::Folder, s, &lq, usage, picks, &recent.rank, &mut sc), Cand::Recent(j)));
             }
         }
     }
@@ -377,7 +380,7 @@ struct Scratch {
 
 /// How good a file match is: its name match, the query beginning its name, where it lives, how
 /// often and lately it was opened.
-fn file_score(path: &str, dir: bool, raw: u32, lq: &str, usage: &Usage, recent: &HashMap<String, i32>, sc: &mut Scratch) -> i32 {
+fn file_score(path: &str, dir: bool, raw: u32, lq: &str, usage: &Usage, picks: Option<&Picks>, recent: &HashMap<String, i32>, sc: &mut Scratch) -> i32 {
     let lp = &mut sc.lower;
     lp.clear();
     if path.is_ascii() {
@@ -391,7 +394,7 @@ fn file_score(path: &str, dir: bool, raw: u32, lq: &str, usage: &Usage, recent: 
     sc.key.push_str("open:");
     sc.key.push_str(path);
     let kind = if dir { Kind::Folder } else { Kind::File };
-    let mut s = raw as i32 + prefix_bonus_lower(lname, lq) + kind.bonus() + path_prior(lp) + usage.bonus(&sc.key);
+    let mut s = raw as i32 + prefix_bonus_lower(lname, lq) + kind.bonus() + path_prior(lp) + usage.bonus(&sc.key) + Usage::pick_bonus(picks, &sc.key);
     if let Some(r) = recent.get(lp.as_str()) {
         s += RECENT - r / 2;
     }

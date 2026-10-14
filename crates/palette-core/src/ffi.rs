@@ -25,6 +25,8 @@ struct Engine {
     sem_gen: AtomicU64,
     /// (generation, hits) of the most recent search.
     last: Mutex<(u64, Vec<Hit>)>,
+    /// (generation, query) of the most recent search: what you typed to get the list you pick from.
+    last_query: Mutex<(u64, String)>,
     gen: AtomicU64,
     /// The plan the model wrote for generation N: (generation, request, line, row title). Run, it
     /// is remembered for the request.
@@ -145,6 +147,7 @@ pub extern "C" fn pc_init() -> i32 {
             sem,
             sem_gen: AtomicU64::new(0),
             last: Mutex::new((0, Vec::new())),
+            last_query: Mutex::new((0, String::new())),
             gen: AtomicU64::new(0),
             model_plan: Mutex::new(None),
         }
@@ -178,6 +181,7 @@ pub unsafe extern "C" fn pc_search(query: *const c_char) -> *mut c_char {
     let out = serde_json::to_string(&Results { gen, hits: json })
         .unwrap_or_else(|_| "{\"gen\":0,\"hits\":[]}".into());
     *e.last.lock().unwrap() = (gen, hits);
+    *e.last_query.lock().unwrap() = (gen, q.to_string());
     into_c(out)
 }
 
@@ -384,7 +388,11 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     }
     if !matches!(hit.kind, crate::model::Kind::Window | crate::model::Kind::Toggle | crate::model::Kind::Plan) {
         if let Ok(mut u) = e.usage.lock() {
-            u.record(&hit);
+            let query = match &*e.last_query.lock().unwrap() {
+                (g, q) if *g == gen => q.clone(),
+                _ => String::new(),
+            };
+            u.record_for(&hit, &query);
         }
     }
     // Clipboard is the shell's job (it reads `copy_text` from the JSON).
