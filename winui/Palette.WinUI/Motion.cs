@@ -1,4 +1,4 @@
-using Microsoft.UI.Xaml;
+﻿using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -22,6 +22,9 @@ public sealed partial class MainWindow
     private double _hlX, _hlY, _hlW, _hlH;     // where the card is, in header coordinates
     private double _hlFromX, _hlFromY, _hlFromW, _hlFromH;   // where the glide started
     private readonly System.Diagnostics.Stopwatch _hlClock = new();
+    private readonly System.Diagnostics.Stopwatch _hlPopClock = new();   // the card's small bubble pop on landing
+    private double _hlPopG;                   // how far the card is inflated this frame, in dips
+    private const double HighlightPopMs = 280, HighlightPopDip = 4;
     private HitVm? _hlFor;                     // the row it is on or heading to
     private bool _hlTravel;                    // gliding to a newly selected row
     private bool _hlSnap = true;               // the next placement jumps (nothing on screen to glide from)
@@ -61,6 +64,7 @@ public sealed partial class MainWindow
         {
             _hlFor = vm;
             _hlTravel = !_hlSnap && AnimationsOn;
+            if (_hlTravel) _hlPopClock.Restart();
             (_hlFromX, _hlFromY, _hlFromW, _hlFromH) = (_hlX, _hlY, _hlW, _hlH);
             _hlClock.Restart();
         }
@@ -73,7 +77,13 @@ public sealed partial class MainWindow
     /// <summary>One frame of the glide; true while it is still moving.</summary>
     private bool StepHighlight(double dt)
     {
-        if (!_hlTravel) return false;
+        StepPop();
+        if (!_hlTravel)
+        {
+            if (!_hlPopClock.IsRunning) return false;
+            if (HighlightTarget(out var rr)) PlaceHighlight(rr.X, rr.Y, rr.Width, rr.Height);
+            return _hlPopClock.IsRunning;
+        }
         if (!HighlightTarget(out var r))
         {
             UpdateHighlight();
@@ -94,9 +104,24 @@ public sealed partial class MainWindow
         return !done;
     }
 
+    private void StepPop()
+    {
+        if (!_hlPopClock.IsRunning) { _hlPopG = 0; return; }
+        double t = _hlPopClock.Elapsed.TotalMilliseconds / HighlightPopMs;
+        if (t >= 1) { _hlPopClock.Stop(); _hlPopG = 0; return; }
+        double u = t - 1;
+        double e = 1 + 3.5 * u * u * u + 2.5 * u * u;   // ease-out-back: 0 -> 1 with a small overshoot
+        _hlPopG = HighlightPopDip * (e - 1);
+    }
+
     private void PlaceHighlight(double x, double y, double w, double h)
     {
         (_hlX, _hlY, _hlW, _hlH) = (x, y, w, h);
+        // The pop: the card is drawn a few pixels smaller, swells a little past its row, and settles.
+        // The amount is stepped once per frame (StepHighlight): changing it on each layout pass
+        // would loop.
+        double g = _hlPopG;
+        x -= g; y -= g; w += 2 * g; h += 2 * g;
         if (Canvas.GetLeft(SelHighlight) != x) Canvas.SetLeft(SelHighlight, x);
         if (Canvas.GetTop(SelHighlight) != y) Canvas.SetTop(SelHighlight, y);
         if (SelHighlight.Width != w) SelHighlight.Width = w;
@@ -136,6 +161,8 @@ public sealed partial class MainWindow
         _listIn = null;
         _hlSnap = true;
         _hlTravel = false;
+        _hlPopClock.Reset();
+        _hlPopG = 0;
         _hlFor = null;
         SelHighlight.Opacity = 0;
     }
