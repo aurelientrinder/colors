@@ -1,0 +1,61 @@
+{
+  "apps": [
+    ["Notepad"], ["Weather"], ["Google Chrome", "chrome"], ["Microsoft Edge", "edge"], ["Firefox", "mozilla"],
+    ["Spotify"], ["Paint"], ["Calculator", "calc"], ["File Explorer", "explorer", "files", "file manager"],
+    ["Command Prompt", "cmd", "command line"], ["Terminal", "windows terminal"], ["PowerShell"],
+    ["Visual Studio Code", "vs code", "vscode"], ["Visual Studio"], ["Outlook", "mail", "email"],
+    ["Microsoft Teams", "teams"], ["Word", "microsoft word"], ["Excel", "microsoft excel"], ["PowerPoint"],
+    ["OneNote"], ["Discord"], ["Slack"], ["Steam"], ["Photos"], ["Camera"], ["Clock", "alarms"], ["Calendar"],
+    ["Maps"], ["Microsoft Store", "store"], ["Settings"], ["Task Manager", "taskmgr"], ["Snipping Tool"],
+    ["Media Player", "music"], ["Xbox"], ["WhatsApp"], ["Telegram"], ["Zoom"], ["OBS Studio", "obs"],
+    ["VLC media player", "vlc"], ["Notepad++"], ["GIMP"], ["Blender"], ["Figma"], ["Notion"], ["Obsidian"],
+    ["Copilot"], ["Sticky Notes"], ["Microsoft To Do", "to do"], ["Phone Link"], ["Clipchamp"],
+    ["Sound Recorder"], ["Control Panel"], ["Registry Editor", "regedit"], ["Device Manager"],
+    ["Remote Desktop Connection", "remote desktop"], ["Brave"], ["Opera"], ["Thunderbird"],
+    ["Adobe Acrobat", "acrobat"], ["Adobe Photoshop", "photoshop"], ["Premiere Pro"], ["Lightroom"],
+    ["Audacity"], ["7-Zip"], ["WinRAR"], ["Epic Games Launcher", "epic games"], ["Battle.net"], ["Netflix"],
+    ["Prime Video"], ["Microsoft Solitaire Collection", "solitaire"], ["Minecraft"], ["Git Bash"],
+    ["Docker Desktop", "docker"], ["Postman"], ["IntelliJ IDEA", "intellij"], ["PyCharm"], ["Android Studio"],
+    ["Cursor"], ["Claude"], ["Signal"], ["Skype"], ["Kindle"], ["LibreOffice Writer", "libreoffice"],
+    ["Paint.NET"], ["Snagit"], ["Everything"], ["PowerToys"], ["Rufus"], ["qBittorrent"], ["KeePass"],
+    ["Bitwarden"], ["1Password"], ["Dropbox"], ["Google Drive"], ["OneDrive"], ["Tidal"], ["Deezer"],
+    ["iTunes"], ["Apple Music"], ["Messenger"], ["Instagram"], ["TikTok"], ["Roblox"], ["League of Legends"],
+    ["Valorant"], ["GeForce Experience"], ["Arc Control"], ["HWiNFO"], ["CPU-Z"], ["Wireshark"], ["PuTTY"],
+    ["FileZilla"], ["Sublime Text", "sublime"], ["Zed"], ["Unity Hub", "unity"], ["Godot"]
+  ],
+  "holdout_apps": [
+    ["Krita"], ["DaVinci Resolve", "davinci", "resolve"], ["Inkscape"], ["Affinity Photo", "affinity"],
+    ["Plex"], ["Signal Desktop"], ["Joplin"], ["Logseq"], ["Anki"], ["Zotero"], ["Calibre"],
+    ["Foobar2000", "foobar"], ["MusicBee"], ["Vivaldi"], ["Tor Browser", "tor"], ["Proton VPN", "proton"],
+    ["Element"], ["Thonny"], ["RStudio"], ["MATLAB"], ["Mendeley"], ["Ableton Live", "ableton"],
+    ["FL Studio", "fl studio"], ["Lens"], ["Warp"], ["Arc"], ["Microsoft Clipchamp"]
+  ],
+  "settings": [
+    ["Bluetooth & devices", "bluetooth", "devices"], ["Display", "screen", "monitor"], ["Sound", "audio", "speakers"],
+    ["Wi-Fi", "wifi", "wireless"], ["Network & internet", "network", "internet"], ["Personalization"],
+    ["Background", "wallpaper", "desktop background"], ["Colors", "color", "accent color"], ["Themes", "theme"],
+    ["Lock screen"], ["Taskbar"], ["Start"], ["Installed apps", "apps", "uninstall"], ["Default apps"],
+    ["Startup apps", "startup"], ["Accounts", "account"], ["Date & time", "date", "time"],
+    ["Language & region", "language", "region"], ["Gaming", "game mode"], ["Accessibility"],
+    ["Privacy & security", "privacy", "security"], ["Windows Update", "update", "updates"],
+    ["Power & battery", "power", "battery"], ["Storage", "disk space"], ["Notifications"], ["Mouse"],
+    ["Typing", "keyboard"], ["Printers & scanners", "printer", "printers", "scanner"],
+    ["Multitasking", "snap layouts"], ["Night light"], ["VPN"], ["Mobile hotspot", "hotspot"], ["Microphone", "mic"],
+    ["Location"], ["Clipboard"], ["About", "system info", "pc info"], ["Recovery"], ["Activation"], ["Touchpad"]
+  ],
+  "folders": {
+    "downloads": ["downloads", "download folder", "téléchargements"],
+    "documents": ["documents", "docs", "mes documents"],
+    "desktop": ["desktop folder", "bureau"],
+    "pictures": ["pictures", "photos folder", "images"],
+    "music": ["music folder", "musique"],
+    "videos": ["videos", "vidéos"],
+    "home": ["home folder", "user folder"],
+    "recycle bin": ["recycle bin", "trash", "corbeille"],
+    "this pc": ["this pc", "my computer", "ce pc"],
+    "onedrive": ["onedrive folder"],
+    "appdata": ["appdata"],
+    "temp": ["temp folder", "temp"],
+    "program files": ["program files"]
+  }
+}

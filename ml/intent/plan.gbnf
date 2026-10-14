@@ -1,0 +1,14 @@
+# The plan format (see plan.py) as a grammar: decoding can only write well-formed plans.
+root     ::= "none" | step (" ; " step)*
+step     ::= ( appverb " " name
+           | "snap " layout (" " names)?
+           | "desktop" | "shot" | "lock" | "sleep"
+           | "media " ("play" | "next" | "prev" | "stop")
+           | "set " ("dark" | "wifi" | "bluetooth" | "mute") " " ("on" | "off" | "toggle")
+           | "set " ("volume" | "brightness") " " ("up" | "down" | [0-9] [0-9]? [0-9]?)
+           | ("settings" | "folder" | "url") " " name
+           | "closeall" (" except " names)? )
+appverb  ::= "open" | "focus" | "close" | "min" | "max"
+layout   ::= "side" | "grid" | "left" | "right" | "top" | "bottom" | "full"
+names    ::= name (", " name)*
+name     ::= [^ ;,\n] ([^;,\n]* [^ ;,\n])?

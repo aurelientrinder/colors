@@ -1,0 +1,227 @@
+{"q": "open notepad and weather snapped", "plan": "open notepad ; open weather ; snap side", "tags": ["layout"]}
+{"q": "open notepad and weather side by side", "plan": "open notepad ; open weather ; snap side", "tags": ["layout"]}
+{"q": "open notepad and weather", "plan": "open notepad ; open weather", "tags": ["multi"]}
+{"q": "launch chrome, spotify and discord", "plan": "open chrome ; open spotify ; open discord", "tags": ["multi"]}
+{"q": "start excel and word", "plan": "open excel ; open word", "tags": ["multi"]}
+{"q": "fire up steam and discord", "plan": "open steam ; open discord", "tags": ["multi"]}
+{"q": "get me outlook and teams", "plan": "open outlook ; open teams", "tags": ["multi", "phrasing"]}
+{"q": "I need vs code and terminal open", "plan": "open vs code ; open terminal", "tags": ["multi", "phrasing"]}
+{"q": "boot up obs and spotify please", "plan": "open obs ; open spotify", "tags": ["multi", "phrasing"]}
+{"q": "open calculator with notepad", "plan": "open calculator ; open notepad", "tags": ["multi", "phrasing"]}
+{"q": "pull up my calendar and mail", "plan": "open calendar ; open mail", "tags": ["multi"]}
+{"q": "can you open paint and photos", "plan": "open paint ; open photos", "tags": ["multi"]}
+{"q": "open figma, notion, slack and chrome", "plan": "open figma ; open notion ; open slack ; open chrome", "tags": ["multi"]}
+{"q": "load up minecraft and discord", "plan": "open minecraft ; open discord", "tags": ["multi", "phrasing"]}
+{"q": "open chrome and spotify next to each other", "plan": "open chrome ; open spotify ; snap side", "tags": ["layout"]}
+{"q": "open word and excel in split screen", "plan": "open word ; open excel ; snap side", "tags": ["layout"]}
+{"q": "launch vscode and chrome side-by-side", "plan": "open vscode ; open chrome ; snap side", "tags": ["layout"]}
+{"q": "open teams, outlook, calendar and notion in a grid", "plan": "open teams ; open outlook ; open calendar ; open notion ; snap grid", "tags": ["layout"]}
+{"q": "open notepad and paint and snap them", "plan": "open notepad ; open paint ; snap side", "tags": ["layout"]}
+{"q": "I want edge and word half and half", "plan": "open edge ; open word ; snap side", "tags": ["layout", "phrasing"]}
+{"q": "open slack and discord on either side of the screen", "plan": "open slack ; open discord ; snap side", "tags": ["layout", "phrasing"]}
+{"q": "give me spotify and chrome 50/50", "plan": "open spotify ; open chrome ; snap side", "tags": ["layout", "phrasing"]}
+{"q": "open obsidian and chrome, one on each side", "plan": "open obsidian ; open chrome ; snap side", "tags": ["layout", "phrasing"]}
+{"q": "open excel, word and powerpoint tiled", "plan": "open excel ; open word ; open powerpoint ; snap grid", "tags": ["layout"]}
+{"q": "open 4 apps: chrome, slack, spotify, notion in the corners", "plan": "open chrome ; open slack ; open spotify ; open notion ; snap grid", "tags": ["layout", "phrasing"]}
+{"q": "open notepad on the left and paint on the right", "plan": "open notepad ; snap left ; open paint ; snap right", "tags": ["place"]}
+{"q": "open chrome on the right", "plan": "open chrome ; snap right", "tags": ["place"]}
+{"q": "launch spotify on the left half", "plan": "open spotify ; snap left", "tags": ["place"]}
+{"q": "open vs code left and terminal right", "plan": "open vs code ; snap left ; open terminal ; snap right", "tags": ["place"]}
+{"q": "put chrome on the left", "plan": "snap left chrome", "tags": ["place", "snap"]}
+{"q": "snap notepad to the right", "plan": "snap right notepad", "tags": ["place", "snap"]}
+{"q": "move spotify to the left side", "plan": "snap left spotify", "tags": ["place", "snap"]}
+{"q": "chrome on the left and discord on the right", "plan": "snap left chrome ; snap right discord", "tags": ["place", "snap", "phrasing"]}
+{"q": "word left, excel right", "plan": "snap left word ; snap right excel", "tags": ["place", "snap", "phrasing"]}
+{"q": "put teams at the top and outlook at the bottom", "plan": "snap top teams ; snap bottom outlook", "tags": ["place", "snap"]}
+{"q": "make chrome take the left half of the screen", "plan": "snap left chrome", "tags": ["place", "snap", "phrasing"]}
+{"q": "snap chrome and spotify side by side", "plan": "snap side chrome, spotify", "tags": ["snap"]}
+{"q": "put word and excel next to each other", "plan": "snap side word, excel", "tags": ["snap"]}
+{"q": "tile slack, chrome and spotify", "plan": "snap side slack, chrome, spotify", "tags": ["snap"]}
+{"q": "arrange my teams and outlook windows side by side", "plan": "snap side teams, outlook", "tags": ["snap"]}
+{"q": "split the screen between chrome and notepad", "plan": "snap side chrome, notepad", "tags": ["snap", "phrasing"]}
+{"q": "line up discord and steam next to each other", "plan": "snap side discord, steam", "tags": ["snap", "phrasing"]}
+{"q": "snap edge left", "plan": "snap left edge", "tags": ["snap", "place"]}
+{"q": "snap all four: notion, slack, chrome, spotify in a grid", "plan": "snap grid notion, slack, chrome, spotify", "tags": ["snap", "phrasing"]}
+{"q": "close chrome", "plan": "close chrome", "tags": ["close"]}
+{"q": "close chrome and spotify", "plan": "close chrome ; close spotify", "tags": ["close"]}
+{"q": "quit discord, steam and epic games", "plan": "close discord ; close steam ; close epic games", "tags": ["close"]}
+{"q": "kill task manager", "plan": "close task manager", "tags": ["close"]}
+{"q": "shut chrome and teams", "plan": "close chrome ; close teams", "tags": ["close", "phrasing"]}
+{"q": "get rid of all the notepad windows", "plan": "close notepad", "tags": ["close", "phrasing"]}
+{"q": "close all chrome windows", "plan": "close chrome", "tags": ["close"]}
+{"q": "exit out of steam", "plan": "close steam", "tags": ["close", "phrasing"]}
+{"q": "minimize spotify and discord", "plan": "min spotify ; min discord", "tags": ["minmax"]}
+{"q": "hide teams", "plan": "min teams", "tags": ["minmax"]}
+{"q": "maximize chrome", "plan": "max chrome", "tags": ["minmax"]}
+{"q": "make word full screen", "plan": "max word", "tags": ["minmax", "phrasing"]}
+{"q": "put vs code in fullscreen", "plan": "max vs code", "tags": ["minmax"]}
+{"q": "make excel bigger", "plan": "max excel", "tags": ["minmax", "phrasing"]}
+{"q": "shrink outlook down", "plan": "min outlook", "tags": ["minmax", "phrasing"]}
+{"q": "switch to spotify and maximize it", "plan": "focus spotify ; max spotify", "tags": ["pronoun"]}
+{"q": "open chrome and make it full screen", "plan": "open chrome ; max chrome", "tags": ["pronoun"]}
+{"q": "open notepad and put it on the left", "plan": "open notepad ; snap left", "tags": ["pronoun", "place"]}
+{"q": "launch paint and snap it to the right", "plan": "open paint ; snap right", "tags": ["pronoun", "place"]}
+{"q": "go to discord and minimize it", "plan": "focus discord ; min discord", "tags": ["pronoun"]}
+{"q": "open word and excel and put them side by side", "plan": "open word ; open excel ; snap side", "tags": ["pronoun", "layout"]}
+{"q": "open spotify then hide it", "plan": "open spotify ; min spotify", "tags": ["pronoun"]}
+{"q": "close chrome and open edge", "plan": "close chrome ; open edge", "tags": ["mixed"]}
+{"q": "close teams and open slack", "plan": "close teams ; open slack", "tags": ["mixed"]}
+{"q": "minimize discord and switch to vs code", "plan": "min discord ; focus vs code", "tags": ["mixed"]}
+{"q": "open spotify and close steam", "plan": "open spotify ; close steam", "tags": ["mixed"]}
+{"q": "quit chrome then launch firefox", "plan": "close chrome ; open firefox", "tags": ["mixed"]}
+{"q": "switch to outlook", "plan": "focus outlook", "tags": ["focus"]}
+{"q": "go to chrome and open notepad", "plan": "focus chrome ; open notepad", "tags": ["focus", "mixed"]}
+{"q": "bring discord to the front", "plan": "focus discord", "tags": ["focus", "phrasing"]}
+{"q": "jump to my spotify window", "plan": "focus spotify", "tags": ["focus", "phrasing"]}
+{"q": "show desktop", "plan": "desktop", "tags": ["system"]}
+{"q": "show me the desktop", "plan": "desktop", "tags": ["system"]}
+{"q": "minimize everything", "plan": "desktop", "tags": ["system"]}
+{"q": "hide all my windows", "plan": "desktop", "tags": ["system"]}
+{"q": "clear the screen", "plan": "desktop", "tags": ["system", "phrasing"]}
+{"q": "minimize everything except chrome", "plan": "desktop ; focus chrome", "tags": ["system", "phrasing"]}
+{"q": "minimise all windows but spotify", "plan": "desktop ; focus spotify", "tags": ["system", "phrasing"]}
+{"q": "take a screenshot", "plan": "shot", "tags": ["system"]}
+{"q": "screenshot part of the screen", "plan": "shot", "tags": ["system", "phrasing"]}
+{"q": "snip a region of my screen", "plan": "shot", "tags": ["system", "phrasing"]}
+{"q": "lock my pc", "plan": "lock", "tags": ["system"]}
+{"q": "lock the computer", "plan": "lock", "tags": ["system"]}
+{"q": "lock my laptop", "plan": "lock", "tags": ["system", "phrasing"]}
+{"q": "put my computer to sleep", "plan": "sleep", "tags": ["system"]}
+{"q": "put the laptop to sleep", "plan": "sleep", "tags": ["system", "phrasing"]}
+{"q": "mute and lock", "plan": "set mute on ; lock", "tags": ["system", "quick"]}
+{"q": "pause the music and lock the pc", "plan": "media play ; lock", "tags": ["system", "media"]}
+{"q": "close everything", "plan": "closeall", "tags": ["closeall"]}
+{"q": "close all windows", "plan": "closeall", "tags": ["closeall"]}
+{"q": "quit all my apps", "plan": "closeall", "tags": ["closeall", "phrasing"]}
+{"q": "close everything except chrome", "plan": "closeall except chrome", "tags": ["closeall"]}
+{"q": "close all apps but spotify and discord", "plan": "closeall except spotify, discord", "tags": ["closeall"]}
+{"q": "close every window apart from vs code", "plan": "closeall except vs code", "tags": ["closeall", "phrasing"]}
+{"q": "next song", "plan": "media next", "tags": ["media"]}
+{"q": "skip to the next track", "plan": "media next", "tags": ["media", "phrasing"]}
+{"q": "go back to the previous song", "plan": "media prev", "tags": ["media"]}
+{"q": "pause the music", "plan": "media play", "tags": ["media"]}
+{"q": "pause whatever is playing", "plan": "media play", "tags": ["media", "phrasing"]}
+{"q": "resume my music", "plan": "media play", "tags": ["media", "phrasing"]}
+{"q": "stop the music", "plan": "media stop", "tags": ["media"]}
+{"q": "open spotify and play some music", "plan": "open spotify ; media play", "tags": ["media", "mixed"]}
+{"q": "open spotify and play", "plan": "open spotify ; media play", "tags": ["media", "mixed"]}
+{"q": "skip this song and turn the volume up", "plan": "media next ; set volume up", "tags": ["media", "quick"]}
+{"q": "turn on dark mode", "plan": "set dark on", "tags": ["quick"]}
+{"q": "switch to light mode", "plan": "set dark off", "tags": ["quick", "phrasing"]}
+{"q": "make windows dark", "plan": "set dark on", "tags": ["quick", "phrasing"]}
+{"q": "enable the dark theme", "plan": "set dark on", "tags": ["quick", "phrasing"]}
+{"q": "turn wifi off", "plan": "set wifi off", "tags": ["quick"]}
+{"q": "disable bluetooth", "plan": "set bluetooth off", "tags": ["quick", "phrasing"]}
+{"q": "turn on bluetooth", "plan": "set bluetooth on", "tags": ["quick"]}
+{"q": "toggle wifi", "plan": "set wifi toggle", "tags": ["quick"]}
+{"q": "turn off wifi and bluetooth", "plan": "set wifi off ; set bluetooth off", "tags": ["quick"]}
+{"q": "mute the sound", "plan": "set mute on", "tags": ["quick"]}
+{"q": "silence my pc", "plan": "set mute on", "tags": ["quick", "phrasing"]}
+{"q": "unmute my laptop", "plan": "set mute off", "tags": ["quick", "phrasing"]}
+{"q": "set the volume to 30", "plan": "set volume 30", "tags": ["quick", "phrasing"]}
+{"q": "volume to 50 percent", "plan": "set volume 50", "tags": ["quick"]}
+{"q": "turn the volume up", "plan": "set volume up", "tags": ["quick", "phrasing"]}
+{"q": "make it quieter", "plan": "set volume down", "tags": ["quick", "phrasing"]}
+{"q": "lower the volume a bit", "plan": "set volume down", "tags": ["quick", "phrasing"]}
+{"q": "brightness to 70", "plan": "set brightness 70", "tags": ["quick"]}
+{"q": "dim the screen", "plan": "set brightness down", "tags": ["quick", "phrasing"]}
+{"q": "make the screen brighter", "plan": "set brightness up", "tags": ["quick", "phrasing"]}
+{"q": "turn on dark mode and set brightness to 40", "plan": "set dark on ; set brightness 40", "tags": ["quick"]}
+{"q": "turn on bluetooth and open spotify", "plan": "set bluetooth on ; open spotify", "tags": ["quick", "mixed"]}
+{"q": "mute and open discord", "plan": "set mute on ; open discord", "tags": ["quick", "mixed"]}
+{"q": "open bluetooth settings", "plan": "settings bluetooth", "tags": ["settings"]}
+{"q": "open display settings and sound settings", "plan": "settings display ; settings sound", "tags": ["settings"]}
+{"q": "take me to the wallpaper settings", "plan": "settings wallpaper", "tags": ["settings", "phrasing"]}
+{"q": "change my wallpaper", "plan": "settings wallpaper", "tags": ["settings", "phrasing"]}
+{"q": "i want to uninstall an app", "plan": "settings uninstall", "tags": ["settings", "phrasing"]}
+{"q": "check for windows updates", "plan": "settings windows update", "tags": ["settings", "phrasing"]}
+{"q": "open the printer settings", "plan": "settings printer", "tags": ["settings"]}
+{"q": "turn on night light", "plan": "settings night light", "tags": ["settings"]}
+{"q": "open wifi settings and turn on bluetooth", "plan": "settings wifi ; set bluetooth on", "tags": ["settings", "quick"]}
+{"q": "open settings and spotify", "plan": "open settings ; open spotify", "tags": ["multi"]}
+{"q": "open my downloads folder", "plan": "folder downloads", "tags": ["folder"]}
+{"q": "show me my documents", "plan": "folder documents", "tags": ["folder", "phrasing"]}
+{"q": "open the recycle bin", "plan": "folder recycle bin", "tags": ["folder"]}
+{"q": "open downloads and documents", "plan": "folder downloads ; folder documents", "tags": ["folder"]}
+{"q": "open my pictures and photoshop", "plan": "folder pictures ; open photoshop", "tags": ["folder", "mixed"]}
+{"q": "open file explorer in downloads", "plan": "folder downloads", "tags": ["folder", "phrasing"]}
+{"q": "go to youtube.com", "plan": "url youtube.com", "tags": ["url"]}
+{"q": "open github.com and vs code", "plan": "url github.com ; open vs code", "tags": ["url", "mixed"]}
+{"q": "visit wikipedia.org", "plan": "url wikipedia.org", "tags": ["url"]}
+{"q": "open spotify and go to reddit.com", "plan": "open spotify ; url reddit.com", "tags": ["url", "mixed"]}
+{"q": "open krita and inkscape side by side", "plan": "open krita ; open inkscape ; snap side", "tags": ["unseen", "layout"]}
+{"q": "close davinci resolve", "plan": "close davinci resolve", "tags": ["unseen", "close"]}
+{"q": "launch anki and zotero", "plan": "open anki ; open zotero", "tags": ["unseen", "multi"]}
+{"q": "put vivaldi on the left and logseq on the right", "plan": "snap left vivaldi ; snap right logseq", "tags": ["unseen", "place"]}
+{"q": "open fl studio and maximize it", "plan": "open fl studio ; max fl studio", "tags": ["unseen", "pronoun"]}
+{"q": "minimize plex and open musicbee", "plan": "min plex ; open musicbee", "tags": ["unseen", "mixed"]}
+{"q": "close everything except joplin", "plan": "closeall except joplin", "tags": ["unseen", "closeall"]}
+{"q": "open rstudio, matlab and zotero in a grid", "plan": "open rstudio ; open matlab ; open zotero ; snap grid", "tags": ["unseen", "layout"]}
+{"q": "opne notepad and wether side by side", "plan": "open notepad ; open wether ; snap side", "tags": ["typo", "layout"]}
+{"q": "close crome and spotfy", "plan": "close crome ; close spotfy", "tags": ["typo", "close"]}
+{"q": "lauch discrod and steam", "plan": "open discrod ; open steam", "tags": ["typo", "multi"]}
+{"q": "snap vscdoe left", "plan": "snap left vscdoe", "tags": ["typo", "place"]}
+{"q": "turn of bluetooth", "plan": "set bluetooth off", "tags": ["typo", "quick"]}
+{"q": "minimze outlok", "plan": "min outlok", "tags": ["typo", "minmax"]}
+{"q": "open notepad and wea", "plan": "open notepad ; open wea", "tags": ["partial", "multi"]}
+{"q": "open chrome and spot", "plan": "open chrome ; open spot", "tags": ["partial", "multi"]}
+{"q": "close disc", "plan": "close disc", "tags": ["partial", "close"]}
+{"q": "open word and exc", "plan": "open word ; open exc", "tags": ["partial", "multi"]}
+{"q": "snap chrome and spotify side by", "plan": "snap side chrome, spotify", "tags": ["partial", "snap"]}
+{"q": "ouvre notepad et météo côte à côte", "plan": "open notepad ; open météo ; snap side", "tags": ["french", "layout"]}
+{"q": "ouvre chrome et spotify", "plan": "open chrome ; open spotify", "tags": ["french", "multi"]}
+{"q": "lance discord et steam", "plan": "open discord ; open steam", "tags": ["french", "multi"]}
+{"q": "ferme chrome", "plan": "close chrome", "tags": ["french", "close"]}
+{"q": "ferme teams et outlook", "plan": "close teams ; close outlook", "tags": ["french", "close"]}
+{"q": "mets chrome à gauche et word à droite", "plan": "snap left chrome ; snap right word", "tags": ["french", "place"]}
+{"q": "réduis spotify", "plan": "min spotify", "tags": ["french", "minmax"]}
+{"q": "agrandis excel", "plan": "max excel", "tags": ["french", "minmax"]}
+{"q": "affiche le bureau", "plan": "desktop", "tags": ["french", "system"]}
+{"q": "verrouille le pc", "plan": "lock", "tags": ["french", "system"]}
+{"q": "fais une capture d'écran", "plan": "shot", "tags": ["french", "system"]}
+{"q": "active le mode sombre", "plan": "set dark on", "tags": ["french", "quick"]}
+{"q": "coupe le son", "plan": "set mute on", "tags": ["french", "quick"]}
+{"q": "mets le volume à 20", "plan": "set volume 20", "tags": ["french", "quick"]}
+{"q": "chanson suivante", "plan": "media next", "tags": ["french", "media"]}
+{"q": "ferme tout sauf chrome", "plan": "closeall except chrome", "tags": ["french", "closeall"]}
+{"q": "ouvre mes téléchargements", "plan": "folder downloads", "tags": ["french", "folder"]}
+{"q": "ouvre les paramètres bluetooth", "plan": "settings bluetooth", "tags": ["french", "settings"]}
+{"q": "notepad", "plan": "none", "tags": ["negative"]}
+{"q": "google chrome", "plan": "none", "tags": ["negative"]}
+{"q": "chrome extensions", "plan": "none", "tags": ["negative"]}
+{"q": "spotify premium price", "plan": "none", "tags": ["negative"]}
+{"q": "how to snap windows", "plan": "none", "tags": ["negative"]}
+{"q": "how do i close all apps on windows", "plan": "none", "tags": ["negative"]}
+{"q": "split screen not working", "plan": "none", "tags": ["negative"]}
+{"q": "dark mode wallpaper 4k", "plan": "none", "tags": ["negative"]}
+{"q": "bluetooth headphones not connecting", "plan": "none", "tags": ["negative"]}
+{"q": "wifi password", "plan": "none", "tags": ["negative"]}
+{"q": "weather tomorrow", "plan": "none", "tags": ["negative"]}
+{"q": "weather in paris", "plan": "none", "tags": ["negative"]}
+{"q": "open source software", "plan": "none", "tags": ["negative"]}
+{"q": "open world games", "plan": "none", "tags": ["negative"]}
+{"q": "close reading strategies", "plan": "none", "tags": ["negative"]}
+{"q": "start menu not opening", "plan": "none", "tags": ["negative"]}
+{"q": "kill bill", "plan": "none", "tags": ["negative"]}
+{"q": "lock screen wallpaper", "plan": "none", "tags": ["negative"]}
+{"q": "sleep timer for pc", "plan": "none", "tags": ["negative"]}
+{"q": "next week", "plan": "none", "tags": ["negative"]}
+{"q": "play store", "plan": "none", "tags": ["negative"]}
+{"q": "budget report 2024.xlsx", "plan": "none", "tags": ["negative"]}
+{"q": "move files to onedrive", "plan": "none", "tags": ["negative"]}
+{"q": "show hidden files", "plan": "none", "tags": ["negative"]}
+{"q": "shut down my computer", "plan": "none", "tags": ["negative"]}
+{"q": "restart the pc", "plan": "none", "tags": ["negative"]}
+{"q": "delete all my files", "plan": "none", "tags": ["negative"]}
+{"q": "notepad and weather", "plan": "none", "tags": ["negative"]}
+{"q": "chrome vs firefox", "plan": "none", "tags": ["negative"]}
+{"q": "best apps for windows 11", "plan": "none", "tags": ["negative"]}
+{"q": "translate hello to french", "plan": "none", "tags": ["negative"]}
+{"q": "météo demain", "plan": "none", "tags": ["negative", "french"]}
+{"q": "comment faire une capture d'écran", "plan": "none", "tags": ["negative", "french"]}
+{"q": "2 + 2 * 3", "plan": "none", "tags": ["negative"]}
+{"q": "run as administrator", "plan": "none", "tags": ["negative"]}
+{"q": "put a picture in word", "plan": "none", "tags": ["negative"]}
+{"q": "snapchat", "plan": "none", "tags": ["negative"]}
+{"q": "show me cat videos", "plan": "none", "tags": ["negative"]}
+{"q": "volume mixer", "plan": "none", "tags": ["negative"]}

@@ -241,6 +241,12 @@ fn is_them(s: &str) -> bool {
 }
 
 pub fn parse(query: &str, items: &[Item]) -> Option<Vec<Step>> {
+    // One plain step ("open notepad", "mute", "lock") already has its own row.
+    read(query, items).and_then(|(plan, alone)| (plan.len() > 1 || alone).then_some(plan))
+}
+
+/// The steps `query` asks for, and whether they are worth a row by themselves.
+pub fn read(query: &str, items: &[Item]) -> Option<(Vec<Step>, bool)> {
     let q = normalize(query);
     if q.len() < 4 {
         return None;
@@ -356,8 +362,7 @@ pub fn parse(query: &str, items: &[Item]) -> Option<Vec<Step>> {
         plan.push(Step::Arrange { layout: l, apps });
         alone = true;
     }
-    // One plain step ("open notepad", "mute", "lock") already has its own row.
-    (plan.len() > 1 || alone).then_some(plan)
+    Some((plan, alone))
 }
 
 /// Words around an app's name that are not part of it ("the", "app", "window").
@@ -530,6 +535,64 @@ fn describe(plan: &[Step]) -> (String, Vec<String>) {
         .collect::<Vec<_>>()
         .join(", then ");
     (title, short)
+}
+
+/// The plan in the one-line form the language model writes (see ml/intent/plan.py):
+/// "open notepad ; open weather ; snap side".
+pub fn to_line(plan: &[Step]) -> String {
+    let n = |a: &App| a.name.to_lowercase();
+    let mut since: Vec<&App> = Vec::new(); // named since the previous snap
+    let mut out: Vec<String> = Vec::new();
+    for step in plan {
+        let s = match step {
+            Step::Open(a) | Step::Focus(a) | Step::Close(a) | Step::Minimize(a) | Step::Maximize(a) => {
+                since.push(a);
+                let verb = match step {
+                    Step::Open(_) => "open",
+                    Step::Focus(_) => "focus",
+                    Step::Close(_) => "close",
+                    Step::Minimize(_) => "min",
+                    _ => "max",
+                };
+                format!("{verb} {}", n(a))
+            }
+            Step::Arrange { layout, apps } => {
+                let l = format!("{layout:?}").to_lowercase();
+                let mut named: Vec<&App> = Vec::new();
+                for a in since.drain(..) {
+                    if !named.contains(&a) {
+                        named.push(a);
+                    }
+                }
+                if *layout == Layout::Full && apps.len() == 1 {
+                    format!("max {}", n(&apps[0]))
+                } else if named.len() == apps.len() && named.iter().zip(apps).all(|(a, b)| *a == b) {
+                    format!("snap {l}")
+                } else {
+                    format!("snap {l} {}", apps.iter().map(n).collect::<Vec<_>>().join(", "))
+                }
+            }
+            Step::ShowDesktop => "desktop".into(),
+            Step::Media(m) => format!("media {}", match m {
+                Media::PlayPause => "play",
+                Media::Next => "next",
+                Media::Previous => "prev",
+                Media::Stop => "stop",
+            }),
+            Step::Quick { id, .. } => {
+                let (what, value) = id.split_once(':').unwrap_or((id, ""));
+                format!("set {what} {value}")
+            }
+            Step::Uri { uri, title } if uri.starts_with("ms-settings:") => {
+                format!("settings {}", title.trim_start_matches("Open ").to_lowercase())
+            }
+            Step::Uri { uri, .. } if uri == "ms-screenclip:" => "shot".into(),
+            Step::Uri { uri, .. } => format!("url {uri}"),
+            Step::Builtin { id, .. } => id.clone(),
+        };
+        out.push(s);
+    }
+    out.join(" ; ")
 }
 
 /// "Turn dark mode on" after a comma; app names keep their capitals ("Open Notepad").

@@ -13,3 +13,11 @@ obj/
 # Local logs and scratch
 *.log
 .claude/
+
+# Generated training data: ml/intent/gen.py
+/ml/intent/data/
+__pycache__/
+/ml/intent/.venv/
+/ml/intent/runs/
+/ml/intent/tools/
+/ml/intent/.venv-ov/
