@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Xml;
@@ -15,16 +14,26 @@ using Windows.Storage.Streams;
 namespace Palette;
 
 /// <summary>
-/// Preview of the selected result, shown automatically when it is a file: images and the first
+/// Preview of the selected result, shown when Tab is pressed on a file: images and the first
 /// page of PDFs are rendered, text, code and Word documents show their opening text, anything
-/// else gets the shell's thumbnail. It opens inline, under the selected row, pushing the rows below
-/// it down. Loading is asynchronous and dropped as soon as the selection moves on.
+/// else gets the shell's thumbnail, with the file's folder and size below. It opens inside the
+/// selected row's card and follows the selection until Tab is pressed again or the query changes.
+/// A calculator row always shows its answer there. Loading is asynchronous and dropped as soon as
+/// the selection moves on.
 /// </summary>
 public sealed partial class MainWindow
 {
     private string? _pvPath;      // file the preview shows (or is loading)
     private int _pvVersion;       // bumped on every change; stale loads check it and stop
-    private int _pvRow;           // the row the preview opens under (kept while it closes)
+    private HitVm? _pvVm;         // the row the preview pane sits in (kept while it closes)
+    private double _pvFull = FilePaneDip;  // the pane's open height
+    private bool _previewOn;      // Tab asked for file previews
+    // Rows the pane just left: their room closes while it opens in the next row (u runs 1 to 0).
+    private readonly List<(HitVm vm, double from, double u)> _pvClosing = new();
+
+    // The pane under the row: a 6 gap, the box (8 + 186 picture + two 52 rows + divider + 4) and
+    // 12 below; the answer box is 172.
+    private const double FilePaneDip = 6 + 8 + 186 + 52 + 1 + 52 + 4 + 12, AnswerPaneDip = 6 + 172 + 12;
 
     private const long MaxImageBytes = 80L << 20;
     private const int MaxTextBytes = 24 << 10;
@@ -48,8 +57,12 @@ public sealed partial class MainWindow
 
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (Items.Count > MaxRows) ScrollToSelection();
+        foreach (var o in e.RemovedItems) if (o is HitVm v) v.Selected = false;
+        foreach (var o in e.AddedItems) if (o is HitVm v) v.Selected = true;
+        UpdateOpenButton();
+        ScrollToSelection();
         UpdatePreview();
+        UpdateHighlight();
     }
 
     private void OnPreviewDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) =>
@@ -59,9 +72,20 @@ public sealed partial class MainWindow
     private void ResetPreview()
     {
         _pvVersion++;
+        _previewOn = false;
         _pvPath = null;
         _pvU = _pvTarget = 0;
+        foreach (var c in _pvClosing) c.vm.PreviewHeight = 0;
+        _pvClosing.Clear();
+        Detach();
         ClearPreview();
+    }
+
+    /// <summary>Tab: turn file previews on or off for the selected row and those after it.</summary>
+    private void TogglePreview()
+    {
+        _previewOn = !_previewOn;
+        UpdatePreview();
     }
 
     /// <summary>Show, switch or hide the preview to match the selected row.</summary>
@@ -69,28 +93,126 @@ public sealed partial class MainWindow
     {
         int i = ResultsList.SelectedIndex;
         HitVm? vm = _visible && i >= 0 && i < Items.Count ? Items[i] : null;
-        // The preview opens under its row, which assumes the list does not scroll.
-        string? path = Items.Count <= MaxRows ? vm?.Path : null;
-        if (path != null && _pvRow != i)
+        // Files show themselves once Tab asks; a sum or a web answer always shows its card.
+        string? key = vm switch
         {
-            _pvRow = i;
-            if (!_animating) ApplyShape();
-        }
-        if (path == _pvPath)
+            { IsAnswer: true } => $"answer:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(vm)}",
+            { IsCalc: true } => $"calc:{vm.Title}={vm.CopyText}",
+            _ => _previewOn ? vm?.Path : null,
+        };
+        if (key != null && vm != _pvVm) Attach(vm!);
+        if (key == _pvPath)
         {
-            if (path != null) SetPreviewOpen(true);
+            if (key != null) SetPreviewOpen(true);
             return;
         }
 
         int v = ++_pvVersion;
-        _pvPath = path;
-        if (path == null)
+        _pvPath = key;
+        if (key == null)
         {
             _ = ClosePreviewSoon(v);
             return;
         }
+        if (vm!.IsAnswer) ShowWebAnswer(vm);
+        else if (vm.IsCalc) ShowAnswer(vm);
+        else _ = LoadPreview(vm.Path!, vm, v);
         SetPreviewOpen(true);
-        _ = LoadPreview(path, vm!, v);
+    }
+
+    /// <summary>Move the shared pane into <paramref name="vm"/>'s row.</summary>
+    private void Attach(HitVm vm)
+    {
+        var old = _pvVm;
+        double h = old?.PreviewHeight ?? 0;
+        Detach();
+        if (AnimationsOn && _visible)
+        {
+            // Back to a row whose room is still closing: open it again from there.
+            int j = _pvClosing.FindIndex(c => c.vm == vm);
+            double reopen = 0;
+            if (j >= 0)
+            {
+                reopen = _pvClosing[j].u;
+                _pvClosing.RemoveAt(j);
+            }
+            if (old != null && h > 0.5)
+            {
+                // The pane moves on; the room it had closes as it unrolls in the new row, rather
+                // than both jumping.
+                old.PreviewHeight = h;
+                _pvClosing.Add((old, h, 1));
+                _pvU = reopen;
+                EnsureFrames();
+            }
+        }
+        _pvVm = vm;
+        vm.PreviewContent = PreviewPane;
+        if (!_animating) ApplyShape();
+    }
+
+    private static double EaseInOut(double u) => u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(-2 * u + 2, 3) / 2;
+
+    /// <summary>One frame of the rows closing behind the pane; true while any still is.</summary>
+    private bool StepClosingPreviews(double dt)
+    {
+        for (int j = _pvClosing.Count - 1; j >= 0; j--)
+        {
+            var (vm, from, u) = _pvClosing[j];
+            u = Math.Max(0, u - dt / PreviewMs);
+            if (u == 0)
+            {
+                vm.PreviewHeight = 0;
+                _pvClosing.RemoveAt(j);
+            }
+            else
+            {
+                _pvClosing[j] = (vm, from, u);
+            }
+        }
+        return _pvClosing.Count > 0;
+    }
+
+    /// <summary>Set the closing rows' heights; returns the room they still take (rows still listed).</summary>
+    private double ClosingPreviewDip()
+    {
+        double sum = 0;
+        foreach (var (vm, from, u) in _pvClosing)
+        {
+            double h = from * EaseInOut(u);
+            vm.PreviewHeight = h;
+            if (Items.Contains(vm)) sum += h;
+        }
+        return sum;
+    }
+
+    /// <summary>Room still taken by closing rows above row <paramref name="index"/>.</summary>
+    private double ClosingAbove(int index)
+    {
+        double sum = 0;
+        foreach (var c in _pvClosing)
+        {
+            int j = Items.IndexOf(c.vm);
+            if (j >= 0 && j < index) sum += c.vm.PreviewHeight;
+        }
+        return sum;
+    }
+
+    /// <summary>Take the pane out of whichever row (or the parking spot) holds it.</summary>
+    private void Detach()
+    {
+        if (_pvVm != null)
+        {
+            _pvVm.PreviewContent = null;
+            _pvVm.PreviewHeight = 0;
+            _pvVm = null;
+        }
+        // A row that was removed from the list may still hold it.
+        switch (VisualTreeHelper.GetParent(PreviewPane))
+        {
+            case ContentPresenter cp: cp.Content = null; break;
+            case Panel p: p.Children.Remove(PreviewPane); break;
+        }
     }
 
     /// <summary>
@@ -105,14 +227,32 @@ public sealed partial class MainWindow
 
     private void ClearPreview()
     {
+        _pvFull = FilePaneDip;
+        FilePreview.Visibility = Visibility.Visible;
+        AnswerPreview.Visibility = Visibility.Collapsed;
+        WeatherPreview.Visibility = Visibility.Collapsed;
+        StockPreview.Visibility = Visibility.Collapsed;
+        FactPreview.Visibility = Visibility.Collapsed;
+        FactImage.Source = null;
         PreviewImage.Source = null;
         PreviewImage.Visibility = Visibility.Collapsed;
         PreviewIcon.Source = null;
         PreviewIcon.Visibility = Visibility.Collapsed;
-        PreviewScroll.Visibility = Visibility.Collapsed;
+        PreviewPage.Visibility = Visibility.Collapsed;
         PreviewText.Text = "";
         PreviewNote.Text = "";
-        PreviewMeta.Text = "";
+        PreviewLocation.Text = "";
+        PreviewSize.Text = "";
+    }
+
+    private void ShowAnswer(HitVm vm)
+    {
+        ClearPreview();
+        _pvFull = AnswerPaneDip;
+        FilePreview.Visibility = Visibility.Collapsed;
+        AnswerPreview.Visibility = Visibility.Visible;
+        AnswerExpr.Text = PrettySum(vm.Title) + " =";
+        AnswerValue.Text = vm.CopyText ?? "";
     }
 
     private enum PvKind { Missing, Cloud, Text, Image, Pdf, Other }
@@ -133,7 +273,8 @@ public sealed partial class MainWindow
         catch { info = new Probe(PvKind.Missing, 0, default, null); }
         if (v != _pvVersion) return;
 
-        PreviewMeta.Text = info.Kind == PvKind.Missing ? "Not found" : Describe(path, info);
+        PreviewLocation.Text = System.IO.Path.GetDirectoryName(path) ?? "";
+        PreviewSize.Text = info.Kind == PvKind.Missing ? "Not found" : Size(info.Size);
         try
         {
             switch (info.Kind)
@@ -144,13 +285,18 @@ public sealed partial class MainWindow
                 case PvKind.Cloud:
                     PreviewNote.Text = "Online-only file. Open it to download.";
                     break;
+                case PvKind.Text when string.IsNullOrWhiteSpace(info.Text):
+                    PreviewNote.Text = "Empty";
+                    break;
                 case PvKind.Text:
-                    PreviewText.Text = info.Text ?? "";
-                    PreviewText.TextWrapping = ProseExt.Contains(System.IO.Path.GetExtension(path)) ? TextWrapping.Wrap : TextWrapping.NoWrap;
-                    PreviewScroll.ChangeView(0, 0, null, true);
-                    PreviewScroll.Visibility = Visibility.Visible;
+                    // A page, as Windows shows documents: prose in the UI font, code in a mono one.
+                    bool prose = ProseExt.Contains(System.IO.Path.GetExtension(path));
+                    PreviewText.Text = info.Text;
+                    PreviewText.TextWrapping = prose ? TextWrapping.Wrap : TextWrapping.NoWrap;
+                    PreviewText.FontFamily = new FontFamily(prose ? "Segoe UI Variable Text" : "Cascadia Mono, Consolas");
+                    PreviewText.FontSize = prose ? 13 : 11.5;
+                    PreviewPage.Visibility = Visibility.Visible;
                     PreviewIcon.Visibility = Visibility.Collapsed;
-                    if (string.IsNullOrWhiteSpace(info.Text)) { PreviewScroll.Visibility = Visibility.Collapsed; PreviewIcon.Visibility = Visibility.Visible; PreviewNote.Text = "Empty"; }
                     break;
                 case PvKind.Image:
                     if (!await ShowImage(path, v)) await ShowThumbnail(path, v);
@@ -183,7 +329,7 @@ public sealed partial class MainWindow
         PreviewIcon.Visibility = Visibility.Collapsed;
     }
 
-    private int PreviewPx => (int)(WidthDip * Scale);
+    private int PreviewPx => (int)(452 * Scale);   // the preview box's width
 
     private async Task<bool> ShowImage(string path, int v)
     {
@@ -220,7 +366,7 @@ public sealed partial class MainWindow
             await bmp.SetSourceAsync(ms);
             if (v != _pvVersion) return true;
             ShowPicture(bmp);
-            if (doc.PageCount > 1) PreviewMeta.Text += $"  ·  {doc.PageCount} pages";
+            if (doc.PageCount > 1) PreviewSize.Text += $"  ·  {doc.PageCount} pages";
             return true;
         }
         catch
@@ -377,13 +523,6 @@ public sealed partial class MainWindow
         return sb.ToString().TrimEnd();
     }
 
-    private static string Describe(string path, Probe p)
-    {
-        string ext = System.IO.Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
-        string kind = ext.Length > 0 ? ext + " file" : "File";
-        return $"{kind}  ·  {Size(p.Size)}  ·  Modified {When(p.Modified)}";
-    }
-
     private static string Size(long b) => b switch
     {
         < 1024 => $"{b} bytes",
@@ -391,18 +530,4 @@ public sealed partial class MainWindow
         < 1024L * 1024 * 1024 => $"{b / (1024.0 * 1024):0.#} MB",
         _ => $"{b / (1024.0 * 1024 * 1024):0.##} GB",
     };
-
-    private static string When(DateTime t)
-    {
-        var c = CultureInfo.CurrentCulture;
-        string time = t.ToString("t", c);
-        var days = (DateTime.Today - t.Date).Days;
-        return days switch
-        {
-            0 => $"today, {time}",
-            1 => $"yesterday, {time}",
-            < 7 and > 1 => $"{t.ToString("dddd", c)}, {time}",
-            _ => t.ToString(t.Year == DateTime.Today.Year ? "d MMM" : "d MMM yyyy", c),
-        };
-    }
 }

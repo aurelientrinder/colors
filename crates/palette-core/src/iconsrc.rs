@@ -5,7 +5,7 @@
 //! * files     -> the icon of the app associated with the extension
 //!                (exe/lnk/ico/msi use their own icon)
 //!
-//! Extraction runs on one dedicated STA thread; callers block on a reply.
+//! Extraction runs on a few dedicated STA threads; callers block on a reply.
 
 use crate::model::{Action, Hit, Kind};
 use std::sync::mpsc::{channel, Sender};
@@ -30,16 +30,26 @@ const SIZE: i32 = ICON_SIZE;
 
 type Job = (Src, Sender<Option<Vec<u8>>>);
 
+/// Threads extracting at once: a cold app icon can take the shell 100 ms or more, and a screenful
+/// of them should not queue behind each other.
+const WORKERS: usize = 4;
+
 fn worker() -> &'static Mutex<Sender<Job>> {
     static W: OnceLock<Mutex<Sender<Job>>> = OnceLock::new();
     W.get_or_init(|| {
         let (tx, rx) = channel::<Job>();
-        std::thread::spawn(move || unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            while let Ok((src, reply)) = rx.recv() {
-                let _ = reply.send(extract_raw(&src));
-            }
-        });
+        let rx = std::sync::Arc::new(Mutex::new(rx));
+        for _ in 0..WORKERS {
+            let rx = rx.clone();
+            std::thread::spawn(move || unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                loop {
+                    let job = rx.lock().unwrap().recv();
+                    let Ok((src, reply)) = job else { break };
+                    let _ = reply.send(extract_raw(&src));
+                }
+            });
+        }
         Mutex::new(tx)
     })
 }
@@ -52,6 +62,32 @@ pub fn icon_key(hit: &Hit) -> Option<String> {
 /// Premultiplied RGBA, ICON_SIZE x ICON_SIZE. Blocks until extracted.
 pub fn icon_rgba(hit: &Hit) -> Option<Vec<u8>> {
     let (_, src) = source_for(hit)?;
+    extract(src)
+}
+
+/// The icon a key from [`icon_key`] stands for, so it can be fetched whatever result it came from.
+pub fn icon_rgba_for_key(key: &str) -> Option<Vec<u8>> {
+    extract(source_for_key(key)?)
+}
+
+/// The inverse of the keys [`source_for`] makes.
+fn source_for_key(key: &str) -> Option<Src> {
+    Some(match key {
+        "settings" => Src::Shell(SETTINGS_APP.into()),
+        "dir" => Src::Attrs { name: "folder".into(), dir: true },
+        _ if key.starts_with("shell:") => Src::Shell(key.into()),
+        _ => {
+            if let Some(p) = key.strip_prefix("path:") {
+                Src::Path(resolve_bare(p))
+            } else {
+                let ext = key.strip_prefix("ext:")?;
+                Src::Attrs { name: format!("file.{ext}"), dir: false }
+            }
+        }
+    })
+}
+
+fn extract(src: Src) -> Option<Vec<u8>> {
     let (tx, rx) = channel();
     worker().lock().ok()?.send((src, tx)).ok()?;
     rx.recv().ok().flatten()

@@ -74,8 +74,11 @@ pub fn pinnable(hit: &Hit) -> bool {
 // ---------------------------------------------------------------- home
 
 pub const ALL_APPS: &str = "allapps";
-const MOST_USED: usize = 3;
-const RECENT_FILES: usize = 4;
+/// Rows on the home view, "All apps" included: as many as a search shows (`search::MAX_HITS`), so
+/// the panel keeps its height when typing starts.
+const HOME_ROWS: usize = crate::search::MAX_HITS;
+/// Of the rows left after the pins, how many go to the most used items (recent files get the rest).
+const MOST_USED: usize = 2;
 /// Recent files read for search ranking as well (a recently opened file outranks its namesakes).
 const RECENT_RANKED: usize = 150;
 
@@ -90,28 +93,28 @@ fn all_apps_row() -> Hit {
 }
 
 /// The list shown before anything is typed, nearest the search field first: pinned items, the
-/// few things you open most, files Windows saw you open recently, then "All apps".
+/// few things you open most, files Windows saw you open recently, then "All apps", in
+/// `HOME_ROWS` rows. When one kind runs short the other fills its place.
 pub fn home(pins: &Pins, usage: &Usage) -> Vec<Hit> {
-    let mut out: Vec<Hit> = pins.list().to_vec();
-    let mut seen: HashSet<String> = out.iter().map(Hit::key).collect();
-    for h in usage.top(MOST_USED + out.len()) {
-        if out.len() >= pins.list().len() + MOST_USED {
-            break;
+    let room = HOME_ROWS - 1; // the last row is "All apps"
+    let mut out: Vec<Hit> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut add = |out: &mut Vec<Hit>, list: &mut dyn Iterator<Item = Hit>, until: usize| {
+        while out.len() < until {
+            let Some(h) = list.next() else { break };
+            if seen.insert(h.key()) {
+                out.push(h);
+            }
         }
-        if seen.insert(h.key()) {
-            out.push(h);
-        }
-    }
-    let mut added = 0;
-    for h in recent_cached() {
-        if added >= RECENT_FILES {
-            break;
-        }
-        if seen.insert(h.key()) {
-            out.push(h);
-            added += 1;
-        }
-    }
+    };
+    let mut pinned = pins.list().iter().cloned();
+    let mut used = usage.top(room + pins.list().len()).into_iter();
+    let mut recent = recent_cached().into_iter();
+    add(&mut out, &mut pinned, room);
+    let until = (out.len() + MOST_USED).min(room);
+    add(&mut out, &mut used, until);
+    add(&mut out, &mut recent, room);
+    add(&mut out, &mut used, room); // few recent files: more of the most used
     out.push(all_apps_row());
     out
 }

@@ -10,317 +10,646 @@
             <CompositeTransform x:Name="RootXf" />
         </Grid.RenderTransform>
 
-        <!-- The window is wide enough for the list plus a preview; Stage is the visible panel. It is
-             centred and list-wide, and widens on both sides when a file is selected. -->
+        <!-- The look of the Windows Search panel: rows on the panel, the selected one a white card,
+             and the search field in a card of its own at the bottom. -->
         <Grid.Resources>
             <ResourceDictionary>
                 <ResourceDictionary.ThemeDictionaries>
-                    <!-- Glass: light catching the upper part of the pane (the rim is drawn by ShadowWindow). -->
-                    <ResourceDictionary x:Key="Dark">
-                        <LinearGradientBrush x:Key="SheenBrush" MappingMode="Absolute" StartPoint="0,0" EndPoint="0,180">
-                            <GradientStop Offset="0" Color="#12FFFFFF" />
-                            <GradientStop Offset="1" Color="#00FFFFFF" />
-                        </LinearGradientBrush>
-                    </ResourceDictionary>
+                    <!-- The design's colours, fixed rather than taken from the wallpaper or the
+                         system accent: a pale blue panel in light, charcoal in dark. -->
                     <ResourceDictionary x:Key="Light">
-                        <LinearGradientBrush x:Key="SheenBrush" MappingMode="Absolute" StartPoint="0,0" EndPoint="0,180">
-                            <GradientStop Offset="0" Color="#59FFFFFF" />
-                            <GradientStop Offset="1" Color="#00FFFFFF" />
+                        <LinearGradientBrush x:Key="PanelBrush" StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Offset="0" Color="#FFD5E5F6" />
+                            <GradientStop Offset="0.5" Color="#FFD4E1F2" />
+                            <GradientStop Offset="1" Color="#FFDDEAF8" />
                         </LinearGradientBrush>
+                        <SolidColorBrush x:Key="RowSelectedBrush" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="SearchCardBrush" Color="#FFFFFFFF" />
+                        <!-- a hairline, darker along the bottom edge -->
+                        <LinearGradientBrush x:Key="SearchCardStrokeBrush" StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Offset="0.98" Color="#0D000000" />
+                            <GradientStop Offset="1" Color="#1A000000" />
+                        </LinearGradientBrush>
+                        <SolidColorBrush x:Key="PreviewFillBrush" Color="#FFF1F6FB" />
+                        <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF005FB8" />
+                        <SolidColorBrush x:Key="AccentButtonBackground" Color="#FF005FB8" />
+                        <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#E6005FB8" />
+                        <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#CC005FB8" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="Transparent" />
+                        <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#B3FFFFFF" />
+                    </ResourceDictionary>
+                    <ResourceDictionary x:Key="Dark">
+                        <SolidColorBrush x:Key="PanelBrush" Color="#FF202124" />
+                        <SolidColorBrush x:Key="RowSelectedBrush" Color="#14FFFFFF" />
+                        <SolidColorBrush x:Key="SearchCardBrush" Color="#FF27323D" />
+                        <LinearGradientBrush x:Key="SearchCardStrokeBrush" StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Offset="0.98" Color="#0FFFFFFF" />
+                            <GradientStop Offset="1" Color="#4D000000" />
+                        </LinearGradientBrush>
+                        <SolidColorBrush x:Key="PreviewFillBrush" Color="#0DFFFFFF" />
+                        <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF60CDFF" />
+                        <SolidColorBrush x:Key="AccentButtonBackground" Color="#FF60CDFF" />
+                        <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#E660CDFF" />
+                        <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#CC60CDFF" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="Transparent" />
+                        <SolidColorBrush x:Key="AccentButtonForeground" Color="#FF000000" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FF000000" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#80000000" />
                     </ResourceDictionary>
                 </ResourceDictionary.ThemeDictionaries>
+
+                <!-- the glyph buttons on the selected row -->
+                <Style x:Key="RowButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+                    <Setter Property="Width" Value="32" />
+                    <Setter Property="Height" Value="32" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="CornerRadius" Value="4" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="IsTabStop" Value="False" />
+                    <Setter Property="AllowFocusOnInteraction" Value="False" />
+                </Style>
+
+                <!-- small text buttons inside a card (units, the chart's range) -->
+                <Style x:Key="CardTextButtonStyle" BasedOn="{StaticResource DefaultButtonStyle}" TargetType="Button">
+                    <Setter Property="MinWidth" Value="0" />
+                    <Setter Property="MinHeight" Value="0" />
+                    <Setter Property="Padding" Value="4,1" />
+                    <Setter Property="CornerRadius" Value="4" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="IsTabStop" Value="False" />
+                    <Setter Property="AllowFocusOnInteraction" Value="False" />
+                </Style>
             </ResourceDictionary>
         </Grid.Resources>
 
+        <!-- The window is as tall as the panel can get; Stage is the visible panel, anchored to the
+             bottom and growing upward. -->
         <Grid
             x:Name="Stage"
-            Width="680"
+            Width="500"
+            Background="{ThemeResource PanelBrush}"
             HorizontalAlignment="Left"
             VerticalAlignment="Bottom">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-        <!-- bottom-anchored: key hints, results (best match last), divider, search field -->
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="64" />
-        </Grid.RowDefinitions>
-
-        <Border
-            Grid.RowSpan="4"
-            Background="{ThemeResource SheenBrush}"
-            IsHitTestVisible="False" />
-
-        <!-- search field -->
-        <Grid Grid.Row="3" Padding="22,0,18,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-
-            <FontIcon
-                Margin="0,0,14,0"
-                VerticalAlignment="Center"
-                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                FontSize="18"
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Glyph="&#xE721;" />
-
-            <TextBox
-                x:Name="Input"
-                Grid.Column="1"
-                VerticalAlignment="Center"
-                Background="Transparent"
-                BorderThickness="0"
-                FontFamily="Segoe UI Variable Display, Segoe UI"
-                FontSize="22"
-                FontWeight="SemiLight"
-                PlaceholderText="Search apps, files, settings…"
-                PreviewKeyDown="OnInputKeyDown"
-                TextChanged="OnInputChanged">
-                <TextBox.Resources>
-                    <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
-                    <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
-                </TextBox.Resources>
-            </TextBox>
-        </Grid>
-
-        <Border
-            x:Name="Divider"
-            Grid.Row="2"
-            Height="1"
-            Background="{ThemeResource DividerStrokeColorDefaultBrush}"
-            Visibility="Collapsed" />
-
-        <!-- results, with the preview opening inline under the selected row -->
-        <Grid x:Name="Body" Grid.Row="1" Height="0">
-
-        <!-- The list is flipped (and each row flipped back) so the best match sits next to the
-             search field and the rest stack upward from it. -->
-        <ListView
-            x:Name="ResultsList"
-            Margin="8,6,8,6"
-            VerticalAlignment="Stretch"
-            RenderTransformOrigin="0.5,0.5"
-            ContainerContentChanging="OnContainerContentChanging"
-            IsItemClickEnabled="True"
-            ItemClick="OnItemClick"
-            RightTapped="OnRowRightTapped"
-            ItemsSource="{x:Bind Items}"
-            SelectionChanged="OnSelectionChanged"
-            ScrollViewer.VerticalScrollBarVisibility="Hidden"
-            ScrollViewer.VerticalScrollMode="Disabled"
-            SelectionMode="Single">
-            <!-- Rows arriving later (Related) must not slide or fade in: the built-in item
-                 transitions animate them from the wrong side of the flipped list. -->
-            <ListView.ItemContainerTransitions>
-                <TransitionCollection />
-            </ListView.ItemContainerTransitions>
-            <ListView.RenderTransform>
-                <ScaleTransform ScaleY="-1" />
-            </ListView.RenderTransform>
-            <ListView.ItemContainerStyle>
-                <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
-                    <Setter Property="MinHeight" Value="52" />
-                    <Setter Property="Padding" Value="16,0,12,0" />
-                    <Setter Property="CornerRadius" Value="8" />
-                </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ItemTemplate>
-                <DataTemplate x:DataType="local:HitVm">
-                    <Grid Height="52" ColumnSpacing="14" RenderTransformOrigin="0.5,0.5">
-                        <Grid.RenderTransform>
-                            <ScaleTransform ScaleY="-1" />
-                        </Grid.RenderTransform>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="34" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-
-                        <Image
-                            Width="32"
-                            Height="32"
-                            Source="{x:Bind Icon, Mode=OneWay}"
-                            Visibility="{x:Bind IconVisibility, Mode=OneWay}" />
-                        <Border
-                            Width="32"
-                            Height="32"
-                            Background="{x:Bind TileBrush, Mode=OneWay}"
-                            CornerRadius="8"
-                            Visibility="{x:Bind TileVisibility, Mode=OneWay}">
-                            <FontIcon
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center"
-                                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                FontSize="16"
-                                Foreground="White"
-                                Glyph="{x:Bind Glyph, Mode=OneWay}" />
-                        </Border>
-
-                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock
-                                FontSize="15"
-                                TextTrimming="CharacterEllipsis"
-                                local:Hl.Rev="{x:Bind Rev, Mode=OneWay}"
-                                local:Hl.Vm="{x:Bind}" />
-                            <TextBlock
-                                FontSize="12"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind Subtitle, Mode=OneWay}"
-                                TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-
-                        <Border
-                            Grid.Column="2"
-                            Padding="7,2,7,3"
-                            VerticalAlignment="Center"
-                            Background="{ThemeResource ControlFillColorSecondaryBrush}"
-                            CornerRadius="5"
-                            Visibility="{x:Bind ChipVisibility, Mode=OneWay}">
-                            <TextBlock
-                                FontSize="11"
-                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="{x:Bind Kind, Mode=OneWay}" />
-                        </Border>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-
-        <Border
-            x:Name="PreviewPane"
-            Height="224"
-            Margin="14,0,14,0"
-            VerticalAlignment="Bottom"
-            Opacity="0"
-            Visibility="Collapsed">
-            <Grid RowSpacing="6">
+            <!-- results, best match first; the selected file's preview opens inside its row -->
+            <Grid x:Name="Body" Height="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
+                <ListView
+                    x:Name="ResultsList"
+                    Margin="12,10,4,4"
+                    Padding="0"
+                    IsItemClickEnabled="True"
+                    IsTabStop="False"
+                    ItemClick="OnItemClick"
+                    ItemsSource="{x:Bind Items}"
+                    RightTapped="OnRowRightTapped"
+                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                    SelectionChanged="OnSelectionChanged"
+                    SelectionMode="Single">
+                    <ListView.RenderTransform>
+                        <TranslateTransform x:Name="ListXf" />
+                    </ListView.RenderTransform>
+                    <ListView.Resources>
+                        <ResourceDictionary>
+                            <!-- The selected row's card and pill are drawn by SelHighlight, which glides
+                                 from row to row; the list's own would jump. -->
+                            <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent" />
+                        </ResourceDictionary>
+                    </ListView.Resources>
+                    <!-- The header scrolls with the rows and is drawn beneath them: the selection
+                         card lives there, placed over the selected row (Motion.cs). -->
+                    <ListView.Header>
+                        <Canvas x:Name="HlCanvas" Height="0" IsHitTestVisible="False">
+                            <Border
+                                x:Name="SelHighlight"
+                                Background="{ThemeResource RowSelectedBrush}"
+                                CornerRadius="12"
+                                Opacity="0">
+                                <Border.OpacityTransition>
+                                    <ScalarTransition Duration="0:0:0.12" />
+                                </Border.OpacityTransition>
+                                <Border
+                                    Width="3"
+                                    Height="16"
+                                    Margin="0,20,0,0"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Top"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    CornerRadius="1.5" />
+                            </Border>
+                        </Canvas>
+                    </ListView.Header>
+                    <ListView.HeaderTransitions>
+                        <TransitionCollection />
+                    </ListView.HeaderTransitions>
+                    <!-- Rows arriving later (Related) must not slide or fade in. -->
+                    <ListView.ItemContainerTransitions>
+                        <TransitionCollection />
+                    </ListView.ItemContainerTransitions>
+                    <ListView.ItemContainerStyle>
+                        <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
+                            <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="Margin" Value="0,2,8,2" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="CornerRadius" Value="12" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="VerticalContentAlignment" Value="Top" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:HitVm">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="56" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                <Border
-                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="10"
-                    DoubleTapped="OnPreviewDoubleTapped">
-                    <Grid>
-                        <Image
-                            x:Name="PreviewIcon"
-                            Width="72"
-                            Height="72"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center" />
-                        <Image
-                            x:Name="PreviewImage"
-                            Margin="10"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            Stretch="Uniform"
-                            Visibility="Collapsed" />
-                        <ScrollViewer
-                            x:Name="PreviewScroll"
-                            AllowFocusOnInteraction="False"
-                            HorizontalScrollBarVisibility="Auto"
-                            IsTabStop="False"
-                            Visibility="Collapsed">
-                            <TextBlock
-                                x:Name="PreviewText"
-                                Padding="14,12,14,12"
-                                FontFamily="Cascadia Mono, Consolas"
-                                FontSize="12"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                LineHeight="18" />
-                        </ScrollViewer>
-                        <TextBlock
-                            x:Name="PreviewNote"
-                            Margin="16,0,16,18"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Bottom"
-                            FontSize="12"
-                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                            TextAlignment="Center"
-                            TextWrapping="Wrap" />
-                    </Grid>
-                </Border>
+                                <Grid Padding="12,0,8,0" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="24" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
 
-                <!-- the row above already shows the name and folder -->
-                <TextBlock
-                    x:Name="PreviewMeta"
+                                    <Image
+                                        Width="24"
+                                        Height="24"
+                                        Opacity="{x:Bind IconOpacity, Mode=OneWay}"
+                                        Source="{x:Bind Icon, Mode=OneWay}"
+                                        Visibility="{x:Bind IconVisibility, Mode=OneWay}">
+                                        <Image.OpacityTransition>
+                                            <ScalarTransition Duration="0:0:0.12" />
+                                        </Image.OpacityTransition>
+                                    </Image>
+                                    <FontIcon
+                                        FontSize="20"
+                                        Glyph="{x:Bind Glyph, Mode=OneWay}"
+                                        Visibility="{x:Bind GlyphVisibility, Mode=OneWay}" />
+                                    <FontIcon
+                                        FontSize="20"
+                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                        Glyph="&#xE930;"
+                                        Visibility="{x:Bind StatusVisibility, Mode=OneWay}" />
+
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind Title, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                        <!-- Left-aligned, so the star column is only as wide as its text
+                                             and trims it rather than pushing the badge away. -->
+                                        <Grid HorizontalAlignment="Left">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock
+                                                Margin="0,0,5,0"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Text="{x:Bind SubText, Mode=OneWay}"
+                                                TextTrimming="CharacterEllipsis"
+                                                Visibility="{x:Bind SubTextVisibility, Mode=OneWay}" />
+                                            <Border
+                                                Grid.Column="1"
+                                                Width="12"
+                                                Height="12"
+                                                Margin="0,1,4,0"
+                                                Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                                CornerRadius="2.5"
+                                                Visibility="{x:Bind ActionVisibility, Mode=OneWay}">
+                                                <FontIcon
+                                                    FontSize="8"
+                                                    Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                    Glyph="&#xE945;" />
+                                            </Border>
+                                            <TextBlock
+                                                Grid.Column="2"
+                                                Foreground="{ThemeResource AccentFillColorDefaultBrush}"
+                                                Text="Action"
+                                                Visibility="{x:Bind ActionVisibility, Mode=OneWay}" />
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <StackPanel
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        IsHitTestVisible="{x:Bind ButtonsShown, Mode=OneWay}"
+                                        Opacity="{x:Bind ButtonsOpacity, Mode=OneWay}"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        Visibility="{x:Bind ButtonsVisibility, Mode=OneWay}">
+                                        <StackPanel.OpacityTransition>
+                                            <ScalarTransition Duration="0:0:0.15" />
+                                        </StackPanel.OpacityTransition>
+                                        <Button
+                                            AutomationProperties.Name="More options"
+                                            Click="OnRowMoreClick"
+                                            Style="{StaticResource RowButtonStyle}"
+                                            ToolTipService.ToolTip="More options"
+                                            Visibility="{x:Bind MoreVisibility, Mode=OneWay}">
+                                            <FontIcon FontSize="16" Glyph="&#xE712;" />
+                                        </Button>
+                                        <Button
+                                            AutomationProperties.Name="{x:Bind SecondLabel, Mode=OneWay}"
+                                            Click="OnRowSecondClick"
+                                            Style="{StaticResource RowButtonStyle}"
+                                            ToolTipService.ToolTip="{x:Bind SecondLabel, Mode=OneWay}">
+                                            <FontIcon FontSize="16" Glyph="{x:Bind SecondGlyph, Mode=OneWay}" />
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+
+                                <ContentPresenter
+                                    Grid.Row="1"
+                                    Height="{x:Bind PreviewHeight, Mode=OneWay}"
+                                    VerticalAlignment="Top"
+                                    Content="{x:Bind PreviewContent, Mode=OneWay}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <!-- An answer on top shows on its own, as in Windows Search; the rest is a scroll,
+                     a click or an arrow key away. -->
+                <Grid
+                    x:Name="MoreHint"
                     Grid.Row="1"
-                    Margin="4,0,4,0"
-                    FontSize="12"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    TextTrimming="CharacterEllipsis" />
+                    Height="56"
+                    Padding="24,0"
+                    Background="Transparent"
+                    Tapped="OnMoreHintTapped"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Scroll or click to see more results" />
+                </Grid>
             </Grid>
-        </Border>
+
+            <!-- search field -->
+            <Grid
+                Grid.Row="1"
+                Height="100"
+                Margin="6"
+                Background="{ThemeResource SearchCardBrush}"
+                BorderBrush="{ThemeResource SearchCardStrokeBrush}"
+                BorderThickness="1"
+                CornerRadius="20">
+                <TextBox
+                    x:Name="Input"
+                    Margin="17,17,17,0"
+                    Padding="1,0,0,0"
+                    MinHeight="0"
+                    VerticalAlignment="Top"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    FontSize="14"
+                    PlaceholderText="Search"
+                    PreviewKeyDown="OnInputKeyDown"
+                    PreviewKeyUp="OnInputKeyUp"
+                    TextChanged="OnInputChanged">
+                    <TextBox.Resources>
+                        <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                        <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+                    </TextBox.Resources>
+                </TextBox>
+
+                <Button
+                    x:Name="OpenButton"
+                    Height="32"
+                    Margin="0,0,8,8"
+                    Padding="12,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    AllowFocusOnInteraction="False"
+                    Click="OnOpenButtonClick"
+                    Content="Open"
+                    CornerRadius="12"
+                    IsHitTestVisible="False"
+                    IsTabStop="False"
+                    Opacity="0"
+                    Style="{StaticResource AccentButtonStyle}">
+                    <Button.OpacityTransition>
+                        <ScalarTransition Duration="0:0:0.15" />
+                    </Button.OpacityTransition>
+                </Button>
+            </Grid>
         </Grid>
 
-        <!-- key hints -->
-        <Border
-            x:Name="Footer"
-            Grid.Row="0"
-            Height="36"
-            Padding="18,0"
-            Background="{ThemeResource SubtleFillColorTertiaryBrush}"
-            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-            BorderThickness="0,0,0,1"
-            Visibility="Collapsed">
-            <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <StackPanel
-                VerticalAlignment="Center"
-                Orientation="Horizontal"
-                Spacing="16">
-                <StackPanel Orientation="Horizontal" Spacing="7">
-                    <Border Padding="6,1,6,2" Background="{ThemeResource ControlFillColorDefaultBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4">
-                        <TextBlock FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Enter" />
-                    </Border>
-                    <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="Open" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="7">
-                    <Border Padding="6,1,6,2" Background="{ThemeResource ControlFillColorDefaultBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4">
-                        <TextBlock FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Ctrl+Enter" />
-                    </Border>
-                    <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="Reveal" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="7">
-                    <Border Padding="6,1,6,2" Background="{ThemeResource ControlFillColorDefaultBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4">
-                        <TextBlock FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Tab" />
-                    </Border>
-                    <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="Actions" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="7">
-                    <Border Padding="6,1,6,2" Background="{ThemeResource ControlFillColorDefaultBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4">
-                        <TextBlock FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Esc" />
-                    </Border>
-                    <TextBlock x:Name="FooterEsc" FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="Close" />
-                </StackPanel>
-            </StackPanel>
+        <!-- The preview pane is shared: it moves into the selected row (HitVm.PreviewContent). -->
+        <Grid x:Name="PreviewParking" Visibility="Collapsed">
+            <Grid
+                x:Name="PreviewPane"
+                Padding="12,6,12,12"
+                VerticalAlignment="Top"
+                DoubleTapped="OnPreviewDoubleTapped">
+                <Border Background="{ThemeResource PreviewFillBrush}" CornerRadius="8">
+                    <Grid>
+                        <!-- a file: its picture or first page, then where it is and how big -->
+                        <StackPanel x:Name="FilePreview" Padding="0,8,0,4">
+                            <Grid Height="186">
+                                <Image
+                                    x:Name="PreviewImage"
+                                    MaxHeight="186"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Stretch="Uniform"
+                                    Visibility="Collapsed" />
+                                <Image
+                                    x:Name="PreviewIcon"
+                                    Width="72"
+                                    Height="72"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center" />
+                                <!-- text files as a page: the opening text at a third of its size -->
+                                <Border
+                                    x:Name="PreviewPage"
+                                    Width="144"
+                                    Height="186"
+                                    Background="White"
+                                    BorderBrush="#14000000"
+                                    BorderThickness="1"
+                                    Visibility="Collapsed">
+                                    <Viewbox Stretch="Fill">
+                                        <TextBlock
+                                            x:Name="PreviewText"
+                                            Width="426"
+                                            Height="552"
+                                            Padding="32,30,32,30"
+                                            FontSize="13"
+                                            Foreground="#FF1F1F1F"
+                                            LineHeight="19"
+                                            TextTrimming="Clip" />
+                                    </Viewbox>
+                                </Border>
+                                <TextBlock
+                                    x:Name="PreviewNote"
+                                    Margin="16,0,16,14"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Bottom"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextAlignment="Center"
+                                    TextWrapping="Wrap" />
+                            </Grid>
+                            <StackPanel Margin="12,0">
+                                <Grid Height="52" Padding="12,0" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Location" />
+                                    <TextBlock
+                                        x:Name="PreviewLocation"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Height="52" Padding="12,0" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="File Size" />
+                                    <TextBlock
+                                        x:Name="PreviewSize"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
 
-            <TextBlock
-                x:Name="FooterStatus"
-                Grid.Column="1"
-                Margin="16,0,0,0"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Center"
-                FontSize="11"
-                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                TextTrimming="CharacterEllipsis" />
+                        <!-- a sum: the answer, large -->
+                        <StackPanel
+                            x:Name="AnswerPreview"
+                            Height="172"
+                            Padding="24,24,24,20"
+                            Visibility="Collapsed">
+                            <TextBlock x:Name="AnswerExpr" FontWeight="SemiBold" />
+                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Enter to copy" />
+                            <TextBlock
+                                x:Name="AnswerValue"
+                                Margin="0,20,0,0"
+                                FontFamily="Segoe UI Variable Display"
+                                FontSize="68"
+                                FontWeight="SemiBold"
+                                LineHeight="68"
+                                LineStackingStrategy="BlockLineHeight"
+                                TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+
+                        <!-- weather somewhere: place and time there, temperature, high and low -->
+                        <Grid
+                            x:Name="WeatherPreview"
+                            Height="150"
+                            Padding="20,16,16,16"
+                            Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock x:Name="WeatherPlace" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <StackPanel Margin="-4,0,0,0" Orientation="Horizontal">
+                                    <Button
+                                        x:Name="WeatherF"
+                                        Click="OnWeatherUnitClick"
+                                        Content="°F"
+                                        FontSize="12"
+                                        Style="{StaticResource CardTextButtonStyle}"
+                                        Tag="F" />
+                                    <TextBlock
+                                        VerticalAlignment="Center"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="|" />
+                                    <Button
+                                        x:Name="WeatherC"
+                                        Click="OnWeatherUnitClick"
+                                        Content="°C"
+                                        FontSize="12"
+                                        Style="{StaticResource CardTextButtonStyle}"
+                                        Tag="C" />
+                                </StackPanel>
+                                <StackPanel Margin="0,8,0,0" Orientation="Horizontal" Spacing="14">
+                                    <TextBlock
+                                        x:Name="WeatherTemp"
+                                        FontFamily="Segoe UI Variable Display"
+                                        FontSize="56"
+                                        FontWeight="SemiBold"
+                                        LineHeight="58"
+                                        LineStackingStrategy="BlockLineHeight" />
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock x:Name="WeatherHiLo" />
+                                        <TextBlock x:Name="WeatherCondition" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+                            <TextBlock
+                                x:Name="WeatherIcon"
+                                Grid.Column="1"
+                                Margin="0,0,8,0"
+                                VerticalAlignment="Center"
+                                FontFamily="Segoe UI Emoji"
+                                FontSize="72" />
+                        </Grid>
+
+                        <!-- a stock: symbol, price and change, the day's chart -->
+                        <Grid
+                            x:Name="StockPreview"
+                            Height="200"
+                            Padding="20,14,14,8"
+                            Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Margin="0,0,6,0" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    x:Name="StockSymbol"
+                                    FontSize="20"
+                                    FontWeight="SemiBold"
+                                    TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                    <TextBlock x:Name="StockPrice" FontSize="20" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="StockChange" FontSize="20" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock
+                                x:Name="StockName"
+                                Grid.Row="1"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextTrimming="CharacterEllipsis" />
+                            <Grid
+                                x:Name="StockChart"
+                                Grid.Row="2"
+                                Margin="0,10,6,6"
+                                SizeChanged="OnStockChartSizeChanged">
+                                <Line
+                                    x:Name="StockBaseline"
+                                    Stroke="{ThemeResource TextFillColorTertiaryBrush}"
+                                    StrokeDashArray="2,3"
+                                    StrokeThickness="1" />
+                                <Polyline x:Name="StockLine" StrokeLineJoin="Round" StrokeThickness="1.5" />
+                            </Grid>
+                            <Grid Grid.Row="3" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    x:Name="StockNote"
+                                    VerticalAlignment="Center"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <Button
+                                    x:Name="StockRange"
+                                    Grid.Column="1"
+                                    FontSize="12"
+                                    Style="{StaticResource CardTextButtonStyle}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock x:Name="StockRangeText" Text="1D" />
+                                        <FontIcon
+                                            Margin="0,2,0,0"
+                                            FontSize="9"
+                                            Glyph="&#xE70D;" />
+                                    </StackPanel>
+                                    <Button.Flyout>
+                                        <MenuFlyout x:Name="StockRangeMenu" Closed="OnCardFlyoutClosed" Placement="BottomEdgeAlignedRight" />
+                                    </Button.Flyout>
+                                </Button>
+                            </Grid>
+                        </Grid>
+
+                        <!-- a fact: what it is about, the value, a picture -->
+                        <Grid
+                            x:Name="FactPreview"
+                            MinHeight="128"
+                            Padding="20,16,16,16"
+                            ColumnSpacing="16"
+                            Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock x:Name="FactSubject" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock
+                                    x:Name="FactLabel"
+                                    Margin="0,14,0,0"
+                                    FontSize="12"
+                                    FontWeight="SemiBold"
+                                    TextTrimming="CharacterEllipsis" />
+                                <StackPanel x:Name="FactValueRow" Orientation="Horizontal" Spacing="10">
+                                    <TextBlock
+                                        x:Name="FactValue"
+                                        FontFamily="Segoe UI Variable Display"
+                                        FontSize="28"
+                                        FontWeight="SemiBold"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        x:Name="FactSecondary"
+                                        Margin="0,0,0,5"
+                                        VerticalAlignment="Bottom"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock
+                                    x:Name="FactText"
+                                    Margin="0,6,0,0"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    MaxLines="4"
+                                    TextTrimming="WordEllipsis"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Border
+                                x:Name="FactImageFrame"
+                                Grid.Column="1"
+                                Width="150"
+                                Height="96"
+                                VerticalAlignment="Center"
+                                CornerRadius="6">
+                                <Image x:Name="FactImage" Stretch="UniformToFill" />
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Border>
             </Grid>
-        </Border>
-
         </Grid>
     </Grid>
 </Window>

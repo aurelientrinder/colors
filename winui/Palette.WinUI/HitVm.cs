@@ -1,11 +1,6 @@
 using System.ComponentModel;
-using Microsoft.UI;
-using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
-using Windows.UI;
 
 namespace Palette;
 
@@ -17,80 +12,201 @@ namespace Palette;
 public sealed class HitVm : INotifyPropertyChanged
 {
     private ImageSource? _icon;
+    private bool _selected;
+    private double _previewHeight;
+    private object? _previewContent;
 
-    /// <param name="glyph">Tile glyph overriding the one for the row's kind (action rows).</param>
-    /// <param name="chip">Text of the chip on the right, overriding the kind ("" hides it).</param>
-    public HitVm(Native.Hit h, string query, string? glyph = null, string? chip = null)
+    /// <param name="glyph">Glyph overriding the one for the row's kind (action rows).</param>
+    /// <param name="chip">Text after the subtitle, overriding the kind ("" leaves only the subtitle).</param>
+    public HitVm(Native.Hit h, string? glyph = null, string? chip = null)
     {
+        RawKind = h.Kind;
         Title = h.Title;
         Subtitle = h.Subtitle;
-        // Rows found by meaning say so instead of their type, as do pinned ones; the icon still
-        // shows the type.
-        Kind = chip ?? (h.Related ? "Related" : h.Pinned ? "Pinned" : h.Kind);
         IconKey = h.IconKey;
         CopyText = h.CopyText;
         Path = h.Path;
-        // Calculator / web rows echo the query and related rows matched on meaning, not letters:
-        // highlighting either is just noise.
-        Query = h.Related || h.Kind is "Calculator" or "Web" ? "" : query;
+        IsActionRow = glyph != null;
 
-        (Glyph, Color a, Color b) = h.Kind switch
+        string label = chip ?? (h.Related ? "Related" : h.Pinned ? "Pinned" : KindLabel(h.Kind, h.Path));
+        if (h.Kind == "Calculator")
         {
-            "Command" => ("", Rgb(214, 96, 122), Rgb(168, 62, 92)),
-            "Calculator" => ("", Rgb(160, 110, 236), Rgb(112, 70, 196)),
-            "Web" => ("", Rgb(74, 170, 232), Rgb(40, 122, 196)),
-            "Toggle" => ("", Rgb(46, 178, 120), Rgb(24, 132, 88)),
-            _ => ("", Rgb(122, 130, 150), Rgb(86, 94, 114)),
-        };
-        if (glyph != null) Glyph = glyph;
-        TileBrush = new LinearGradientBrush
+            // The row reads as the sum typed; the answer opens under it (see Preview.cs).
+            int at = h.Subtitle.LastIndexOf(" = ", StringComparison.Ordinal);
+            Title = at > 0 ? h.Subtitle[..at] : h.Title;
+            SubText = "Calculator";
+        }
+        else if (IsToggle)
         {
-            StartPoint = new Windows.Foundation.Point(0, 0),
-            EndPoint = new Windows.Foundation.Point(1, 1),
-            GradientStops =
-            {
-                new GradientStop { Color = a, Offset = 0 },
-                new GradientStop { Color = b, Offset = 1 },
-            },
+            // "Bluetooth is off • [bolt] Action": the badge and its word are separate elements.
+            SubText = h.Subtitle.Length > 0 ? h.Subtitle + " •" : "";
+        }
+        else
+        {
+            SubText = h.Subtitle.Length > 0 && label.Length > 0 ? $"{h.Subtitle} • {label}" : h.Subtitle + label;
+        }
+
+        Glyph = glyph ?? GlyphFor(h.Kind, h.Title);
+        (SecondGlyph, SecondLabel, Reveals) = h.Kind switch
+        {
+            "Toggle" => ("\uE751", "Apply", false),
+            "Command" => ("\uE751", "Run", false),
+            "Calculator" => ("\uE8C8", "Copy result", false),
+            "Window" => ("\uE8A7", "Switch to", false),
+            "Web" => ("\uE8A7", "Search the web", false),
+            "File" or "Folder" or "App" => ("\uE8A7", "Open file location", true),
+            _ => ("\uE8A7", "Open", false),
         };
     }
 
-    private static Color Rgb(byte r, byte g, byte b) => Color.FromArgb(255, r, g, b);
+    /// <summary>The line left after a quick setting ran: a check, what was done, and Undo.</summary>
+    public static HitVm Status(string title, string subtitle, bool canUndo)
+    {
+        var vm = new HitVm(new Native.Hit(title, subtitle, "Status", null, null), chip: "")
+        {
+            IsStatus = true,
+            CanUndo = canUndo,
+        };
+        vm.SubText = subtitle;
+        vm.SecondGlyph = "\uE7A7";
+        vm.SecondLabel = "Undo";
+        return vm;
+    }
+
+    /// <summary>
+    /// The row a web answer (weather, a stock, a fact) opens under: the query, to be searched on the
+    /// web. It is the app's own, not the engine's, so it has no engine index or actions.
+    /// </summary>
+    public static HitVm ForAnswer(WebAnswers.Answer answer, string url)
+    {
+        var vm = new HitVm(new Native.Hit(answer.Query.Trim(), "Search the web", "Web", null, null), chip: "")
+        {
+            IsAnswer = true,
+            Answer = answer,
+            AnswerUrl = url,
+        };
+        vm.SubText = "Search the web • Default browser";
+        vm.SecondLabel = "Open in browser";
+        return vm;
+    }
+
+    private static string KindLabel(string kind, string? path) => kind switch
+    {
+        "File" when System.IO.Path.GetExtension(path ?? "") is { Length: > 1 } ext => ext[1..].ToUpperInvariant() + " File",
+        "Setting" => "Settings",
+        "Toggle" or "Status" => "",
+        _ => kind,
+    };
+
+    /// <summary>Glyph for rows that never get a shell icon; quick settings get the setting's own.</summary>
+    private static string GlyphFor(string kind, string title)
+    {
+        if (kind == "Toggle")
+        {
+            string t = title.ToLowerInvariant();
+            if (t.Contains("dark mode")) return "\uE771";      // Personalize
+            if (t.Contains("wi-fi")) return "\uE701";
+            if (t.Contains("bluetooth")) return "\uE702";
+            if (t.Contains("brightness")) return "\uE706";
+            if (t.Contains("unmute") || t.Contains("volume")) return "\uE767";
+            if (t.Contains("mute")) return "\uE74F";
+            return "\uE945";
+        }
+        return kind switch
+        {
+            "Command" => "\uE756",
+            "Calculator" => "\uE8EF",
+            "Web" => "\uE721",
+            "Window" => "\uE737",
+            _ => "\uE7C3",
+        };
+    }
 
     /// <summary>Turn this row into <paramref name="o"/>, keeping the object (and so its list container).</summary>
     public void CopyFrom(HitVm o)
     {
+        RawKind = o.RawKind;
         Title = o.Title;
         Subtitle = o.Subtitle;
-        Kind = o.Kind;
+        SubText = o.SubText;
         CopyText = o.CopyText;
         Path = o.Path;
-        Query = o.Query;
         Glyph = o.Glyph;
-        TileBrush = o.TileBrush;
+        SecondGlyph = o.SecondGlyph;
+        SecondLabel = o.SecondLabel;
+        Reveals = o.Reveals;
+        IsActionRow = o.IsActionRow;
         if (IconKey != o.IconKey) _icon = o._icon;
         IconKey = o.IconKey;
-        Rev++;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));   // every property
     }
 
-    /// <summary>Bumped by <see cref="CopyFrom"/>, so the highlighted title redraws.</summary>
-    public int Rev { get; private set; }
-
     /// <summary>Would this row look identical to <paramref name="o"/>? (Then the list can keep it.)</summary>
     public bool SameRow(HitVm o) =>
-        Title == o.Title && Subtitle == o.Subtitle && Kind == o.Kind && IconKey == o.IconKey && Query == o.Query && Path == o.Path;
+        RawKind == o.RawKind && Title == o.Title && SubText == o.SubText && IconKey == o.IconKey && Path == o.Path;
 
+    /// <summary>The engine's kind ("File", "Toggle", ...).</summary>
+    public string RawKind { get; private set; }
     public string Title { get; private set; }
     public string Subtitle { get; private set; }
-    public string Kind { get; private set; }
+    /// <summary>The second line: subtitle and kind ("C:\Docs • PDF File").</summary>
+    public string SubText { get; private set; }
     public string? IconKey { get; private set; }
     public string? CopyText { get; private set; }
     /// <summary>Full path when the row is a file (it gets a preview).</summary>
     public string? Path { get; private set; }
-    public string Query { get; private set; }
     public string Glyph { get; private set; }
-    public Brush TileBrush { get; private set; }
+    /// <summary>The button beside "More options" on the selected row.</summary>
+    public string SecondGlyph { get; private set; }
+    public string SecondLabel { get; private set; }
+    /// <summary>The second button opens the file location rather than the result.</summary>
+    public bool Reveals { get; private set; }
+    public bool IsToggle => RawKind == "Toggle";
+    public bool IsCalc => RawKind == "Calculator";
+    public bool IsStatus { get; private set; }
+    public bool CanUndo { get; private set; }
+    /// <summary>A web answer's row (<see cref="ForAnswer"/>); it sits above the engine's rows.</summary>
+    public bool IsAnswer { get; private set; }
+    public WebAnswers.Answer? Answer { get; set; }
+    public string? AnswerUrl { get; private set; }
+    /// <summary>A row of a result's action list (no buttons of its own).</summary>
+    public bool IsActionRow { get; private set; }
+
+    public bool Selected
+    {
+        get => _selected;
+        set
+        {
+            if (_selected == value) return;
+            _selected = value;
+            Changed(nameof(ButtonsOpacity));
+            Changed(nameof(ButtonsShown));
+        }
+    }
+
+    /// <summary>Height of the preview opened under this row (animated; 0 when closed).</summary>
+    public double PreviewHeight
+    {
+        get => _previewHeight;
+        set
+        {
+            if (_previewHeight == value) return;
+            _previewHeight = value;
+            Changed(nameof(PreviewHeight));
+        }
+    }
+
+    /// <summary>The shared preview pane while it belongs to this row, else null.</summary>
+    public object? PreviewContent
+    {
+        get => _previewContent;
+        set
+        {
+            if (_previewContent == value) return;
+            _previewContent = value;
+            Changed(nameof(PreviewContent));
+        }
+    }
 
     public ImageSource? Icon
     {
@@ -98,103 +214,30 @@ public sealed class HitVm : INotifyPropertyChanged
         set
         {
             _icon = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Icon)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IconVisibility)));
+            Changed(nameof(Icon));
+            Changed(nameof(IconOpacity));
+            Changed(nameof(IconVisibility));
+            Changed(nameof(GlyphVisibility));
         }
     }
 
-    public Visibility IconVisibility => _icon != null ? Visibility.Visible : Visibility.Collapsed;
+    private static Visibility Vis(bool b) => b ? Visibility.Visible : Visibility.Collapsed;
 
-    public Visibility ChipVisibility => Kind.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility IconVisibility => Vis(IconKey != null && !IsStatus);
+    /// <summary>The shell icon fades in when it arrives rather than popping.</summary>
+    public double IconOpacity => _icon != null ? 1 : 0;
+    /// <summary>Glyph, only for rows that never get a shell icon.</summary>
+    public Visibility GlyphVisibility => Vis(IconKey == null && !IsStatus);
+    public Visibility StatusVisibility => Vis(IsStatus);
+    public Visibility ActionVisibility => Vis(IsToggle);
+    public Visibility SubTextVisibility => Vis(SubText.Length > 0);
+    /// <summary>Whether the row has buttons at all; they fade in on selection (<see cref="ButtonsOpacity"/>).</summary>
+    public Visibility ButtonsVisibility => Vis(IsStatus ? CanUndo : !IsActionRow);
+    public bool ButtonsShown => IsStatus || _selected;
+    public double ButtonsOpacity => ButtonsShown ? 1 : 0;
+    public Visibility MoreVisibility => Vis(!IsStatus && !IsAnswer);
 
-    /// <summary>Glyph tile, only for kinds that never get a shell icon.</summary>
-    public Visibility TileVisibility => IconKey == null ? Visibility.Visible : Visibility.Collapsed;
+    private void Changed(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
     public event PropertyChangedEventHandler? PropertyChanged;
-}
-
-/// <summary>
-/// Attached property that fills a TextBlock with the row title, bolding the characters
-/// the query matched (whole-substring match first, then in-order letters per word).
-/// </summary>
-public static class Hl
-{
-    public static readonly DependencyProperty VmProperty =
-        DependencyProperty.RegisterAttached("Vm", typeof(HitVm), typeof(Hl), new PropertyMetadata(null, OnVmChanged));
-
-    public static HitVm? GetVm(DependencyObject d) => (HitVm?)d.GetValue(VmProperty);
-    public static void SetVm(DependencyObject d, HitVm? v) => d.SetValue(VmProperty, v);
-
-    /// <summary>The row's <see cref="HitVm.Rev"/>: changes when the row was updated in place.</summary>
-    public static readonly DependencyProperty RevProperty =
-        DependencyProperty.RegisterAttached("Rev", typeof(int), typeof(Hl), new PropertyMetadata(0, OnRevChanged));
-
-    public static int GetRev(DependencyObject d) => (int)d.GetValue(RevProperty);
-    public static void SetRev(DependencyObject d, int v) => d.SetValue(RevProperty, v);
-
-    private static void OnVmChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => Render(d, e.NewValue as HitVm);
-
-    private static void OnRevChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => Render(d, GetVm(d));
-
-    private static void Render(DependencyObject d, HitVm? vm)
-    {
-        if (d is not TextBlock tb) return;
-        tb.Inlines.Clear();
-        if (vm == null) return;
-
-        string title = vm.Title;
-        bool[]? mask = Mask(title, vm.Query);
-        if (mask == null)
-        {
-            tb.Inlines.Add(new Run { Text = title });
-            return;
-        }
-
-        int i = 0;
-        while (i < title.Length)
-        {
-            int j = i;
-            while (j < title.Length && mask[j] == mask[i]) j++;
-            var run = new Run { Text = title[i..j] };
-            if (mask[i]) run.FontWeight = FontWeights.Bold;
-            tb.Inlines.Add(run);
-            i = j;
-        }
-    }
-
-    private static bool[]? Mask(string title, string query)
-    {
-        if (string.IsNullOrWhiteSpace(query) || title.Length == 0) return null;
-        var mask = new bool[title.Length];
-        bool any = false;
-
-        foreach (var word in query.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-        {
-            int at = title.IndexOf(word, StringComparison.OrdinalIgnoreCase);
-            if (at >= 0)
-            {
-                for (int k = 0; k < word.Length; k++) mask[at + k] = true;
-                any = true;
-                continue;
-            }
-
-            // Fuzzy: letters in order. Skip the word if the title doesn't contain all of them
-            // (the file matched on its folder path, not its name), or if they are so spread out
-            // that bolding them would just scatter bold letters across the whole name.
-            var hit = new List<int>(word.Length);
-            int pos = 0;
-            foreach (char c in word)
-            {
-                char cu = char.ToUpperInvariant(c);
-                int p = pos;
-                while (p < title.Length && char.ToUpperInvariant(title[p]) != cu) p++;
-                if (p >= title.Length) { hit.Clear(); break; }
-                hit.Add(p);
-                pos = p + 1;
-            }
-            if (hit.Count > 0 && hit[^1] - hit[0] + 1 > word.Length * 2 + 2) hit.Clear();
-            foreach (int p in hit) { mask[p] = true; any = true; }
-        }
-        return any ? mask : null;
-    }
 }

@@ -391,6 +391,44 @@ pub unsafe extern "C" fn pc_icon(gen: u64, index: i32, buf: *mut u8) -> i32 {
     }
 }
 
+/// Write the icon for `key` (a hit's `icon_key`) into `buf` like `pc_icon`, from any generation.
+///
+/// # Safety
+/// `key` must be a NUL-terminated UTF-8 string and `buf` as for `pc_icon`.
+#[no_mangle]
+pub unsafe extern "C" fn pc_icon_key(key: *const c_char, buf: *mut u8) -> i32 {
+    if key.is_null() || buf.is_null() {
+        return 0;
+    }
+    let Ok(key) = CStr::from_ptr(key).to_str() else { return 0 };
+    match iconsrc::icon_rgba_for_key(key) {
+        Some(px) => {
+            std::ptr::copy_nonoverlapping(px.as_ptr(), buf, px.len());
+            1
+        }
+        None => 0,
+    }
+}
+
+/// The distinct icon keys of every app, setting and folder in the catalog, as a JSON array of
+/// strings, for warming an icon cache. Free with `pc_free`.
+#[no_mangle]
+pub extern "C" fn pc_icon_keys() -> *mut c_char {
+    let Some(e) = ENGINE.get() else { return into_c("[]".into()) };
+    let mut seen = std::collections::HashSet::new();
+    let keys: Vec<String> = e
+        .catalog
+        .read()
+        .unwrap()
+        .items
+        .iter()
+        .filter(|i| matches!(i.hit.kind, crate::model::Kind::App | crate::model::Kind::Setting | crate::model::Kind::Folder))
+        .filter_map(|i| iconsrc::icon_key(&i.hit))
+        .filter(|k| seen.insert(k.clone()))
+        .collect();
+    into_c(serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into()))
+}
+
 /// 1 if Palette is registered to start at sign-in.
 #[no_mangle]
 pub extern "C" fn pc_autostart_get() -> i32 {

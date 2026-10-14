@@ -46,6 +46,12 @@ public static class Native
     private static extern unsafe int pc_icon(ulong gen, int index, byte* buf);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern unsafe int pc_icon_key([MarshalAs(UnmanagedType.LPUTF8Str)] string key, byte* buf);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_icon_keys();
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern int pc_icon_size();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -166,6 +172,30 @@ public static class Native
         fixed (byte* b = buf)
         {
             return pc_icon(gen, index, b) != 0 ? buf : null;
+        }
+    }
+
+    /// <summary>The icon a hit's <see cref="Hit.IconKey"/> stands for, from any generation, or null.</summary>
+    public static unsafe byte[]? Icon(string key)
+    {
+        var buf = new byte[IconSize * IconSize * 4];
+        fixed (byte* b = buf)
+        {
+            return pc_icon_key(key, b) != 0 ? buf : null;
+        }
+    }
+
+    /// <summary>The icon keys of every app, setting and folder, for warming the cache.</summary>
+    public static List<string> IconKeys()
+    {
+        IntPtr p = pc_icon_keys();
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(Marshal.PtrToStringUTF8(p) ?? "[]") ?? new();
+        }
+        finally
+        {
+            pc_free(p);
         }
     }
 }

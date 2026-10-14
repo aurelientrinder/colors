@@ -19,8 +19,10 @@ namespace Palette;
 
 public sealed partial class MainWindow : Window
 {
-    // PadDip = list margins (6+6) + slack; the divider (1) and footer (36) are added when rows exist.
-    private const double WidthDip = 680, InputDip = 64, RowDip = 52, PadDip = 16, DividerDip = 1, FooterDip = 36;
+    // Measured on the new Windows Search: a 500-wide panel, 56-high rows 4 apart (RowDip is the
+    // pitch), the list 10 above and 4 below its rows (PadDip), and a 100-high search card with 6
+    // around it (SearchDip). The list never grows past MaxBodyDip; it scrolls instead.
+    private const double WidthDip = 500, SearchDip = 112, RowDip = 60, PadDip = 14, MaxBodyDip = 600;
 
     private readonly AppWindow _aw;
     private readonly IntPtr _hwnd;
@@ -37,7 +39,12 @@ public sealed partial class MainWindow : Window
 
     private readonly Dictionary<string, WriteableBitmap> _iconCache = new();
     private readonly HashSet<string> _iconPending = new();
-    private readonly BlockingCollection<(ulong gen, int index, string key)> _iconJobs = new();
+    private readonly HashSet<string> _iconFailed = new();      // no icon to be had: rows keep their glyph
+    private readonly HashSet<string> _iconWarmOnly = new();    // pending in the warm-up queue only
+    private readonly ConcurrentDictionary<string, bool> _iconFetched = new();   // icon threads skip these
+    // Icons for rows on screen come first; the warm-up of every app's icon fills in behind them.
+    private readonly BlockingCollection<string> _iconJobs = new(), _iconWarm = new();
+    private const int IconThreads = 4;
 
     public MainWindow()
     {
@@ -61,9 +68,10 @@ public sealed partial class MainWindow : Window
         int round = 2; // DWMWCP_ROUND
         Win32.DwmSetWindowAttribute(_hwnd, 33, ref round, sizeof(int));
 
+        InitMotion();
+        InitAnswers();
         Activated += OnActivated;
         Input.Loaded += (_, _) => HideClearButton();
-        ResultsList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnListWheel), handledEventsToo: true);
 
         // Created off-screen and hidden; the hotkey brings it up.
         _aw.MoveAndResize(new RectInt32(-32000, -32000, 100, 100));
@@ -84,10 +92,12 @@ public sealed partial class MainWindow : Window
                 new("Open with the Windows key", () => _settings.WinKeyOpens, on => { _settings.WinKeyOpens = on; _settings.Save(); }),
                 new("Replace Windows Search (Win+S, taskbar search)", () => _settings.ReplaceSearch, on => { _settings.ReplaceSearch = on; _settings.Save(); }),
                 new("Hide the taskbar search box", Settings.TaskbarSearchHidden, on => _settings.ApplyTaskbarSearch(on)),
+                new("Answers from the web (weather, stocks, facts)", () => _settings.WebAnswers, on => { _settings.WebAnswers = on; _settings.Save(); }),
             });
 
         new Thread(SearchLoop) { IsBackground = true, Name = "search" }.Start();
-        new Thread(IconLoop) { IsBackground = true, Name = "icons" }.Start();
+        for (int i = 0; i < IconThreads; i++) new Thread(IconLoop) { IsBackground = true, Name = "icons" }.Start();
+        new Thread(WarmIcons) { IsBackground = true, Name = "icon-warmup", Priority = ThreadPriority.BelowNormal }.Start();
         new Thread(SemanticLoop) { IsBackground = true, Name = "semantic" }.Start();
         // Highest: it runs the keyboard hook, which Windows silently unhooks if it answers late.
         new Thread(HotkeyLoop) { IsBackground = true, Name = "hotkey", Priority = ThreadPriority.Highest }.Start();
@@ -157,18 +167,22 @@ public sealed partial class MainWindow : Window
     {
         double s = Scale;
         int rows = Items.Count;
-        var vis = rows > 0 ? Visibility.Visible : Visibility.Collapsed;
-        Divider.Visibility = vis;
-        Footer.Visibility = vis;
-        double need = rows > 0 ? Math.Min(rows, MaxRows) * RowDip + PadDip : 0;   // more rows scroll
-        // While typing the list only grows: result counts change with every keystroke, and Related
-        // rows arrive a moment after each pause, so following them exactly makes the panel bounce.
-        // It shrinks to fit once typing settles (HoldHeight).
-        _listBodyDip = _holdHeight && rows > 0 ? Math.Max(need, _listBodyDip) : need;
-        // Rows arriving or leaving while the list is up (Related rows, a narrower match) glide the
-        // panel to its new height; a jump would show the window shape a frame ahead of the rows.
-        if (_visible && AnimationsOn && _listShownDip > 0 && _listBodyDip > 0 && _listShownDip != _listBodyDip) EnsureFrames();
+        // More rows scroll; a leading answer shows on its own with the "more results" line.
+        double need = _condensedRows > 0 ? _condensedRows * RowDip + PadDip + HintDip
+            : rows > 0 ? Math.Min(rows, MaxRows) * RowDip + PadDip : 0;
+        // While typing the list does not shrink below the instant results' rows: their count can
+        // dip for a keystroke, and following it exactly makes the panel bounce. It shrinks to fit
+        // once typing settles (HoldHeight). Room for the Related rows is not held: they leave when
+        // typing resumes and come back after the next pause, and holding their place in between
+        // just shows empty space.
+        double held = Math.Min(_listBodyDip, InstantRows * RowDip + PadDip);
+        _listBodyDip = _holdHeight && rows > 0 && _condensedRows == 0 ? Math.Max(need, held) : need;
+        // Rows arriving or leaving while the list is up (Related rows, a narrower match, no match at
+        // all) glide the panel to its new height; a jump would show the window shape a frame ahead
+        // of the rows. Only the first rows after opening appear at once: the pop covers them.
+        if (_visible && AnimationsOn && _listSettled && _listShownDip != _listBodyDip) EnsureFrames();
         else _listShownDip = _listBodyDip;
+        if (rows > 0) _listSettled = true;
 
         if (recenter)
         {
@@ -184,9 +198,9 @@ public sealed partial class MainWindow : Window
             var (ox, oy, cw, ch) = Win32.ClientArea(_hwnd);
             int ncw = Math.Max(0, _aw.Size.Width - cw) + ox, nch = Math.Max(0, _aw.Size.Height - ch) + oy;
             int w = (int)(WidthDip * s) + ncw;
-            int ph = (int)((InputDip + DividerDip + MaxRows * RowDip + PadDip + PreviewDip + FooterDip) * s) + nch;
+            int ph = (int)((SearchDip + MaxBodyDip) * s) + nch;
             // Anchored to the bottom of the work area (above the taskbar), with the panel growing upward.
-            int gap = (int)(24 * s);
+            int gap = (int)(12 * s);
             ph = Math.Min(ph, wa.Height - 2 * gap);
             int x = wa.X + (wa.Width - w) / 2;
             int y = wa.Y + wa.Height - gap - ph;
@@ -196,6 +210,7 @@ public sealed partial class MainWindow : Window
     }
 
     private const int MaxRows = 9;            // rows the panel shows; longer lists (All apps) scroll
+    private const int InstantRows = 5;        // rows a search returns before Related ones (the engine's MAX_HITS)
     private bool _holdHeight;                 // typing: the list height may grow but not shrink
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _settle;
 
@@ -219,31 +234,33 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Select the first row once something is typed, so Enter opens the best match. With an empty
-    /// query (the most-used list on open) nothing is selected until an arrow key picks a row.
+    /// Select the first row, so Enter opens the best match (on the home view too, as Windows does).
     /// Touches the selection only when it is not already as wanted.
     /// </summary>
     private void SelectFirst()
     {
-        int want = Items.Count > 0 && !string.IsNullOrWhiteSpace(Input.Text) ? 0 : -1;
+        int want = Items.Count > 0 ? 0 : -1;
         if (ResultsList.SelectedIndex != want) ResultsList.SelectedIndex = want;
+        UpdateOpenButton();   // the selected row may have been replaced in place
     }
     private double _listBodyDip;              // height the result rows need
     private double _listShownDip;             // height the list currently has on screen (follows _listBodyDip)
+    private bool _listSettled;                // rows have been shown since opening: height changes glide
 
     // ------------------------------------------------------------ shape + animations
     //
     // The window is clipped to a rounded rectangle with a window region. That gives corners far
     // rounder than DWM's fixed 8 px and hides any system border; DWM's own rounding is switched
     // off. Opening "pops": the window fades in while the content grows from 92% to full size with
-    // an ease-out. Selecting a file opens its preview under its row: the rows below slide down and
-    // the panel grows, and both reverse when the selection moves to something else.
+    // an ease-out. Selecting a file opens its preview inside its row's card: the card grows, pushing
+    // the rows below down, and shrinks back when the selection moves to something else.
 
-    private const double CornerDip = 22, PopMs = 230, PreviewMs = 200, ListMs = 45;
-    private const double PreviewDip = 234;    // the inline preview, with its gaps
+    private const double CornerDip = 24, PopMs = 230, PreviewMs = 200, ListMs = 45, HideMs = 110;
     private readonly System.Diagnostics.Stopwatch _popClock = new();
     private readonly System.Diagnostics.Stopwatch _frameClock = System.Diagnostics.Stopwatch.StartNew();
     private double _popT = 1;                 // pop progress, 0..1
+    private readonly System.Diagnostics.Stopwatch _hideClock = new();
+    private double _hideT;                    // fade-out progress, 0..1 (the window is hidden at 1)
     private double _pvU, _pvTarget;           // preview progress (linear) and where it is heading
     private double _lastFrameMs;
     private bool _animating;
@@ -314,8 +331,18 @@ public sealed partial class MainWindow : Window
             if (Math.Abs(_listBodyDip - _listShownDip) < 0.5) _listShownDip = _listBodyDip;
             else busy = true;
         }
+        busy |= StepClosingPreviews(dt);
+        bool hidden = false;
+        if (_hideClock.IsRunning)
+        {
+            _hideT = Math.Min(1, _hideClock.Elapsed.TotalMilliseconds / HideMs);
+            hidden = _hideT >= 1;
+            busy |= !hidden;
+        }
 
         ApplyShape();
+        busy |= StepHighlight(dt);
+        if (hidden) FinishHide();
         if (!busy)
         {
             CompositionTarget.Rendering -= OnFrame;
@@ -333,21 +360,15 @@ public sealed partial class MainWindow : Window
 
         // Preview: ease-in-out cubic on its linear progress.
         double u = _pvU;
-        double p = u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(-2 * u + 2, 3) / 2;
+        double p = EaseInOut(u);
         bool rows = Items.Count > 0;
-        double pvDip = rows ? PreviewDip * p : 0;
-        double bodyDip = rows ? _listShownDip + pvDip : 0;
-        Body.Height = bodyDip;
-        // The preview sits under its row; the rows below slide down to make room. It is clipped to
-        // the room made so far, so it unrolls rather than overlapping the rows below.
-        ShiftRows(pvDip);
-        // The list is flipped, so "under" a row (in list order) is visually above it: the pane is
-        // measured from the bottom of the body and unrolls upward from the row.
-        PreviewPane.Margin = new Thickness(14, 0, 14, 6 + (_pvRow + 1) * RowDip + 4);
-        double room = Math.Max(0, pvDip - 8);
-        PreviewPane.Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 224 - room, 4096, room) };
+        // The pane is laid out at full height inside its row and clipped to the room opened so far,
+        // so it unrolls rather than squashing.
+        double pvDip = rows && _pvVm != null ? _pvFull * p : 0;
+        if (_pvVm != null) _pvVm.PreviewHeight = pvDip;
         PreviewPane.Opacity = p * p;
-        PreviewPane.Visibility = p > 0 ? Visibility.Visible : Visibility.Collapsed;
+        double bodyDip = Math.Min(_listShownDip + pvDip + ClosingPreviewDip(), MaxBodyDip);
+        Body.Height = bodyDip;
 
         // Pop: the whole window fades in (a window-level alpha that DWM applies for free) while the
         // content grows from 92% with an ease-out quartic on the GPU. The glass, rim and shadow
@@ -356,8 +377,12 @@ public sealed partial class MainWindow : Window
         double ease = 1 - Math.Pow(1 - _popT, 4);
         double k = 0.92 + 0.08 * ease;
         double alpha = Math.Clamp(_popT / 0.45, 0, 1);
+        // Hiding fades out and settles back a little, the pop in reverse but quicker.
+        double hide = _hideT * _hideT;
+        alpha *= 1 - hide;
+        k *= 1 - 0.03 * hide;
 
-        double h = Math.Min((InputDip + (rows ? DividerDip + bodyDip + FooterDip : 0)) * s, wh);
+        double h = Math.Min((SearchDip + bodyDip) * s, wh);
         double x0 = 0, cx = WidthDip / 2 * s;
         // Outer edges of the panel, in window pixels. The region is cut a pixel inside them, and the
         // shadow window paints an antialiased rim over the region's stair-stepped edge.
@@ -387,29 +412,6 @@ public sealed partial class MainWindow : Window
         RootXf.ScaleX = RootXf.ScaleY = k;
     }
 
-    private double _rowShift;                 // how far the rows under the preview are pushed down
-
-    /// <summary>Push the rows below the preview's row down by <paramref name="dip"/>.</summary>
-    private void ShiftRows(double dip)
-    {
-        _rowShift = dip;
-        for (int i = 0; i < Items.Count; i++)
-        {
-            if (ResultsList.ContainerFromIndex(i) is UIElement c) ShiftRow(c, i);
-        }
-    }
-
-    private void ShiftRow(UIElement c, int index)
-    {
-        double y = index > _pvRow ? _rowShift : 0;
-        if (c.RenderTransform is TranslateTransform t) t.Y = y;
-        else if (y != 0) c.RenderTransform = new TranslateTransform { Y = y };
-    }
-
-    /// <summary>Rows realised later (the list grew) take the current shift too.</summary>
-    private void OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args) =>
-        ShiftRow(args.ItemContainer, args.ItemIndex);
-
     private (int, int, int, int) _region;     // the window region last set
     private int _windowAlpha = -1;            // the window alpha last set
 
@@ -438,6 +440,13 @@ public sealed partial class MainWindow : Window
     private void ShowPalette()
     {
         App.Log("ShowPalette");
+        _hideClock.Stop();    // reopened while fading out
+        _hideT = 0;
+        Root.IsHitTestVisible = true;
+        _listSettled = false;
+        _expandedQuery = null;
+        _answerCts?.Cancel();
+        ResetMotion();
         var fg = Win32.GetForegroundWindow();
         _previousForeground = fg != _hwnd ? fg : IntPtr.Zero;
         _reassertTries = 0;
@@ -450,12 +459,6 @@ public sealed partial class MainWindow : Window
         Resize(recenter: true);
         _shownAt = DateTime.UtcNow;
         _visible = true;
-        // Reads a status file: keep disk access out of the show path.
-        ThreadPool.QueueUserWorkItem(_ =>
-        {
-            string status = Native.SemanticStatus();
-            DispatcherQueue.TryEnqueue(() => FooterStatus.Text = status);
-        });
         StartPop();
         _aw.Show();
         // The presenter can put its frame styles back on Show; a frame is what Windows draws the
@@ -487,8 +490,18 @@ public sealed partial class MainWindow : Window
         if (!_visible) return;
         _visible = false;
         _lastHidden = DateTime.UtcNow;
-        _aw.Hide();
-        _shadow.Hide();
+        if (AnimationsOn)
+        {
+            // Fade out, then hide (FinishHide). Clicks fall through meanwhile.
+            Root.IsHitTestVisible = false;
+            _hideT = 0;
+            _hideClock.Restart();
+            EnsureFrames();
+        }
+        else
+        {
+            FinishHide();
+        }
 
         // Hiding hands focus to whatever Windows picks (often the desktop), not the app you were in.
         var prev = _previousForeground;
@@ -497,6 +510,14 @@ public sealed partial class MainWindow : Window
         {
             Win32.SetForegroundWindow(prev);
         }
+    }
+
+    private void FinishHide()
+    {
+        _hideClock.Stop();
+        if (_visible) return;   // reopened in the meantime
+        _aw.Hide();
+        _shadow.Hide();
     }
 
     private void OnActivated(object sender, WindowActivatedEventArgs e)
@@ -581,7 +602,8 @@ public sealed partial class MainWindow : Window
             ShowActions(Input.Text);
             return;
         }
-        if (_view == View.AllApps) SetView(View.Results, SearchPlaceholder);   // typing searches everything
+        if (_view is View.AllApps or View.Done) SetView(View.Results, SearchPlaceholder);   // typing searches everything
+        _previewOn = false;   // a new search starts without a preview; Tab opens it again
         Enqueue(Input.Text);
     }
 
@@ -600,11 +622,18 @@ public sealed partial class MainWindow : Window
         int n = Items.Count;
         int sel = ResultsList.SelectedIndex;
         bool empty = Input.Text.Length == 0;
+        bool canAct = _view is View.Results or View.AllApps && n > 0;
         switch (e.Key)
         {
-            case VirtualKey.Tab when !Held(VirtualKey.Shift) && _view != View.Actions && n > 0:
-            case VirtualKey.Application when _view != View.Actions && n > 0:
-            case VirtualKey.F10 when Held(VirtualKey.Shift) && _view != View.Actions && n > 0:
+            case VirtualKey.Tab when !Held(VirtualKey.Shift) && canAct:
+                // A tap shows or hides the preview (on key up); held for a second, the actions.
+                // Auto-repeat sends more key downs while it is held (KeyStatus.WasKeyDown is not
+                // reliable for them), and each must not restart the second.
+                if (!_tabDown) StartTabHold();
+                e.Handled = true;
+                return;
+            case VirtualKey.Application when canAct:
+            case VirtualKey.F10 when Held(VirtualKey.Shift) && canAct:
                 if (sel < 0) ResultsList.SelectedIndex = sel = 0;
                 EnterActions(sel);
                 e.Handled = true;
@@ -626,14 +655,14 @@ public sealed partial class MainWindow : Window
         }
         switch (e.Key)
         {
-            case VirtualKey.Down when n > 0:
-                // The list is drawn upside down: index 0 is the row next to the search field, so
-                // Up (visually up) goes to a higher index and Down comes back toward the field.
-                ResultsList.SelectedIndex = ResultsList.SelectedIndex < 0 ? 0 : (ResultsList.SelectedIndex - 1 + n) % n;
+            case VirtualKey.Down when n > 0 && _view != View.Done:
+                Expand();   // a condensed list opens up as the selection moves into it
+                ResultsList.SelectedIndex = sel < 0 ? 0 : (sel + 1) % n;
                 e.Handled = true;
                 break;
-            case VirtualKey.Up when n > 0:
-                ResultsList.SelectedIndex = ResultsList.SelectedIndex < 0 ? 0 : (ResultsList.SelectedIndex + 1) % n;
+            case VirtualKey.Up when n > 0 && _view != View.Done:
+                Expand();
+                ResultsList.SelectedIndex = sel < 0 ? 0 : (sel - 1 + n) % n;
                 e.Handled = true;
                 break;
             case VirtualKey.Enter:
@@ -645,10 +674,8 @@ public sealed partial class MainWindow : Window
                 else if (Held(VirtualKey.Control) && sel >= 0)
                 {
                     // Ctrl+Shift+Enter runs as administrator, Ctrl+Enter opens the file location
-                    // (an app's too); either falls back to the plain behaviour where it does not apply.
-                    string id = Held(VirtualKey.Shift) ? "admin" : "location";
-                    if (Native.Act(_gen, sel, id) == Native.ActResult.Hide) HidePalette(restoreFocus: false);
-                    else Launch(sel, reveal: id == "location");
+                    // (an app's too).
+                    ActOrLaunch(sel, Held(VirtualKey.Shift) ? "admin" : "location");
                 }
                 else
                 {
@@ -662,9 +689,55 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private const int TabHoldMs = 1000;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _tabHold;
+    private bool _tabDown;                    // Tab went down in a view with rows and is not yet up
+
+    private void StartTabHold()
+    {
+        _tabDown = true;
+        if (_tabHold == null)
+        {
+            _tabHold = DispatcherQueue.CreateTimer();
+            _tabHold.Interval = TimeSpan.FromMilliseconds(TabHoldMs);
+            _tabHold.IsRepeating = false;
+            _tabHold.Tick += (_, _) =>
+            {
+                if (!_tabDown) return;
+                _tabDown = false;   // the key up that follows does nothing
+                if (!_visible || _view is not (View.Results or View.AllApps) || Items.Count == 0) return;
+                if (ResultsList.SelectedIndex < 0) ResultsList.SelectedIndex = 0;
+                EnterActions(ResultsList.SelectedIndex);
+            };
+        }
+        _tabHold.Stop();
+        _tabHold.Start();
+    }
+
+    private void OnInputKeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Tab || !_tabDown) return;
+        _tabDown = false;
+        _tabHold?.Stop();
+        e.Handled = true;
+        if (_view is View.Results or View.AllApps) TogglePreview();
+    }
+
     private void OnItemClick(object sender, ItemClickEventArgs e)
     {
         Launch(Items.IndexOf((HitVm)e.ClickedItem), reveal: false);
+    }
+
+    /// <summary>Run action <paramref name="id"/> on a row, falling back to the plain behaviour where it does not apply.</summary>
+    private void ActOrLaunch(int index, string id)
+    {
+        if (index >= 0 && index < Items.Count && Items[index].IsAnswer)
+        {
+            Launch(index, reveal: false);
+            return;
+        }
+        if (Native.Act(_gen, index - AnswerOffset, id) == Native.ActResult.Hide) HidePalette(restoreFocus: false);
+        else Launch(index, reveal: id == "location");
     }
 
     private void Launch(int index, bool reveal)
@@ -674,8 +747,23 @@ public sealed partial class MainWindow : Window
             RunAction(index);
             return;
         }
-        if (index < 0 || index >= Items.Count) return;
-        LaunchHit(_gen, index, Items[index].CopyText, reveal);
+        if (_view == View.Done || index < 0 || index >= Items.Count) return;
+        var vm = Items[index];
+        if (vm.IsAnswer)
+        {
+            OpenUrl(vm.AnswerUrl!);
+            HidePalette(restoreFocus: false);
+            return;
+        }
+        int engine = index - AnswerOffset;
+        if (vm.IsToggle && !reveal)
+        {
+            // A quick setting changes in place: say so and stay open, with Undo.
+            Native.Launch(_gen, engine, reveal: false);
+            ShowDone(vm.Title);
+            return;
+        }
+        LaunchHit(_gen, engine, vm.CopyText, reveal);
     }
 
     private void LaunchHit(ulong gen, int index, string? copyText, bool reveal)
@@ -719,19 +807,28 @@ public sealed partial class MainWindow : Window
 
     private void ApplyResults(int version, string query, Native.SearchResult r)
     {
-        if (version != _queryVersion || !_visible || _view == View.Actions) return;
+        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done) return;
         _gen = r.Gen;
-        SyncRows(r.Hits, r.Gen, query);
+        if (_undoPending)
+        {
+            RunUndo(r);
+            return;
+        }
+        DropStaleAnswer(query);
+        SyncRows(r.Hits);
         SelectFirst();
         if (_restoreSelection >= 0)
         {
             // Back from a result's actions: the same row again.
-            if (_restoreSelection < Items.Count) ResultsList.SelectedIndex = _restoreSelection;
+            int i = _restoreSelection + AnswerOffset;
+            if (i < Items.Count) ResultsList.SelectedIndex = i;
             _restoreSelection = -1;
         }
+        UpdateCondensed();
         HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
+        RequestAnswer(query);
 
         // The instant tier is on screen; ask for meaning-based matches in the background.
         string q = query.Trim();
@@ -749,12 +846,13 @@ public sealed partial class MainWindow : Window
     /// identical rows stay as they are, differing ones are replaced in place, the tail is trimmed or
     /// extended. Clearing and refilling on every keystroke makes the list visibly flicker.
     /// </summary>
-    private void SyncRows(List<Native.Hit> hits, ulong gen, string query)
+    private void SyncRows(List<Native.Hit> hits)
     {
-        var need = new List<(int index, string key)>();
-        for (int i = 0; i < hits.Count; i++)
+        int off = AnswerOffset;   // a web answer on top stays there
+        for (int h = 0; h < hits.Count; h++)
         {
-            var fresh = new HitVm(hits[i], query);   // new each time: bold highlighting follows the query
+            int i = h + off;
+            var fresh = new HitVm(hits[h]);
             // A row that changed is updated in place rather than replaced, so the list keeps its
             // selection (and does not replay the selection animation) on every keystroke.
             HitVm vm;
@@ -769,39 +867,19 @@ public sealed partial class MainWindow : Window
                 Items.Add(vm);
             }
 
-            // A kept row may still be waiting for an icon whose request belonged to an older
-            // generation, so (re)queue anything that has none yet.
-            if (vm.Icon == null && vm.IconKey is { } k)
-            {
-                if (_iconCache.TryGetValue(k, out var bmp)) vm.Icon = bmp;
-                else need.Add((i, k));
-            }
+            if (vm.Icon == null) FillIcon(vm);
         }
-        while (Items.Count > hits.Count) Items.RemoveAt(Items.Count - 1);
-
-        foreach (var (index, key) in need)
-        {
-            if (_iconPending.Add(key)) _iconJobs.Add((gen, index, key));
-        }
+        while (Items.Count > hits.Count + off) Items.RemoveAt(Items.Count - 1);
     }
 
     /// <summary>Appends rows for <paramref name="hits"/> (indices continue from the current list).</summary>
-    private void AddRows(List<Native.Hit> hits, ulong gen, string query)
+    private void AddRows(List<Native.Hit> hits)
     {
-        var need = new List<(int index, string key)>();
         foreach (var h in hits)
         {
-            var vm = new HitVm(h, query);
-            if (vm.IconKey is { } k)
-            {
-                if (_iconCache.TryGetValue(k, out var bmp)) vm.Icon = bmp;
-                else need.Add((Items.Count, k));
-            }
+            var vm = new HitVm(h);
+            FillIcon(vm);
             Items.Add(vm);
-        }
-        foreach (var (index, key) in need)
-        {
-            if (_iconPending.Add(key)) _iconJobs.Add((gen, index, key));
         }
     }
 
@@ -837,21 +915,22 @@ public sealed partial class MainWindow : Window
     private void AppendRelated(int version, Native.Appended r)
     {
         // Drop the rows if the user kept typing or the list was rebuilt in the meantime.
-        if (version != _queryVersion || !_visible || r.Gen != _gen || _view == View.Actions) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done) return;
         if (r.Replace)
         {
             // Strong meaning matches lead; the engine rebuilt the whole list around them.
-            SyncRows(r.Hits, r.Gen, _semQuery);
+            SyncRows(r.Hits);
             SelectFirst();
         }
-        else if (r.Base == Items.Count)
+        else if (r.Base == Items.Count - AnswerOffset)
         {
-            AddRows(r.Hits, r.Gen, "");
+            AddRows(r.Hits);
         }
         else
         {
             return;
         }
+        UpdateCondensed();
         HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
@@ -860,22 +939,71 @@ public sealed partial class MainWindow : Window
 
     // ------------------------------------------------------------------ icons
 
+    // Icons are fetched by key, not by result: a request still counts after the user has typed on,
+    // and every row showing that key gets the picture when it lands.
+
+    /// <summary>Give <paramref name="vm"/> its icon from the cache, or ask for it (UI thread).</summary>
+    private void FillIcon(HitVm vm)
+    {
+        if (vm.IconKey is not { } key) return;
+        if (_iconCache.TryGetValue(key, out var bmp)) vm.Icon = bmp;
+        else if (_iconFailed.Contains(key)) return;
+        else if (_iconPending.Add(key)) _iconJobs.Add(key);
+        else if (_iconWarmOnly.Remove(key)) _iconJobs.Add(key);   // on screen now: jump the warm-up queue
+    }
+
     private void IconLoop()
     {
-        foreach (var (gen, index, key) in _iconJobs.GetConsumingEnumerable())
+        var queues = new[] { _iconJobs, _iconWarm };
+        while (true)
         {
-            byte[]? px = gen == _gen ? Native.Icon(gen, index) : null;
+            BlockingCollection<string>.TakeFromAny(queues, out string? taken);   // on-screen rows first
+            if (taken is not { } key || !_iconFetched.TryAdd(key, true)) continue;   // queued twice (promoted)
+            byte[]? px = Native.Icon(key);
+            DispatcherQueue.TryEnqueue(() => IconArrived(key, px));
+        }
+    }
+
+    private void IconArrived(string key, byte[]? px)
+    {
+        _iconPending.Remove(key);
+        _iconWarmOnly.Remove(key);
+        if (px == null)
+        {
+            _iconFailed.Add(key);
+            return;
+        }
+        var bmp = MakeBitmap(px);
+        _iconCache[key] = bmp;
+        foreach (var vm in Items)
+        {
+            if (vm.IconKey == key) vm.Icon = bmp;
+        }
+    }
+
+    /// <summary>
+    /// Fetch every app's icon in the background shortly after start, so rows show theirs at once
+    /// instead of popping in. Retries while the catalog is still being built.
+    /// </summary>
+    private void WarmIcons()
+    {
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            Thread.Sleep(attempt == 0 ? 1500 : 5000);
+            var keys = Native.IconKeys();
+            if (keys.Count < 20 && attempt < 5) continue;   // the catalog is not loaded yet
             DispatcherQueue.TryEnqueue(() =>
             {
-                _iconPending.Remove(key);
-                if (px == null) return;
-                var bmp = MakeBitmap(px);
-                _iconCache[key] = bmp;
-                foreach (var vm in Items)
+                foreach (var key in keys)
                 {
-                    if (vm.IconKey == key) vm.Icon = bmp;
+                    if (!_iconCache.ContainsKey(key) && !_iconFailed.Contains(key) && _iconPending.Add(key))
+                    {
+                        _iconWarmOnly.Add(key);
+                        _iconWarm.Add(key);
+                    }
                 }
             });
+            return;
         }
     }
 

@@ -1,26 +1,28 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace Palette;
 
 /// <summary>
-/// The two views besides search results:
+/// The views besides search results:
 /// <list type="bullet">
 /// <item>All apps: every app A to Z, scrolling past the panel's height, as in Start.</item>
 /// <item>Actions: what can be done with one result (run as administrator, open file location,
-/// pin, uninstall, ...), opened with Tab or a right click. Typing filters them; Esc goes back.</item>
+/// pin, uninstall, ...), opened by holding Tab, the menu key, a right click or the row's More
+/// button. Typing filters
+/// them; Esc goes back.</item>
+/// <item>Done: a quick setting just ran; one line says so, with Undo. Typing searches again.</item>
 /// </list>
 /// The home view (pins, most used, recent files) is simply what the engine returns for an empty
 /// query.
 /// </summary>
 public sealed partial class MainWindow
 {
-    private enum View { Results, AllApps, Actions }
+    private enum View { Results, AllApps, Actions, Done }
 
-    private const string SearchPlaceholder = "Search apps, files, settings…";
+    private const string SearchPlaceholder = "Search";
 
     private View _view = View.Results;
     private View _actFrom;                    // the view the actions were opened from
@@ -45,9 +47,106 @@ public sealed partial class MainWindow
 
     private void SetView(View v, string placeholder)
     {
+        if (v != _view) PlayListEntrance(forward: v != View.Results);
         _view = v;
         Input.PlaceholderText = placeholder;
-        FooterEsc.Text = v == View.Results ? "Close" : "Back";
+        UpdateCondensed();
+        UpdateOpenButton();
+    }
+
+    /// <summary>The search field's button says what Enter does to the selected row.</summary>
+    private void UpdateOpenButton()
+    {
+        int i = ResultsList.SelectedIndex;
+        bool show = _view != View.Done && i >= 0 && i < Items.Count;
+        OpenButton.Opacity = show ? 1 : 0;   // fades (OpacityTransition)
+        OpenButton.IsHitTestVisible = show;
+        if (!show) return;
+        OpenButton.Content = _view == View.Actions ? "Run" : Items[i].IsAnswer ? "Open" : Items[i].RawKind switch
+        {
+            "Window" => "Switch to",
+            "Command" => "Run",
+            "Calculator" => "Copy result",
+            "Web" => "Search the web",
+            "Toggle" => "Apply",
+            _ => "Open",
+        };
+    }
+
+    private void OnOpenButtonClick(object sender, RoutedEventArgs e) => Launch(ResultsList.SelectedIndex, reveal: false);
+
+    private void OnRowMoreClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not HitVm vm || Items.IndexOf(vm) is not (>= 0 and var i)) return;
+        ResultsList.SelectedIndex = i;
+        EnterActions(i);
+    }
+
+    private void OnRowSecondClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not HitVm vm) return;
+        if (vm.IsStatus)
+        {
+            Undo();
+            return;
+        }
+        int i = Items.IndexOf(vm);
+        if (i < 0) return;
+        if (vm.Reveals) ActOrLaunch(i, "location");
+        else Launch(i, reveal: false);
+    }
+
+    // ------------------------------------------------------------------ done
+
+    private string? _undoQuery;               // what to search for to reverse the setting just changed
+    private bool _undoPending;                // the next results are for Undo: run their quick setting
+
+    /// <summary>A quick setting ran: keep the palette open on one line saying so.</summary>
+    private void ShowDone(string title)
+    {
+        _undoQuery = Inverse(title);
+        Interlocked.Increment(ref _queryVersion);   // drop any search still on its way
+        SetView(View.Done, SearchPlaceholder);
+        SetInputText("");
+        _latestQuery = "";
+        _holdHeight = false;
+        Items.Clear();
+        Items.Add(HitVm.Status(title, "Done", canUndo: _undoQuery != null));
+        Resize(recenter: false);
+        UpdatePreview();
+        UpdateOpenButton();
+    }
+
+    /// <summary>The request that undoes "Turn dark mode on" etc.; null when there is none.</summary>
+    private static string? Inverse(string title) => title switch
+    {
+        "Mute" => "unmute",
+        "Unmute" => "mute",
+        _ when title.EndsWith(" on", StringComparison.Ordinal) => title[..^3] + " off",
+        _ when title.EndsWith(" off", StringComparison.Ordinal) => title[..^4] + " on",
+        _ => null,
+    };
+
+    private void Undo()
+    {
+        if (_undoQuery is not { } q) return;
+        _undoPending = true;
+        SetView(View.Results, SearchPlaceholder);
+        Enqueue(q);   // the field stays empty: ApplyResults runs the setting and shows Done again
+    }
+
+    /// <summary>Results for <see cref="Undo"/>: run their quick setting instead of showing them.</summary>
+    private void RunUndo(Native.SearchResult r)
+    {
+        _undoPending = false;
+        int i = r.Hits.FindIndex(h => h.Kind == "Toggle");
+        if (i < 0)
+        {
+            ShowHome();
+            return;
+        }
+        Native.Launch(r.Gen, i, reveal: false);
+        ShowDone(r.Hits[i].Title);
     }
 
     // ------------------------------------------------------------------ all apps
@@ -60,7 +159,7 @@ public sealed partial class MainWindow
         SetInputText("");
         _gen = r.Gen;
         _holdHeight = false;
-        SyncRows(r.Hits, r.Gen, "");
+        SyncRows(r.Hits);
         if (Items.Count > 0) ResultsList.SelectedIndex = Math.Clamp(select, 0, Items.Count - 1);
         Resize(recenter: false);
         ScrollToSelection();
@@ -79,13 +178,14 @@ public sealed partial class MainWindow
 
     private void EnterActions(int index)
     {
-        if (_view == View.Actions || index < 0 || index >= Items.Count) return;
-        var acts = Native.Actions(_gen, index);
+        if (_view == View.Actions || index < 0 || index >= Items.Count || Items[index].IsAnswer) return;
+        int engine = index - AnswerOffset;
+        var acts = Native.Actions(_gen, engine);
         if (acts.Count == 0) return;
         var vm = Items[index];
         _actFrom = _view;
         _actGen = _gen;
-        _actIndex = index;
+        _actIndex = engine;
         _actCopyText = vm.CopyText;
         _actTitle = vm.Title;
         _actions = acts;
@@ -123,7 +223,7 @@ public sealed partial class MainWindow
         foreach (var a in _shownActions)
         {
             var h = new Native.Hit(a.Title, _actTitle, "Command", null, a.Copy);
-            Items.Add(new HitVm(h, f, GlyphFor(a.Id), a.Hint));
+            Items.Add(new HitVm(h, GlyphFor(a.Id), a.Hint));
         }
         if (Items.Count > 0) ResultsList.SelectedIndex = 0;
         _holdHeight = false;
@@ -181,42 +281,6 @@ public sealed partial class MainWindow
         if (i < 0) return;
         ResultsList.SelectedIndex = i;
         EnterActions(i);
-        e.Handled = true;
-    }
-
-    // ------------------------------------------------------------------ scrolling
-
-    // The list scrolls only when it has more rows than the panel shows (All apps, many pins).
-    // User scrolling is off on the list (it is drawn flipped, so the wheel would run backwards);
-    // the wheel and the selection drive it instead.
-
-    private ScrollViewer? _listScroll;
-
-    private ScrollViewer? ListScroll => _listScroll ??= FindScrollViewer(ResultsList);
-
-    private static ScrollViewer? FindScrollViewer(DependencyObject root)
-    {
-        int n = VisualTreeHelper.GetChildrenCount(root);
-        for (int i = 0; i < n; i++)
-        {
-            var c = VisualTreeHelper.GetChild(root, i);
-            if (c is ScrollViewer sv) return sv;
-            if (FindScrollViewer(c) is { } found) return found;
-        }
-        return null;
-    }
-
-    private void ScrollToSelection()
-    {
-        if (ResultsList.SelectedItem is { } item) ResultsList.ScrollIntoView(item);
-    }
-
-    private void OnListWheel(object sender, PointerRoutedEventArgs e)
-    {
-        if (Items.Count <= MaxRows || ListScroll is not { } sv) return;
-        int delta = e.GetCurrentPoint(ResultsList).Properties.MouseWheelDelta;
-        // Flipped list: wheel up shows rows further from the search field, i.e. a larger offset.
-        sv.ChangeView(null, Math.Max(0, sv.VerticalOffset + delta / 120.0 * RowDip * 2), null, disableAnimation: false);
         e.Handled = true;
     }
 }
