@@ -92,6 +92,31 @@ public sealed class HitVm : INotifyPropertyChanged
         return vm;
     }
 
+    /// <summary>The row a live system reading ("cpu", "gpu") opens under; it opens Task Manager's Performance tab.</summary>
+    public static HitVm ForSystem(SystemAnswer a)
+    {
+        string name = a.Kind switch
+        {
+            SysKind.Cpu => "CPU",
+            SysKind.Gpu => "GPU",
+            SysKind.Npu => "NPU",
+            SysKind.Memory => "Memory",
+            SysKind.Disk => "Disk",
+            _ => "Network",
+        };
+        var vm = new HitVm(new Native.Hit(name, "Live", "System", null, null), chip: "")
+        {
+            IsAnswer = true,
+            Answer = a,
+            AnswerUrl = "taskmgr.exe",
+        };
+        vm.SubText = "Live • Task Manager";
+        vm.Glyph = "";
+        vm.SecondGlyph = "";
+        vm.SecondLabel = "Task Manager";
+        return vm;
+    }
+
     /// <summary>
     /// The Weather app's row with its card, for when the engine did not list the app itself
     /// ("weather in Paris"): it opens the app on that place; its second button searches the web.

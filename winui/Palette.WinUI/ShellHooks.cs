@@ -23,6 +23,8 @@ namespace Palette;
 internal sealed class ShellHooks
 {
     public const uint WM_FLUSH = 0x8000 + 7;              // WM_APP + 7, posted to the hook thread
+    public const uint WM_ELEVATED_TAP = 0x8000 + 8;       // a Windows key tap seen without the hook
+    public const uint WM_ELEVATED_TAP_LATE = 0x8000 + 9;  // ...and Start did not open to take over
 
     private const uint VK_LWIN = 0x5B, VK_RWIN = 0x5C, VK_S = 0x53, VK_Q = 0x51, VK_ESCAPE = 0x1B, VK_CONTROL = 0x11, VK_MENU = 0x12;
     private const uint LLKHF_EXTENDED = 0x1;
@@ -48,6 +50,10 @@ internal sealed class ShellHooks
     private readonly List<(Win32.KBDLLHOOKSTRUCT k, bool up)> _buffer = new();
     private readonly HashSet<uint> _bufferedDown = new();
 
+    // The Windows key while an elevated window is in front (the hook is deaf there)
+    private long _lastHookTap;                             // when the hook last saw a tap
+    private long _expectStart;                             // a tap came without the hook: Start is about to open
+
     // Start / the search flyout
     private bool _handoff;                                 // it is being closed; the palette opens once it is gone
     private long _handoffAt;
@@ -69,7 +75,79 @@ internal sealed class ShellHooks
         _fgProc = OnForeground;
         SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _fgProc, 0, 0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        new Thread(WatchWindowsKey) { IsBackground = true, Name = "windows key watch" }.Start();
         return ok;
+    }
+
+    /// <summary>
+    /// A keyboard hook is never called for a window that outranks this process (an elevated Task
+    /// Manager), so a tap of the Windows key there went to Start unseen. The key's state can still
+    /// be read, so this watches for taps while such a window is in front. Start opens as the key
+    /// goes up; <see cref="OnElevatedTap"/> then closes it and opens the palette, as for typing.
+    /// </summary>
+    private void WatchWindowsKey()
+    {
+        bool down = false, deaf = false, chord = false;
+        long downAt = 0;
+        while (true)
+        {
+            Thread.Sleep(15);
+            if (!_settings.WinKeyOpens)
+            {
+                down = false;
+                continue;
+            }
+            bool win = Held(VK_LWIN) || Held(VK_RWIN);
+            if (win && !down)
+            {
+                down = true;
+                downAt = Stopwatch.GetTimestamp();
+                chord = false;
+                deaf = Win32.ForegroundOutranksUs();
+            }
+            else if (win && deaf && !chord)
+            {
+                // Any other key or button with the Windows key down makes it a chord, not a tap.
+                for (uint vk = 1; vk <= 0xFE; vk++)
+                {
+                    if (vk != VK_LWIN && vk != VK_RWIN && Held(vk))
+                    {
+                        chord = true;
+                        break;
+                    }
+                }
+            }
+            else if (!win && down)
+            {
+                down = false;
+                if (!deaf || chord || MsSince(downAt) >= TapMs) continue;
+                Thread.Sleep(60);                          // the hook, if it did see this one, has acted by now
+                if (MsSince(Volatile.Read(ref _lastHookTap)) < 500) continue;
+                Win32.PostThreadMessage(_threadId, WM_ELEVATED_TAP, UIntPtr.Zero, IntPtr.Zero);
+                Thread.Sleep(450);
+                Win32.PostThreadMessage(_threadId, WM_ELEVATED_TAP_LATE, UIntPtr.Zero, IntPtr.Zero);
+            }
+        }
+    }
+
+    /// <summary>On the hook thread: the Windows key was tapped over an elevated window.</summary>
+    public void OnElevatedTap()
+    {
+        App.Log("windows key tap (elevated window in front)");
+        if (SearchInFront())
+        {
+            Trigger(toggle: false);                        // Start is already up: take over from it
+            return;
+        }
+        _expectStart = Stopwatch.GetTimestamp();           // OnForeground takes over when it opens
+    }
+
+    /// <summary>On the hook thread: Start never opened; open the palette anyway.</summary>
+    public void OnElevatedTapLate()
+    {
+        if (_expectStart == 0) return;
+        _expectStart = 0;
+        if (!_isVisible()) _show();
     }
 
     /// <summary>The palette is about to open: hold keystrokes until it has focus.</summary>
@@ -180,6 +258,7 @@ internal sealed class ShellHooks
                 if (!_winChord && _settings.WinKeyOpens && MsSince(_winDownAt) < TapMs && !SearchInFront())
                 {
                     App.Log("windows key tap");
+                    Volatile.Write(ref _lastHookTap, Stopwatch.GetTimestamp());
                     Win32.MaskStartMenu();                 // the shell now sees a chord: no Start menu
                     Trigger(toggle: true);
                 }
@@ -267,6 +346,16 @@ internal sealed class ShellHooks
     private void OnForeground(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
     {
         if (hwnd == IntPtr.Zero) return;
+        if (_expectStart != 0 && IsSearch(hwnd))
+        {
+            bool fresh = MsSince(_expectStart) < BufferMs;
+            _expectStart = 0;
+            if (fresh)
+            {
+                Trigger(toggle: false);                    // Start opened for the tap: close it, open the palette
+                return;
+            }
+        }
         if (_handoff && !IsSearch(hwnd))
         {
             _handoff = false;

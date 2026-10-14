@@ -46,7 +46,17 @@ fn worker() -> &'static Mutex<Sender<Job>> {
                 loop {
                     let job = rx.lock().unwrap().recv();
                     let Ok((src, reply)) = job else { break };
-                    let _ = reply.send(extract_raw(&src));
+                    // The shell sometimes refuses an icon for a moment (busy, or a cold cache):
+                    // ask again before reporting that there is none.
+                    let mut px = extract_raw(&src);
+                    for _ in 0..2 {
+                        if px.is_some() {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(40));
+                        px = extract_raw(&src);
+                    }
+                    let _ = reply.send(px);
                 }
             });
         }
