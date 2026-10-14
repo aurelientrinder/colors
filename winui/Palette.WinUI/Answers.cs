@@ -64,6 +64,11 @@ public sealed partial class MainWindow
     {
         _answerCts?.Cancel();
         _answerCts = null;
+        if (_view == View.Results && LeadAnswer == null && SystemStats.Detect(query) is { } sys)
+        {
+            ShowSystemRow(new SystemAnswer(query.Trim(), sys));   // local and instant: no lookup
+            return;
+        }
         if (!_settings.WebAnswers || _view != View.Results || LeadAnswer != null || WebAnswers.Detect(query) == null) return;
         if (WebAnswers.TryCached(query, out var cached))
         {
@@ -117,7 +122,13 @@ public sealed partial class MainWindow
 
     private static void OpenUrl(string url)
     {
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+        try
+        {
+            var start = url == "taskmgr.exe"
+                ? new System.Diagnostics.ProcessStartInfo(url, "/7") { UseShellExecute = true }   // Performance
+                : new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true };
+            System.Diagnostics.Process.Start(start);
+        }
         catch (Exception ex) { App.Log("could not open " + url + ": " + ex.Message); }
     }
 
@@ -175,6 +186,11 @@ public sealed partial class MainWindow
                 RenderStock(s);
                 StockPreview.Visibility = Visibility.Visible;
                 h = StockPreview.Height;
+                break;
+            case SystemAnswer sys:
+                RenderSystem(sys);
+                SystemPreview.Visibility = Visibility.Visible;
+                h = SystemPreview.Height;
                 break;
             case WebAnswers.Fact f:
                 RenderFact(f);

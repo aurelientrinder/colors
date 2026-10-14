@@ -26,6 +26,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="9.0.0" />
   </ItemGroup>
 
   <!-- Tray icon is loaded from this file at runtime (the exe icon is embedded via ApplicationIcon). -->
@@ -47,8 +48,7 @@
   <!-- Embedding model for the semantic tier (fetched by scripts\get-model.ps1). Optional: without it
        the launcher simply has no "Related" results. -->
   <ItemGroup>
-    <None Include="..\..\models\**\*.*" Exclude="..\..\models\**\.download-done"
-          Link="models\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\models\**\*.*" Exclude="..\..\models\**\.download-done" Link="models\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

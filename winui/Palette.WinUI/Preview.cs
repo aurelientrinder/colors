@@ -232,6 +232,8 @@ public sealed partial class MainWindow
         AnswerPreview.Visibility = Visibility.Collapsed;
         WeatherPreview.Visibility = Visibility.Collapsed;
         StockPreview.Visibility = Visibility.Collapsed;
+        SystemPreview.Visibility = Visibility.Collapsed;
+        SystemStats.Stop();
         FactPreview.Visibility = Visibility.Collapsed;
         FactImage.Source = null;
         PreviewImage.Source = null;

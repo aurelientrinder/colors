@@ -43,7 +43,8 @@ public sealed partial class MainWindow : Window
 
     private readonly Dictionary<string, WriteableBitmap> _iconCache = new();
     private readonly HashSet<string> _iconPending = new();
-    private readonly HashSet<string> _iconFailed = new();      // no icon to be had: rows keep their glyph
+    private readonly HashSet<string> _iconFailed = new();      // no icon to be had (after three tries): rows keep their glyph
+    private readonly Dictionary<string, int> _iconTries = new();
     private readonly HashSet<string> _iconWarmOnly = new();    // pending in the warm-up queue only
     private readonly ConcurrentDictionary<string, bool> _iconFetched = new();   // icon threads skip these
     // Icons for rows on screen come first; the warm-up of every app's icon fills in behind them.
@@ -602,6 +603,14 @@ public sealed partial class MainWindow : Window
             {
                 _hooks.Flush();
             }
+            else if (msg.message == ShellHooks.WM_ELEVATED_TAP)
+            {
+                _hooks.OnElevatedTap();
+            }
+            else if (msg.message == ShellHooks.WM_ELEVATED_TAP_LATE)
+            {
+                _hooks.OnElevatedTapLate();
+            }
             else
             {
                 Win32.DispatchMessage(ref msg);   // delivers the out-of-context WinEvent callbacks
@@ -1054,7 +1063,12 @@ public sealed partial class MainWindow : Window
         _iconWarmOnly.Remove(key);
         if (px == null)
         {
-            _iconFailed.Add(key);
+            // Not for good: the shell can refuse an icon for a moment. The row asks again when it is
+            // next shown (FillIcon), up to three times.
+            int tries = _iconTries.GetValueOrDefault(key) + 1;
+            _iconTries[key] = tries;
+            _iconFetched.TryRemove(key, out _);
+            if (tries >= 3) _iconFailed.Add(key);
             return;
         }
         var bmp = MakeBitmap(px);
