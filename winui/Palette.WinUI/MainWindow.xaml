@@ -90,21 +90,26 @@
             </ResourceDictionary>
         </Grid.Resources>
 
-        <!-- The window is as tall as the panel can get; Stage is the visible panel, anchored to the
-             bottom and growing upward. -->
+        <!-- The window is as tall as the panel can get; Stage is the whole window, and the window
+             region (MainWindow.ApplyShape) cuts the visible panel out of it, anchored to the bottom
+             and growing upward. Stage does not change height itself: the search field sits at a
+             fixed distance from the bottom, whatever the list above it is doing (a panel that
+             resized and re-aligned to the bottom every frame put the field on a different pixel
+             from one frame to the next). The first row is the empty space above the list. -->
         <Grid
             x:Name="Stage"
             Width="500"
             Background="{ThemeResource PanelBrush}"
             HorizontalAlignment="Left"
-            VerticalAlignment="Bottom">
+            VerticalAlignment="Stretch">
             <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <!-- results, best match first; the selected file's preview opens inside its row -->
-            <Grid x:Name="Body" Height="0">
+            <Grid x:Name="Body" Grid.Row="1" Height="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
@@ -306,7 +311,7 @@
 
             <!-- search field -->
             <Grid
-                Grid.Row="1"
+                Grid.Row="2"
                 Height="100"
                 Margin="6"
                 Background="{ThemeResource SearchCardBrush}"

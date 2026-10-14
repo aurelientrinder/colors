@@ -378,6 +378,10 @@ public sealed partial class MainWindow : Window
         // field must stay on screen.
         double roomDip = Math.Max(0, wh / s - SearchDip);
         double bodyDip = Math.Min(_listShownDip + pvDip + ClosingPreviewDip(), Math.Min(MaxBodyDip, roomDip));
+        // Whole physical pixels. The height glides through fractions, and layout rounds the panel
+        // and each child to pixels on its own: the search field, at the bottom, landed a pixel
+        // higher or lower on alternate frames and shook after almost any interaction.
+        bodyDip = Math.Round(bodyDip * s) / s;
         Body.Height = bodyDip;
 
         // Pop: the whole window fades in (a window-level alpha that DWM applies for free) while the
