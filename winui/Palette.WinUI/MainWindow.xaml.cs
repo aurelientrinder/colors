@@ -603,14 +603,6 @@ public sealed partial class MainWindow : Window
             {
                 _hooks.Flush();
             }
-            else if (msg.message == ShellHooks.WM_ELEVATED_TAP)
-            {
-                _hooks.OnElevatedTap();
-            }
-            else if (msg.message == ShellHooks.WM_ELEVATED_TAP_LATE)
-            {
-                _hooks.OnElevatedTapLate();
-            }
             else
             {
                 Win32.DispatchMessage(ref msg);   // delivers the out-of-context WinEvent callbacks
