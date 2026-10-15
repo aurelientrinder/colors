@@ -282,31 +282,6 @@ internal static class Win32
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr h);
 
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
-
-    /// <summary>
-    /// The window in front belongs to a process that outranks this one (an elevated Task Manager,
-    /// say): its token cannot be opened from here, and Windows keeps keyboard hooks from seeing
-    /// what is typed into it.
-    /// </summary>
-    public static bool ForegroundOutranksUs()
-    {
-        IntPtr fg = GetForegroundWindow();
-        if (fg == IntPtr.Zero) return false;
-        uint pid = ProcessOf(fg);
-        if (pid == 0 || pid == (uint)Environment.ProcessId) return false;
-        IntPtr p = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
-        if (p == IntPtr.Zero) return true;     // not even that: protected or elevated
-        try
-        {
-            if (!OpenProcessToken(p, 0x8 /* TOKEN_QUERY */, out IntPtr t)) return true;
-            CloseHandle(t);
-            return false;
-        }
-        finally { CloseHandle(p); }
-    }
-
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern bool QueryFullProcessImageName(IntPtr h, uint flags, System.Text.StringBuilder name, ref uint size);
 

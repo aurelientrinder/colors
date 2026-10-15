@@ -67,10 +67,12 @@ pub fn set_autostart(enable: bool) -> bool {
         let Ok(exe) = std::env::current_exe() else { return false };
         let exe = exe.display().to_string().replace('\'', "''");
         let dir = std::path::Path::new(&exe).parent().map(|p| p.display().to_string()).unwrap_or_default();
+        // Started the way the shell starts it: Task Scheduler cannot start the installed copy, which
+        // has UI Access (scripts\install-uiaccess.ps1), itself (ERROR_ELEVATION_REQUIRED).
         let script = format!(
             "$u = \"$env:USERDOMAIN\\$env:USERNAME\"; \
              Register-ScheduledTask -TaskName '{TASK}' -Force -ErrorAction Stop \
-             -Action (New-ScheduledTaskAction -Execute '{exe}' -WorkingDirectory '{dir}') \
+             -Action (New-ScheduledTaskAction -Execute 'rundll32.exe' -Argument 'shell32.dll,ShellExec_RunDLL \"{exe}\"' -WorkingDirectory '{dir}') \
              -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $u) \
              -Principal (New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited) \
              -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew -Priority 4) | Out-Null"

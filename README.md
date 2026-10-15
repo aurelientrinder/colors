@@ -78,6 +78,30 @@ hook and replayed into it, so typing straight after the Windows key loses nothin
 current Windows 11 Start and search are one window (SearchHost.exe's "Search"), so the
 hand-off happens on the first typed key rather than when the window opens.
 
+### Over elevated windows (UI Access)
+
+Windows keeps keys typed into an elevated window (Task Manager, an admin terminal) from
+unelevated apps, so there a tap of the Windows key opens Start. The installed copy has
+UI Access, which lets its hook see those keys too while it stays unelevated:
+
+```
+cd winui\Palette.WinUI
+dotnet build -c Install                      # bin\x64\Install, with app.uiaccess.manifest
+..\..\scripts\install-uiaccess.ps1           # as administrator
+```
+
+The script copies the build to `C:\Program Files\Palette`, signs `PaletteWinUI.exe` with a
+new self-signed certificate it trusts on this PC (its private key is deleted straight after,
+so nothing else can be signed with it) and checks the signature. Windows starts a UI Access
+exe only when it is signed that way and sits in Program Files, which is why the Debug and
+Release builds do not have it. Run both steps again after a rebuild; `-Uninstall` removes
+the folder and the certificate. Notes:
+- Task Scheduler cannot start a UI Access exe, so the "Run at startup" task starts it
+  through `rundll32 shell32.dll,ShellExec_RunDLL`, as the shell would.
+- An unelevated process cannot stop it (Access denied): quit it from the tray.
+- Apps it launches inherit UI Access (not elevation).
+- `PALETTE_LOG` does not reach it; use a Debug build for logs.
+
 Selecting a file widens the palette with a preview: images, the first page of PDFs, the
 opening text of text, code and Word files, otherwise Windows' thumbnail, plus size and date.
 Online-only cloud files are not read (that would download them). Double-click it to open.

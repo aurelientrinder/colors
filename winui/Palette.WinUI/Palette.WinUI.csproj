@@ -17,6 +17,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The installed copy (scripts\install-uiaccess.ps1): an optimised build with UI Access, in
+         bin\x64\Install so it never replaces the Debug or Release builds, which must stay without it. -->
+    <Configurations>Debug;Release;Install</Configurations>
+    <Optimize Condition="'$(Configuration)' == 'Install'">true</Optimize>
+    <ApplicationManifest Condition="'$(Configuration)' == 'Install'">app.uiaccess.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\palette.ico</ApplicationIcon>
     <DefaultLanguage>en-US</DefaultLanguage>
     <PublishReadyToRun>false</PublishReadyToRun>
