@@ -113,6 +113,8 @@ pub struct Item {
     pub keywords: Option<String>,
     /// The name and keywords lowercased and cut into words, once rather than on every keystroke.
     pub(crate) words: Words,
+    /// `hit.key()`, made once: usage is looked up by it for every match on every keystroke.
+    key: String,
 }
 
 /// Lowercased forms of an item's text, for matching it (see `Item::new`).
@@ -147,6 +149,12 @@ impl Item {
             name_words: Words::split(&name),
             keywords: keywords.as_deref().map(Words::split).unwrap_or_default(),
         };
-        Item { name, hit, keywords, words }
+        let key = hit.key();
+        Item { name, hit, keywords, words, key }
+    }
+
+    /// The hit's usage key (`Hit::key`).
+    pub fn key(&self) -> &str {
+        &self.key
     }
 }

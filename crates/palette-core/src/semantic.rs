@@ -302,7 +302,7 @@ impl Client {
                         Some(d) => format!("{base}. {d}"),
                         None => base,
                     };
-                    serde_json::json!({"key": i.hit.key(), "title": i.name, "text": text})
+                    serde_json::json!({"key": i.key(), "title": i.name, "text": text})
                 })
                 .collect();
             (cat.items_version, items)
@@ -355,7 +355,7 @@ impl Client {
         for h in reply.hits {
             match h.src.as_str() {
                 "item" if h.score >= t.item => {
-                    if let Some(it) = cat.items.iter().find(|i| i.hit.key() == h.key) {
+                    if let Some(it) = cat.items.iter().find(|i| i.key() == h.key) {
                         out.push((it.hit.clone(), h.score));
                     }
                 }
