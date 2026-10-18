@@ -386,6 +386,10 @@ pub unsafe extern "C" fn pc_plan(gen: u64, query: *const c_char) -> *mut c_char 
         }
     }
     let Some(line) = crate::planner::get().line(q) else { return empty() };
+    // Words that are not a request still get a plan from the model: not shown (they are a search).
+    if !crate::planner::grounded(q, &line) {
+        return empty();
+    }
     let Some(hit) = ({
         let cat = e.catalog.read().unwrap();
         crate::planner::hit(&line, &cat.items)

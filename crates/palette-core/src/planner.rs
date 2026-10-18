@@ -557,6 +557,28 @@ pub fn hit(line: &str, items: &[Item]) -> Option<Hit> {
     steps(line, items).map(intent::plan_hit)
 }
 
+/// Does the plan the model wrote have anything to do with what was typed? A model trained on English
+/// requests writes a plan for any words it is given ("pour resoudre cette equation" became "open about
+/// this pc"), and that row would push the real matches out of sight. A request starts with what to do or
+/// names what it is about, so one of its words is in the plan.
+pub fn grounded(q: &str, line: &str) -> bool {
+    const VERBS: [&str; 40] = [
+        "open", "close", "snap", "set", "turn", "switch", "toggle", "play", "pause", "stop", "mute", "unmute", "show",
+        "hide", "minimize", "minimise", "maximize", "maximise", "launch", "start", "go", "put", "move", "make", "lower",
+        "raise", "increase", "decrease", "skip", "next", "previous", "lock", "quit", "exit", "arrange", "tile", "enable",
+        "disable", "kill", "run",
+    ];
+    let lq = q.to_lowercase();
+    if lq.split_whitespace().next().is_some_and(|w| VERBS.contains(&w)) {
+        return true;
+    }
+    let lline = line.to_lowercase();
+    let plan: Vec<&str> = lline.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 3).collect();
+    lq.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3)
+        .any(|w| plan.iter().any(|p| p.starts_with(w) || w.starts_with(p)))
+}
+
 /// Is `q` worth asking the model about? Words, not a sum, a path or a single name.
 pub fn worth_asking(q: &str) -> bool {
     let q = q.trim();
@@ -583,6 +605,15 @@ mod tests {
 
     fn title(line: &str) -> Option<String> {
         hit(line, &items()).map(|h| h.title)
+    }
+
+    #[test]
+    fn a_plan_must_have_something_to_do_with_the_request() {
+        assert!(!grounded("pour r\u{e9}soudre cette \u{e9}quation", "open about this pc"));
+        assert!(grounded("put chrome and spotify side by side", "open chrome ; open spotify ; snap side"));
+        assert!(grounded("could you get weather up", "open weather"));
+        assert!(grounded("close all but discord", "closeall except discord"));
+        assert!(!grounded("the lease ends in august", "open outlook"));
     }
 
     #[test]
