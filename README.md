@@ -49,6 +49,10 @@ works exactly as before, just without "Related" results.
 | `Esc` or click away | hide |
 | part of a window title or app name | switch to that open window (restored if minimised); an open window ranks above launching its app again |
 | `2*(3+4)` | calculator, Enter copies the result |
+| `10 km in mi`, `72f to c`, `2 h to min` | unit conversion (length, weight, volume, time, speed, area, data, temperature), offline |
+| `days until 25 dec`, `3 weeks from today`, `2 months ago` | date arithmetic, offline |
+| `time in tokyo`, `3pm london to new york` | time zones with daylight saving, offline |
+| `50 usd to eur` | currency, a card with the European Central Bank's daily rate (needs the web; "Answers from the web" in the tray menu turns it off) |
 | `> ipconfig` | run a command in cmd |
 | `Palette: Run at startup` | toggle start-at-sign-in (per-user logon task "Palette", no admin; starts right away, unlike Run-key apps that Windows delays) |
 | `Palette: Reindex files` | refresh the file index now |

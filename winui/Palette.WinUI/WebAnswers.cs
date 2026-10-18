@@ -13,13 +13,14 @@ namespace Palette;
 /// <list type="bullet">
 /// <item>weather: Open-Meteo (place names and forecasts; no key);</item>
 /// <item>stocks: Yahoo Finance's public quote and chart endpoints;</item>
-/// <item>facts: Wikidata (the value) and Wikipedia (summaries and pictures).</item>
+/// <item>facts: Wikidata (the value) and Wikipedia (summaries and pictures);</item>
+/// <item>currency ("50 usd to eur"): Frankfurter's daily European Central Bank rates.</item>
 /// </list>
 /// Every fetch fails quietly: no card is shown, and the results stay as they were.
 /// </summary>
 public static class WebAnswers
 {
-    public enum Kind { Weather, Stock, Fact }
+    public enum Kind { Weather, Stock, Fact, Currency }
 
     public abstract record Answer(string Query);
 
@@ -128,6 +129,13 @@ public static class WebAnswers
         F(@"^who is the (?:prime minister|head of government|mayor|chancellor) of (?:the )?(?<s>.+)$", "Head of government", Value.Item, "P6"),
     };
 
+    private const string Codes =
+        "aud|bgn|brl|cad|chf|cny|czk|dkk|eur|gbp|hkd|huf|idr|ils|inr|isk|jpy|krw|mxn|myr|nok|nzd|php|pln|ron|sek|sgd|thb|try|usd|zar";
+
+    /// <summary>"50 usd to eur", "usd to eur" (one of it), "100 gbp in jpy".</summary>
+    private static readonly Regex CurrencyAsk = new(
+        @"^(?<n>\d+(?:[.,]\d+)?)?\s*(?<from>" + Codes + @")\s+(?:to|in|into)\s+(?<to>" + Codes + ")$", Opt);
+
     private static readonly Regex SummaryAsk = new(@"^(?:who|what) (?:is|was|are|were) (?:a |an |the )?(?<s>.+)$", Opt);
 
     private static string Clean(string q) => q.Trim().TrimEnd('?', '!', '.', ' ');
@@ -139,6 +147,7 @@ public static class WebAnswers
         if (q.Length < 4) return null;
         if (WeatherAsks.Any(r => r.IsMatch(q))) return Kind.Weather;
         if (StockAsks.Any(r => r.IsMatch(q))) return Kind.Stock;
+        if (CurrencyAsk.IsMatch(q)) return Kind.Currency;
         if (FactAsks.Any(f => f.Pattern.IsMatch(q)) || SummaryAsk.IsMatch(q)) return Kind.Fact;
         return null;
     }
@@ -172,6 +181,7 @@ public static class WebAnswers
                 Kind.Weather => await FetchWeather(query, q, ct),
                 Kind.Stock => await FetchStock(query, q, "1D", ct),
                 Kind.Fact => await FetchFact(query, q, ct),
+                Kind.Currency => await FetchCurrency(query, q, ct),
                 _ => null,
             };
         }
@@ -197,6 +207,25 @@ public static class WebAnswers
     }
 
     private static string U(string s) => Uri.EscapeDataString(s);
+
+    // ------------------------------------------------------------------ currency
+
+    private static async Task<Answer?> FetchCurrency(string query, string q, CancellationToken ct)
+    {
+        var m = CurrencyAsk.Match(q);
+        string from = m.Groups["from"].Value.ToUpperInvariant(), to = m.Groups["to"].Value.ToUpperInvariant();
+        if (from == to) return null;
+        double amount = m.Groups["n"].Success
+            ? double.Parse(m.Groups["n"].Value.Replace(',', '.'), CultureInfo.InvariantCulture)
+            : 1;
+        var r = await GetJson($"https://api.frankfurter.dev/v1/latest?base={from}&symbols={to}", ct);
+        double rate = r.GetProperty("rates").GetProperty(to).GetDouble();
+        string date = DateTime.TryParse(r.GetProperty("date").GetString(), CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var d) ? d.ToString("d MMM", CultureInfo.InvariantCulture) : "";
+        string Amount(double v) => v.ToString(v >= 1000 ? "#,##0.##" : v >= 1 ? "0.##" : "0.####", CultureInfo.InvariantCulture);
+        return new Fact(query, $"{Amount(amount)} {from}", "Converted", $"{Amount(amount * rate)} {to}",
+            $"1 {from} = {Amount(rate)} {to} · European Central Bank, {date}", "", null);
+    }
 
     // ------------------------------------------------------------------ weather
 

@@ -4,10 +4,6 @@ Things we could add or refine, so they are not forgotten. Roughly in the order w
 Cross one off (or move it to the README) when it ships.
 
 ## Results that learn
-- **Conversions in the calculator.** It is plain `meval` (`search.rs`, `calculator`). Add units
-  (`10 km in mi`, `72f to c`), dates (`3 weeks from today`, `days until 25 dec`), time zones
-  (`time in tokyo`) offline, and currency (`50 usd to eur`) with the quiet-fail fetch pattern of
-  `WebAnswers`.
 - **Browser tabs and bookmarks.** Window search finds the browser window, not the tab. Edge and
   Chrome keep bookmarks in a `Bookmarks` JSON file; history is SQLite. The semantic tier could rank
   them by meaning too.
@@ -159,6 +155,9 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Conversions typed into the search field (`convert.rs`): units, dates and time zones offline,
+  currency through the web answers. Still to do: more city names (any place through the geocoder),
+  percentages ("15% of 80"), and "now in" for several zones at once.
 - The window in front (`uia.rs`): selected text offered on Home, the app's own buttons, tabs and
   menu bar found by typing, and the matching passage under documents found by meaning. Still to do
   from that group: items inside closed menus, "this" in requests, click by keyboard, and the page

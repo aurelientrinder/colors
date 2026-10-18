@@ -128,7 +128,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
         return hits;
     }
 
-    if let Some(h) = calculator(q) {
+    if let Some(h) = crate::convert::hit(q).or_else(|| calculator(q)) {
         hits.push(h);
     }
     hits.extend(crate::quick::hits(q));
