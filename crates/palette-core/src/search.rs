@@ -154,28 +154,35 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     // Apps, commands and settings: a few thousand entries, always a full scan. Scored first, and
     // only the few that can make the list are copied out.
     {
-        let mut m = Matcher::new(Config::DEFAULT);
-        let mut buf = Vec::new();
-        let mut found: Vec<(i32, &Item)> = Vec::new();
-        for it in &cat.items {
-            let scored = match &it.keywords {
-                // Every word already begins a word: always a good match.
-                Some(_) => word_prefix_score(&it.words, &words).map(|s| (s, GOOD)),
-                None => pattern.score(Utf32Str::new(&it.name, &mut buf), &mut m).map(|s| {
-                    let f = fit(&it.words.name, &lq, &words);
-                    (s as i32 + f, f)
-                }),
-            };
-            if let Some((base, f)) = scored {
-                let mut score = base + kind_bonus(it.hit.kind, f) + coverage(&it.name, &lq) + usage.bonus(&it.hit.key()) + {
-                    Usage::pick_bonus(picks, &it.hit.key())
-                };
-                if it.hit.kind == Kind::App && secondary(&it.words.name, &lq) {
-                    score -= 60;
-                }
-                found.push((score, it));
-            }
-        }
+        let usage: &Usage = &usage;
+        let mut found: Vec<(i32, &Item)> = cat
+            .items
+            .par_chunks(chunk_for(cat.items.len()))
+            .map(|chunk| {
+                with_matcher(&Config::DEFAULT, |m, buf, _| {
+                    chunk
+                        .iter()
+                        .filter_map(|it| {
+                            let (base, f) = match &it.keywords {
+                                // Every word already begins a word: always a good match.
+                                Some(_) => word_prefix_score(&it.words, &words).map(|s| (s, GOOD)),
+                                None => pattern.score(Utf32Str::new(&it.name, buf), m).map(|s| {
+                                    let f = fit(&it.words.name, &lq, &words);
+                                    (s as i32 + f, f)
+                                }),
+                            }?;
+                            let key = it.key();
+                            let mut score = base + kind_bonus(it.hit.kind, f) + coverage(&it.name, &lq) + usage.bonus(key) + Usage::pick_bonus(picks, key);
+                            if it.hit.kind == Kind::App && secondary(&it.words.name, &lq) {
+                                score -= 60;
+                            }
+                            Some((score, it))
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .flatten()
+            .collect();
         found.sort_by(|a, b| b.0.cmp(&a.0));
         // One row per app (see the end): a second "Task Manager" never makes the list.
         let mut titles = HashSet::new();
@@ -199,8 +206,6 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     // Every typed word must begin a word of either: a long page title contains the scattered
     // letters of nearly any query, and a window outranks almost everything else.
     {
-        let mut m = Matcher::new(Config::DEFAULT);
-        let mut buf = Vec::new();
         for w in crate::wins::list() {
             let hay = if w.app.is_empty() { w.title.clone() } else { format!("{} {}", w.title, w.app) };
             // One or two letters begin some word of nearly every page title: then the title or
@@ -208,7 +213,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
             if !words_begin(&hay, &words) || (lq.len() < 3 && !starts_ci(&w.title, &lq) && prefix_bonus(&w.app, &lq) == 0) {
                 continue;
             }
-            if let Some(s) = pattern.score(Utf32Str::new(&hay, &mut buf), &mut m) {
+            if let Some(s) = with_matcher(&Config::DEFAULT, |m, buf, _| pattern.score(Utf32Str::new(&hay, buf), m)) {
                 let prefix = prefix_bonus(&w.title, &lq).max(prefix_bonus(&w.app, &lq));
                 // Found by its title, the window is what you mean. Found only by its app's name
                 // ("chrome", which most titles end with), it comes after the app itself, which
@@ -264,26 +269,21 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     let scored: Vec<(u32, u32)> = if can_narrow {
         cache
             .matches
-            .par_chunks(CHUNK)
-            .map_init(
-                || (Matcher::new(cfg.clone()), Vec::new()),
-                |(m, buf), chunk| {
-                    chunk.iter().filter_map(|&i| scan(m, buf, i as usize)).collect::<Vec<_>>()
-                },
-            )
+            .par_chunks(chunk_for(cache.matches.len()))
+            .map(|chunk| {
+                with_matcher(&cfg, |m, buf, _| chunk.iter().filter_map(|&i| scan(m, buf, i as usize)).collect::<Vec<_>>())
+            })
             .flatten()
             .collect()
     } else {
+        let size = chunk_for(n);
         (0..n)
-            .step_by(CHUNK)
+            .step_by(size)
             .collect::<Vec<_>>()
             .into_par_iter()
-            .map_init(
-                || (Matcher::new(cfg.clone()), Vec::new()),
-                |(m, buf), start| {
-                    (start..(start + CHUNK).min(n)).filter_map(|i| scan(m, buf, i)).collect::<Vec<_>>()
-                },
-            )
+            .map(|start| {
+                with_matcher(&cfg, |m, buf, _| (start..(start + size).min(n)).filter_map(|i| scan(m, buf, i)).collect::<Vec<_>>())
+            })
             .flatten()
             .collect()
     };
@@ -306,30 +306,31 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     // Ranked without building a row: only the few shown need one. Paths picked by the greedy
     // scores are scored again properly: a few thousand cost a millisecond.
     let mut cands: Vec<(i32, Cand)> = top
-        .par_iter()
-        .map_init(
-            || (Scratch::default(), Matcher::new(cfg.clone()), Vec::new()),
-            |(sc, m, buf), &(i, raw)| {
-                let path = cat.files.path(i as usize);
-                let raw = if greedy { pattern.score(Utf32Str::new(path, buf), m).unwrap_or(raw) } else { raw };
-                let score = file_score(path, cat.files.is_dir(i as usize), raw, &lq, usage, picks, &recent.rank, sc);
-                (score, Cand::Indexed(i))
-            },
-        )
+        .par_chunks(chunk_for(top.len()))
+        .map(|chunk| {
+            with_matcher(&cfg, |m, buf, sc| {
+                chunk
+                    .iter()
+                    .map(|&(i, raw)| {
+                        let path = cat.files.path(i as usize);
+                        let raw = if greedy { pattern.score(Utf32Str::new(path, buf), m).unwrap_or(raw) } else { raw };
+                        (file_score(path, cat.files.is_dir(i as usize), raw, &lq, usage, picks, &recent.rank, sc), Cand::Indexed(i))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .flatten()
         .collect();
     // Recent files the index has not caught up with yet.
-    {
-        let mut m = Matcher::new(cfg.clone());
-        let mut buf = Vec::new();
-        let mut sc = Scratch::default();
+    with_matcher(&cfg, |m, buf, sc| {
         for (j, h) in recent.hits.iter().enumerate() {
             let Action::Open(p) = &h.action else { continue };
             let hay = if path_query { p.as_str() } else { h.title.as_str() };
-            if let Some(s) = pattern.score(Utf32Str::new(hay, &mut buf), &mut m) {
-                cands.push((file_score(p, h.kind == Kind::Folder, s, &lq, usage, picks, &recent.rank, &mut sc), Cand::Recent(j)));
+            if let Some(s) = pattern.score(Utf32Str::new(hay, buf), m) {
+                cands.push((file_score(p, h.kind == Kind::Folder, s, &lq, usage, picks, &recent.rank, sc), Cand::Recent(j)));
             }
         }
-    }
+    });
     cands.sort_by(|a, b| b.0.cmp(&a.0));
     // Score first, stat later: only verify existence for candidates that actually make the
     // visible list (the index can be a little stale).
@@ -376,6 +377,31 @@ enum Cand {
 struct Scratch {
     lower: String,
     key: String,
+}
+
+thread_local! {
+    /// Each thread's matcher, kept from one keystroke to the next: `Matcher::new` allocates and
+    /// zeroes a ~130 KB scratch slab, and making one per parallel task cost a keystroke several MB
+    /// of memset, more than the matching itself.
+    static MATCHER: std::cell::RefCell<(Matcher, Vec<char>, Scratch)> =
+        std::cell::RefCell::new((Matcher::new(Config::DEFAULT), Vec::new(), Scratch::default()));
+}
+
+/// Run `f` with this thread's matcher set to `cfg`, its haystack buffer and its scratch strings.
+/// `f` must not start parallel work: a task stolen while it waits would find them borrowed.
+fn with_matcher<R>(cfg: &Config, f: impl FnOnce(&mut Matcher, &mut Vec<char>, &mut Scratch) -> R) -> R {
+    MATCHER.with(|c| {
+        let (m, buf, sc) = &mut *c.borrow_mut();
+        m.config = cfg.clone();
+        f(m, buf, sc)
+    })
+}
+
+/// Entries per parallel task for a list of `len`: a few tasks per core, so a narrowed list of a
+/// few thousand is spread over the cores too, and never so small that handing out tasks costs
+/// more than the work in them.
+fn chunk_for(len: usize) -> usize {
+    (len / (rayon::current_num_threads() * 4)).clamp(256, CHUNK)
 }
 
 /// How good a file match is: its name match, the query beginning its name, where it lives, how
@@ -468,22 +494,32 @@ fn fit(l: &str, lq: &str, words: &[&str]) -> i32 {
     if p > 0 {
         return p;
     }
-    let compact = |s: &str| -> String { s.chars().filter(|c| c.is_alphanumeric()).collect() };
-    let cq = compact(lq);
-    if cq.len() >= 2 && compact(l).starts_with(&cq) {
+    // Compared letter by letter rather than on copies: this runs for most items on every keystroke.
+    let cq_len: usize = alnum(lq).map(char::len_utf8).sum();
+    if cq_len >= 2 && begins_with(alnum(l), alnum(lq)) {
         return 120; // "wifi" for "Wi-Fi"
     }
     if words.len() > 1 && words_begin(l, words) {
         return GOOD; // "vis code" for "Visual Studio Code"
     }
-    let initials: String = l.split(|c: char| !c.is_alphanumeric()).filter_map(|w| w.chars().next()).collect();
-    if cq.len() >= 2 && initials.starts_with(&cq) {
+    let initials = l.split(|c: char| !c.is_alphanumeric()).filter_map(|w| w.chars().next());
+    if cq_len >= 2 && begins_with(initials, alnum(lq)) {
         return GOOD; // "vsc" for "Visual Studio Code"
     }
     if l.contains(lq) {
         return 30;
     }
     0
+}
+
+/// The letters and digits of `s`.
+fn alnum(s: &str) -> impl Iterator<Item = char> + '_ {
+    s.chars().filter(|c| c.is_alphanumeric())
+}
+
+/// Does `hay` begin with `prefix`?
+fn begins_with(mut hay: impl Iterator<Item = char>, mut prefix: impl Iterator<Item = char>) -> bool {
+    prefix.all(|c| hay.next() == Some(c))
 }
 
 /// An app, setting or command matched well gets its whole kind bonus; matched loosely, a
@@ -524,14 +560,25 @@ fn path_prior(lp: &str) -> i32 {
         "\\windows\\", "\\windows.old", "\\$recycle.bin", "\\program files", "\\programdata",
         "\\users\\default", "\\users\\public", "\\appdata\\", "\\xboxgames\\", "\\steamapps\\",
     ];
+    // And any folder whose name ends in "cache" (see below).
     const BUILD: &[&str] = &[
         "\\node_modules\\", "\\.git\\", "\\target\\", "\\obj\\", "\\bin\\debug", "\\bin\\release",
-        "cache\\", "\\__pycache__", "\\site-packages\\", "\\.venv\\", "\\dist\\", "\\build\\",
+        "\\__pycache__", "\\site-packages\\", "\\.venv\\", "\\dist\\", "\\build\\",
     ];
     let profile = PROFILE.get_or_init(|| {
         std::env::var("USERPROFILE").map(|p| p.trim_end_matches('\\').to_lowercase()).unwrap_or_default()
     });
-    let mut p = -3 * lp.matches('\\').count() as i32;
+    // Every name above begins at a `\`, so one pass over the separators finds them all; it runs
+    // for a few thousand paths on every keystroke, where searching the path for each name in
+    // turn cost several times as much.
+    let (mut seps, mut system, mut build) = (0, false, false);
+    for (i, _) in lp.match_indices('\\') {
+        let at = &lp[i..];
+        seps += 1;
+        system = system || SYSTEM.iter().any(|n| at.starts_with(n));
+        build = build || lp[..i].ends_with("cache") || BUILD.iter().any(|n| at.starts_with(n));
+    }
+    let mut p = -3 * seps;
     if let Some(rest) = lp.strip_prefix(profile.as_str()).filter(|r| !profile.is_empty() && r.starts_with('\\')) {
         if rest.matches('\\').count() == 1 {
             p += 60; // C:\Users\you\Downloads itself
@@ -539,9 +586,9 @@ fn path_prior(lp: &str) -> i32 {
             p += 20;
         }
     }
-    if SYSTEM.iter().any(|n| lp.contains(n)) {
+    if system {
         p -= 90;
-    } else if BUILD.iter().any(|n| lp.contains(n)) {
+    } else if build {
         p -= 40;
     }
     p
@@ -659,6 +706,59 @@ mod tests {
         assert!(mine > path_prior(r"c:\users\public\downloads"));
         assert!(mine > path_prior(r"c:\windows.old\users\me\downloads"));
         assert!(path_prior(r"c:\users\me\desktop\app\src") > path_prior(r"c:\users\me\desktop\app\node_modules\x\src"));
+    }
+
+    /// The one-pass `path_prior` scores every path as searching it for each folder name did.
+    #[test]
+    fn path_prior_matches_a_plain_search() {
+        std::env::set_var("USERPROFILE", r"C:\Users\me");
+        let reference = |lp: &str| -> i32 {
+            const SYSTEM: &[&str] = &[
+                "\\windows\\", "\\windows.old", "\\$recycle.bin", "\\program files", "\\programdata",
+                "\\users\\default", "\\users\\public", "\\appdata\\", "\\xboxgames\\", "\\steamapps\\",
+            ];
+            const BUILD: &[&str] = &[
+                "\\node_modules\\", "\\.git\\", "\\target\\", "\\obj\\", "\\bin\\debug", "\\bin\\release",
+                "cache\\", "\\__pycache__", "\\site-packages\\", "\\.venv\\", "\\dist\\", "\\build\\",
+            ];
+            let mut p = -3 * lp.matches('\\').count() as i32;
+            if let Some(rest) = lp.strip_prefix(r"c:\users\me").filter(|r| r.starts_with('\\')) {
+                const KNOWN: &[&str] = &[
+                    "\\desktop", "\\documents", "\\downloads", "\\pictures", "\\videos", "\\music",
+                    "\\onedrive\\desktop", "\\onedrive\\documents", "\\onedrive\\pictures",
+                ];
+                if rest.matches('\\').count() == 1 {
+                    p += 60;
+                } else if KNOWN.iter().any(|k| rest.starts_with(k)) {
+                    p += 20;
+                }
+            }
+            if SYSTEM.iter().any(|n| lp.contains(n)) {
+                p -= 90;
+            } else if BUILD.iter().any(|n| lp.contains(n)) {
+                p -= 40;
+            }
+            p
+        };
+        for lp in [
+            r"c:\users\me\downloads",
+            r"c:\users\me\documents\notes.txt",
+            r"c:\users\me\appdata\local\x",
+            r"c:\program files\app\app.exe",
+            r"c:\users\me\code\app\target\release\app.exe",
+            r"c:\users\me\.cache\pip\x.whl",
+            r"c:\users\me\code\webcache\page.html",
+            r"c:\users\me\cache",
+            r"c:\users\me\code\app\bin\debug\app.dll",
+            r"c:\users\me\code\app\binary\debugger.txt",
+            r"c:\windows.old\users\me\downloads",
+            r"d:\",
+            r"d:\cache\",
+            r"plain",
+            r"c:\users\me\ünïcode\büild\x",
+        ] {
+            assert_eq!(path_prior(lp), reference(lp), "{lp}");
+        }
     }
 
     #[test]

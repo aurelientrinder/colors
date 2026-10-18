@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use windows::core::{GUID, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, PROPERTYKEY};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
@@ -34,11 +35,28 @@ pub fn list() -> Vec<OpenWindow> {
         let _ = EnumWindows(Some(collect), LPARAM(&mut hwnds as *mut _ as isize));
     }
     let me = unsafe { GetCurrentProcessId() };
+    let mut owners = OWNERS.get_or_init(Default::default).lock().unwrap();
+    // Forget windows that have closed (their handles may be reused).
+    owners.retain(|h, _| hwnds.iter().any(|w| w.0 as isize == *h));
     hwnds
         .into_iter()
-        .filter_map(|h| unsafe { describe(h, me) })
+        .filter_map(|h| unsafe { describe(h, me, &mut owners) })
         .collect()
 }
+
+/// What a window says about its program: its process, exe and AppUserModelID. Opening the process
+/// and asking the shell for the ID are most of what listing windows costs, and a search lists them
+/// on every keystroke, so they are kept per window for a while (an app can set its ID late).
+struct Owner {
+    pid: u32,
+    exe: String,
+    aumid: Option<String>,
+    at: Instant,
+}
+
+const OWNER_FRESH: Duration = Duration::from_secs(30);
+
+static OWNERS: OnceLock<Mutex<HashMap<isize, Owner>>> = OnceLock::new();
 
 unsafe extern "system" fn collect(h: HWND, l: LPARAM) -> windows::core::BOOL {
     let v = &mut *(l.0 as *mut Vec<HWND>);
@@ -46,7 +64,7 @@ unsafe extern "system" fn collect(h: HWND, l: LPARAM) -> windows::core::BOOL {
     true.into()
 }
 
-unsafe fn describe(h: HWND, me: u32) -> Option<OpenWindow> {
+unsafe fn describe(h: HWND, me: u32, owners: &mut HashMap<isize, Owner>) -> Option<OpenWindow> {
     if !IsWindowVisible(h).as_bool() {
         return None;
     }
@@ -80,16 +98,21 @@ unsafe fn describe(h: HWND, me: u32) -> Option<OpenWindow> {
     if pid == me {
         return None; // the palette itself
     }
-    let exe = exe_path(pid).unwrap_or_default();
+    let key = h.0 as isize;
+    if !owners.get(&key).is_some_and(|o| o.pid == pid && o.at.elapsed() < OWNER_FRESH) {
+        let o = Owner { pid, exe: exe_path(pid).unwrap_or_default(), aumid: app_user_model_id(h), at: Instant::now() };
+        owners.insert(key, o);
+    }
+    let owner = &owners[&key];
+    let exe = &owner.exe;
     if exe.is_empty() && title == "Program Manager" {
         return None;
     }
-    let aumid = app_user_model_id(h);
     let frame_host = exe.to_lowercase().ends_with("\\applicationframehost.exe");
-    let app = if frame_host { String::new() } else { app_name(&exe) };
-    let icon = match aumid {
+    let app = if frame_host { String::new() } else { app_name(exe) };
+    let icon = match &owner.aumid {
         Some(id) => format!("shell:AppsFolder\\{id}"),
-        None => exe,
+        None => exe.clone(),
     };
     Some(OpenWindow { hwnd: h.0 as isize, title, app, icon })
 }

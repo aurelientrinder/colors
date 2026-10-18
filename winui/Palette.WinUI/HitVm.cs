@@ -320,7 +320,10 @@ public sealed class HitVm : INotifyPropertyChanged
     public Brush? FillBrush => Tone is { } t ? ToneBrush(t) : null;
 
     /// <summary>Text and glyphs on <see cref="FillBrush"/>: near-black on the bright dark-theme tones (else the accent's own).</summary>
-    public Brush? OnFillBrush => Tone != null ? new SolidColorBrush(Dark ? Windows.UI.Color.FromArgb(255, 0x1B, 0x1B, 0x1B) : Microsoft.UI.Colors.White) : null;
+    public Brush? OnFillBrush => Tone != null ? (Dark ? _onFillDark ??= new(Windows.UI.Color.FromArgb(255, 0x1B, 0x1B, 0x1B)) : _onFillLight ??= new(Microsoft.UI.Colors.White)) : null;
+
+    // Made once (on the UI thread, where bindings read them): every row refresh reads the brush again.
+    private static SolidColorBrush? _onFillDark, _onFillLight;
 
     private void UpdateTone() => Tone = ToneFor(this);
 
