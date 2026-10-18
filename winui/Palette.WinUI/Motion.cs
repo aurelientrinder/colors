@@ -60,6 +60,10 @@ public sealed partial class MainWindow
             return;
         }
         var vm = Items[ResultsList.SelectedIndex];
+        if (vm != _hlFor || vm.Tone != _hlTone)
+        {
+            ApplyHighlightTone(vm);
+        }
         if (vm != _hlFor)
         {
             _hlFor = vm;
@@ -72,6 +76,26 @@ public sealed partial class MainWindow
         if (_hlTravel) EnsureFrames();   // OnFrame moves it
         else PlaceHighlight(r.X, r.Y, r.Width, r.Height);
         SelHighlight.Opacity = 1;
+    }
+
+    private string? _hlTone = "";              // the tone the card shows ("" before the first)
+    private Brush? _pillAccent;                // the pill's own accent, for rows without a tone
+
+    /// <summary>The card takes the selected row's colour: a faint tint and the pill (design C).</summary>
+    private void ApplyHighlightTone(HitVm vm)
+    {
+        _pillAccent ??= SelPill.Background;
+        _hlTone = vm.Tone;
+        if (vm.Tone is { } t)
+        {
+            SelTint.Background = HitVm.ToneBrush(t, HitVm.Dark ? (byte)0x1A : (byte)0x14);
+            SelPill.Background = HitVm.ToneBrush(t);
+        }
+        else
+        {
+            SelTint.Background = HitVm.ToneBrush("blue", 0);   // transparent, so the transition fades
+            SelPill.Background = _pillAccent;
+        }
     }
 
     /// <summary>One frame of the glide; true while it is still moving.</summary>
@@ -154,11 +178,37 @@ public sealed partial class MainWindow
         _listIn.Begin();
     }
 
+    private Storyboard? _listBounce;
+
+    /// <summary>
+    /// A small springy settle when typing refreshes the results: the rows drop a few pixels and
+    /// bounce back. Skipped while a view entrance is still moving the same transform.
+    /// </summary>
+    private void PlayListBounce()
+    {
+        if (!_visible || !AnimationsOn) return;
+        if (_listIn is { } li && li.GetCurrentState() == ClockState.Active) return;
+        _listBounce?.Stop();
+        var move = new DoubleAnimation
+        {
+            From = -7, To = 0,
+            Duration = TimeSpan.FromMilliseconds(420),
+            EasingFunction = new ElasticEase { EasingMode = EasingMode.EaseOut, Oscillations = 2, Springiness = 5 },
+        };
+        Storyboard.SetTarget(move, ListXf);
+        Storyboard.SetTargetProperty(move, "Y");
+        _listBounce = new Storyboard();
+        _listBounce.Children.Add(move);
+        _listBounce.Begin();
+    }
+
     /// <summary>Forget any entrance in flight (the palette is opening afresh).</summary>
     private void ResetMotion()
     {
         _listIn?.Stop();
         _listIn = null;
+        _listBounce?.Stop();
+        _listBounce = null;
         _hlSnap = true;
         _hlTravel = false;
         _hlPopClock.Reset();

@@ -82,7 +82,31 @@ public static class Native
         [property: JsonPropertyName("related")] bool Related = false,
         [property: JsonPropertyName("path")] string? Path = null,
         [property: JsonPropertyName("pinned")] bool Pinned = false,
-        [property: JsonPropertyName("folder")] string? Folder = null);
+        [property: JsonPropertyName("folder")] string? Folder = null,
+        [property: JsonPropertyName("control")] Control? Control = null,
+        [property: JsonPropertyName("does")] string? Does = null);
+
+    /// <summary>
+    /// What a row draws to change its setting in place: Kind "switch" (On), "slider" (Value 0..100;
+    /// On means muted for the volume) or "media". Key names the setting for <see cref="Quick"/>.
+    /// </summary>
+    public sealed record Control(
+        [property: JsonPropertyName("kind")] string Kind,
+        [property: JsonPropertyName("key")] string Key,
+        [property: JsonPropertyName("on")] bool On,
+        [property: JsonPropertyName("value")] int Value);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int pc_quick([MarshalAs(UnmanagedType.LPUTF8Str)] string id);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_quick_control([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+    /// <summary>Change a quick setting: "volume:40", "wifi:on". Blocks briefly (radios, WMI): call off the UI thread.</summary>
+    public static bool Quick(string id) => pc_quick(id) != 0;
+
+    /// <summary>The control for <paramref name="key"/> as the setting is now, or null.</summary>
+    public static Control? QuickControl(string key) => Read(pc_quick_control(key), NativeJson.Default.Control);
 
     /// <summary>One entry of a result's action list; <c>Copy</c> is set for copy actions.</summary>
     public sealed record ActionRow(
@@ -196,6 +220,7 @@ public static class Native
 [JsonSerializable(typeof(Native.Appended))]
 [JsonSerializable(typeof(List<Native.ActionRow>))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(Native.Control))]
 internal sealed partial class NativeJson : JsonSerializerContext
 {
 }

@@ -54,6 +54,12 @@ public sealed partial class MainWindow
     /// <summary>Before showing results for <paramref name="query"/>: an answer to another query goes.</summary>
     private void DropStaleAnswer(string query)
     {
+        // The timer row stays while the search still asks for a timer (Timer.cs).
+        if (TimerRow != null)
+        {
+            bool asks = ReadTimer(query, out var d);
+            if (!(asks && (d != null || _timer != null)) && !(query.Trim().Length == 0 && _timer != null)) RemoveTimerRow();
+        }
         if (LeadAnswer is not { } a || SameQuery(a.Query, query)) return;
         if (Items[0].IsAnswer) Items.RemoveAt(0);
         else Items[0].AttachWeather(null);
@@ -64,6 +70,7 @@ public sealed partial class MainWindow
     {
         _answerCts?.Cancel();
         _answerCts = null;
+        if (ShowTimerFor(query)) return;   // local and instant, like the system card
         if (_view == View.Results && LeadAnswer == null && SystemStats.Detect(query) is { } sys)
         {
             ShowSystemRow(new SystemAnswer(query.Trim(), sys));   // local and instant: no lookup
@@ -142,7 +149,7 @@ public sealed partial class MainWindow
             && !(_expandedQuery != null && SameQuery(_expandedQuery, _latestQuery)))
         {
             var top = Items[0];
-            n = top.Answer != null || top.IsCalc || top.IsPlan ? 1 : top.IsToggle ? 2 : 0;
+            n = top.Answer != null || top.IsCalc || top.IsPlan || top.IsTimer ? 1 : top.IsToggle ? 2 : 0;
         }
         if (n >= Items.Count) n = 0;   // nothing more to see
         if (n == _condensedRows) return;

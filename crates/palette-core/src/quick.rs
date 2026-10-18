@@ -22,7 +22,8 @@ const QUICK: &[Quick] = &[
     Quick { id: "bluetooth", names: &["bluetooth"], verbs: &[], level: false },
     Quick { id: "mute", names: &["sound", "audio"], verbs: &["mute", "unmute"], level: false },
     Quick { id: "volume", names: &["volume", "vol"], verbs: &[], level: true },
-    Quick { id: "brightness", names: &["brightness"], verbs: &[], level: true },
+    Quick { id: "brightness", names: &["brightness", "screen brightness"], verbs: &[], level: true },
+    Quick { id: "dnd", names: &["quiet hours", "focus assist"], verbs: &["do not disturb", "dnd"], level: false },
 ];
 
 /// The query asks for the change ("mute", "wifi off", "volume 30"): first row.
@@ -77,6 +78,9 @@ pub fn hits(query: &str) -> Vec<Hit> {
         }
         let score = if verb == Some(2) || (asked && noun == Some(2)) {
             ASKED
+        } else if qk.id == "brightness" && noun == Some(2) {
+            // "brightness" alone is its slider, the one thing to do with it: above files named so.
+            ASKED - 100
         } else if text.len() >= 3 && (verb.is_some() || asked) {
             ASKED - 100
         } else if noun == Some(2) {
@@ -143,12 +147,65 @@ fn row(id: &str, number: Option<u32>, target: Option<bool>, score: i32) -> Optio
                 }
             }
         }
-        "brightness" => {
-            let n = number?;
-            Some(hit(format!("Set brightness to {n}%"), "Built-in display".into(), format!("brightness:{n}"), score))
+        "brightness" => match number {
+            Some(n) => Some(hit(format!("Set brightness to {n}%"), "Built-in display".into(), format!("brightness:{n}"), score)),
+            // Named alone: the row is its slider (only where the display takes brightness).
+            None => {
+                let now = brightness()?;
+                Some(hit("Brightness".into(), format!("Built-in display {now}%"), format!("brightness:{now}"), score))
+            }
+        },
+        "dnd" => {
+            let on = dnd_on()?;
+            let to = target.unwrap_or(!on);
+            Some(hit(
+                format!("Turn do not disturb {}", on_off(to)),
+                format!("Do not disturb is {}", on_off(on)),
+                format!("dnd:{}", on_off(to)),
+                score,
+            ))
         }
         _ => None,
     }
+}
+
+/// What the shell draws on a quick setting's row to change it in place: a switch showing the
+/// current state, or a slider at the current level.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct Control {
+    /// "switch", "slider" or "media".
+    pub kind: &'static str,
+    /// The setting the control changes ("wifi", "volume"); `run` takes `<key>:<value>`.
+    pub key: &'static str,
+    /// A switch's state, or for the volume slider whether sound is muted.
+    pub on: bool,
+    /// A slider's level, 0 to 100.
+    pub value: u32,
+}
+
+/// The control for a row whose action is `quick:<id>`, read from the setting's current state.
+pub fn control(id: &str) -> Option<Control> {
+    let what = id.split(':').next()?;
+    let switch = |key: &'static str, on: bool| Control { kind: "switch", key, on, value: 0 };
+    match what {
+        "dark" => Some(switch("dark", dark_mode()?)),
+        "wifi" => Some(switch("wifi", radio_on("wifi")?)),
+        "bluetooth" => Some(switch("bluetooth", radio_on("bluetooth")?)),
+        "dnd" => Some(switch("dnd", dnd_on()?)),
+        "mute" | "volume" => {
+            let (level, muted) = volume()?;
+            Some(Control { kind: "slider", key: "volume", on: muted, value: (level * 100.0).round() as u32 })
+        }
+        "brightness" => Some(Control { kind: "slider", key: "brightness", on: false, value: brightness()? }),
+        _ => None,
+    }
+}
+
+/// The control for `key` as it is now ("wifi", "volume"), after the shell changed it.
+pub fn control_for(key: &str) -> Option<Control> {
+    *VOLUME.lock().unwrap() = None;
+    *BRIGHTNESS.lock().unwrap() = None;
+    control(key)
 }
 
 /// Carry out `quick:<what>:<value>` (from a row's action). Returns false if it did nothing.
@@ -157,6 +214,7 @@ pub fn run(id: &str) -> bool {
     let on = value == "on";
     match what {
         "dark" => set_dark_mode(on),
+        "dnd" => set_dnd(on),
         "wifi" | "bluetooth" => set_radio(what, on),
         "mute" => set_mute(on),
         "volume" => match value {
@@ -325,9 +383,13 @@ fn change_brightness(by: i32) -> bool {
         .is_ok()
 }
 
-/// Built-in displays only (external monitors do not take brightness over WMI). Runs in the
-/// background: WMI through PowerShell takes a few hundred ms.
+/// Built-in displays only (external monitors do not take brightness over WMI). Asks WMI directly,
+/// a few ms, so the slider can follow a drag; PowerShell is the fallback.
 fn set_brightness(percent: u32) -> bool {
+    *BRIGHTNESS.lock().unwrap() = None;
+    if wmi_set_brightness(percent.min(100) as u8).is_ok() {
+        return true;
+    }
     use std::os::windows::process::CommandExt;
     let script = format!(
         "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | \
@@ -338,4 +400,151 @@ fn set_brightness(percent: u32) -> bool {
         .creation_flags(0x0800_0000)
         .spawn()
         .is_ok()
+}
+
+/// The last reading of the built-in display's brightness (None: none read yet, Some(None): the
+/// display does not take brightness). Like the volume, a reading is kept briefly while typing.
+static BRIGHTNESS: std::sync::Mutex<Option<(std::time::Instant, Option<u32>)>> = std::sync::Mutex::new(None);
+
+/// The built-in display's brightness, 0 to 100, or None where WMI does not offer it (desktops,
+/// external monitors).
+fn brightness() -> Option<u32> {
+    if let Some((at, v)) = *BRIGHTNESS.lock().unwrap() {
+        if at.elapsed() < std::time::Duration::from_millis(1500) {
+            return v;
+        }
+    }
+    let v = wmi_brightness().ok();
+    *BRIGHTNESS.lock().unwrap() = Some((std::time::Instant::now(), v));
+    v
+}
+
+/// root\WMI, connected once per thread (the search thread and the shell's control thread).
+fn wmi() -> windows::core::Result<windows::Win32::System::Wmi::IWbemServices> {
+    use windows::core::BSTR;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoSetProxyBlanket, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+        EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
+    };
+    use windows::Win32::System::Wmi::{IWbemLocator, IWbemServices, WbemLocator};
+    thread_local! {
+        static SERVICES: std::cell::RefCell<Option<IWbemServices>> = const { std::cell::RefCell::new(None) };
+    }
+    if let Some(s) = SERVICES.with(|s| s.borrow().clone()) {
+        return Ok(s);
+    }
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let locator: IWbemLocator = CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER)?;
+        let services = locator.ConnectServer(&BSTR::from(r"root\WMI"), &BSTR::new(), &BSTR::new(), &BSTR::new(), 0, &BSTR::new(), None)?;
+        // RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE
+        CoSetProxyBlanket(&services, 10, 0, None, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, None, EOAC_NONE)?;
+        SERVICES.with(|s| *s.borrow_mut() = Some(services.clone()));
+        Ok(services)
+    }
+}
+
+/// The first object `query` finds in root\WMI.
+fn wmi_first(services: &windows::Win32::System::Wmi::IWbemServices, query: &str) -> windows::core::Result<windows::Win32::System::Wmi::IWbemClassObject> {
+    use windows::core::BSTR;
+    use windows::Win32::System::Wmi::{WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY, WBEM_INFINITE};
+    unsafe {
+        let found = services.ExecQuery(&BSTR::from("WQL"), &BSTR::from(query), WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, None)?;
+        let mut row = [None];
+        let mut n = 0u32;
+        found.Next(WBEM_INFINITE, &mut row, &mut n).ok()?;
+        row[0].take().filter(|_| n == 1).ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))
+    }
+}
+
+fn wmi_brightness() -> windows::core::Result<u32> {
+    use windows::core::w;
+    use windows::Win32::System::Variant::{VariantClear, VariantToUInt32, VARIANT};
+    let obj = wmi_first(&wmi()?, "SELECT CurrentBrightness FROM WmiMonitorBrightness")?;
+    unsafe {
+        let mut v = VARIANT::default();
+        obj.Get(w!("CurrentBrightness"), 0, &mut v, None, None)?;
+        let n = VariantToUInt32(&v);
+        let _ = VariantClear(&mut v);
+        n
+    }
+}
+
+fn wmi_set_brightness(percent: u8) -> windows::core::Result<()> {
+    use windows::core::{w, BSTR};
+    use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_BSTR, VT_I4, VT_UI1};
+    use windows::Win32::System::Wmi::{IWbemClassObject, WBEM_FLAG_RETURN_WBEM_COMPLETE};
+    let services = wmi()?;
+    let target = wmi_first(&services, "SELECT * FROM WmiMonitorBrightnessMethods")?;
+    unsafe {
+        let mut path = VARIANT::default();
+        target.Get(w!("__PATH"), 0, &mut path, None, None)?;
+        if path.Anonymous.Anonymous.vt != VT_BSTR {
+            let _ = VariantClear(&mut path);
+            return Err(windows::Win32::Foundation::E_FAIL.into());
+        }
+        let path_str: BSTR = (*path.Anonymous.Anonymous.Anonymous.bstrVal).clone();
+        let _ = VariantClear(&mut path);
+
+        let mut class = None;
+        services.GetObject(&BSTR::from("WmiMonitorBrightnessMethods"), WBEM_FLAG_RETURN_WBEM_COMPLETE, None, Some(&mut class), None)?;
+        let class: IWbemClassObject = class.ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))?;
+        let mut sig = None;
+        class.GetMethod(w!("WmiSetBrightness"), 0, &mut sig, std::ptr::null_mut())?;
+        let args = sig.ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))?.SpawnInstance(0)?;
+
+        let mut timeout = VARIANT::default();
+        (*timeout.Anonymous.Anonymous).vt = VT_I4;
+        (*timeout.Anonymous.Anonymous).Anonymous.lVal = 1;
+        args.Put(w!("Timeout"), 0, &timeout, 0)?;
+        let mut level = VARIANT::default();
+        (*level.Anonymous.Anonymous).vt = VT_UI1;
+        (*level.Anonymous.Anonymous).Anonymous.bVal = percent;
+        args.Put(w!("Brightness"), 0, &level, 0)?;
+
+        services.ExecMethod(&path_str, &BSTR::from("WmiSetBrightness"), WBEM_FLAG_RETURN_WBEM_COMPLETE, None, &args, None, None)
+    }
+}
+
+// ---------------------------------------------------------------- do not disturb
+
+// Windows has no public API for do not disturb. The shell keeps its state in a notification
+// state (WNF) that it also listens to: 0 is off, 1 priority only (do not disturb), 2 alarms only.
+const WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED: u64 = 0x0D83_063E_A3BF_1C75;
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtQueryWnfStateData(name: *const u64, type_id: *const c_void, scope: *const c_void, stamp: *mut u32, buf: *mut c_void, size: *mut u32) -> i32;
+    fn NtUpdateWnfStateData(name: *const u64, buf: *const c_void, size: u32, type_id: *const c_void, scope: *const c_void, matching_stamp: u32, check_stamp: u32) -> i32;
+}
+
+use std::ffi::c_void;
+
+#[cfg(test)]
+mod tests {
+    /// Reads only; prints what this PC reports (no built-in display or WNF state is not a failure).
+    #[test]
+    fn reads_controls() {
+        println!("brightness: {:?}", super::wmi_brightness());
+        println!("dnd: {:?}", super::dnd_on());
+        println!("volume control: {:?}", super::control("volume:50"));
+        println!("brightness control: {:?}", super::control("brightness"));
+    }
+}
+
+fn dnd_on() -> Option<bool> {
+    let mut profile: u32 = 0;
+    let mut size = 4u32;
+    let mut stamp = 0u32;
+    let name = WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED;
+    let status = unsafe {
+        NtQueryWnfStateData(&name, std::ptr::null(), std::ptr::null(), &mut stamp, &mut profile as *mut u32 as *mut c_void, &mut size)
+    };
+    (status >= 0).then_some(size >= 4 && profile != 0)
+}
+
+fn set_dnd(on: bool) -> bool {
+    let profile: u32 = if on { 1 } else { 0 };
+    let name = WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED;
+    unsafe { NtUpdateWnfStateData(&name, &profile as *const u32 as *const c_void, 4, std::ptr::null(), std::ptr::null(), 0, 0) >= 0 }
 }

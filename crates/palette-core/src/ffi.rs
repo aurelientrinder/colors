@@ -66,6 +66,32 @@ struct HitJson<'a> {
     folder: Option<&'a str>,
     /// Pinned to the home view.
     pinned: bool,
+    /// A switch, slider or media buttons drawn on the row to change it in place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control: Option<crate::quick::Control>,
+    /// What a command or request row does, for its icon: a built-in's id ("lock") or the plan's
+    /// first step in the model's words ("open notepad", "media play", "set wifi on").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    does: Option<String>,
+}
+
+fn does_of(h: &Hit) -> Option<String> {
+    match (&h.action, h.kind) {
+        (Action::Builtin(id), crate::model::Kind::Command) => Some(id.clone()),
+        (Action::Plan(steps), _) => crate::intent::to_line(steps).split(" ; ").next().map(str::to_string),
+        _ => None,
+    }
+}
+
+/// The control a row carries: its quick setting's, or media buttons for a play/pause request.
+fn control_of(h: &Hit) -> Option<crate::quick::Control> {
+    match &h.action {
+        Action::Builtin(id) if h.kind == crate::model::Kind::Toggle => crate::quick::control(id.strip_prefix("quick:")?),
+        Action::Plan(steps) if matches!(steps.as_slice(), [crate::intent::Step::Media(_)]) => {
+            Some(crate::quick::Control { kind: "media", key: "media", on: false, value: 0 })
+        }
+        _ => None,
+    }
 }
 
 /// Keys of the pinned items, to flag them in results.
@@ -93,6 +119,39 @@ fn hit_json<'a>(h: &'a Hit, related: bool, pinned: &std::collections::HashSet<St
             (Action::Open(p), crate::model::Kind::Folder) => Some(p.as_str()),
             _ => None,
         },
+        control: control_of(h),
+        does: does_of(h),
+    }
+}
+
+/// Change a quick setting from its row's control: `<key>:<value>` ("volume:40", "wifi:on").
+/// Returns 1 if it was done.
+///
+/// # Safety
+/// `id` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_quick(id: *const c_char) -> i32 {
+    if id.is_null() {
+        return 0;
+    }
+    let id = CStr::from_ptr(id).to_str().unwrap_or("");
+    crate::quick::run(id) as i32
+}
+
+/// The control for quick setting `key` as it is now (`{"kind","key","on","value"}`), or null.
+/// Free with `pc_free`.
+///
+/// # Safety
+/// `key` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_quick_control(key: *const c_char) -> *mut c_char {
+    if key.is_null() {
+        return std::ptr::null_mut();
+    }
+    let key = CStr::from_ptr(key).to_str().unwrap_or("");
+    match crate::quick::control_for(key) {
+        Some(c) => into_c(serde_json::to_string(&c).unwrap_or_default()),
+        None => std::ptr::null_mut(),
     }
 }
 

@@ -29,6 +29,8 @@ features = [
   # quick settings (dark mode, radios, volume) and the settings index
   "Win32_System_Registry", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_Globalization",
   "Devices_Radios", "Foundation_Collections",
+  # the brightness slider reads and sets the built-in display over WMI
+  "Win32_System_Wmi", "Win32_System_Ole",
   # requests carried out in steps (intent.rs): media keys
   "Win32_UI_Input_KeyboardAndMouse",
   # the plan model's helper process ends with the launcher (planner.rs)

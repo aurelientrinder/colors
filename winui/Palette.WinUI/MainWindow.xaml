@@ -153,14 +153,31 @@
                                 <Border.OpacityTransition>
                                     <ScalarTransition Duration="0:0:0.12" />
                                 </Border.OpacityTransition>
-                                <Border
-                                    Width="3"
-                                    Height="16"
-                                    Margin="0,20,0,0"
-                                    HorizontalAlignment="Left"
-                                    VerticalAlignment="Top"
-                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
-                                    CornerRadius="1.5" />
+                                <Grid>
+                                    <!-- A row with a colour tints the card faintly in it, and the pill
+                                         takes it too (Motion.cs, ApplyHighlightTone). -->
+                                    <Border
+                                        x:Name="SelTint"
+                                        Background="Transparent"
+                                        CornerRadius="12">
+                                        <Border.BackgroundTransition>
+                                            <BrushTransition Duration="0:0:0.15" />
+                                        </Border.BackgroundTransition>
+                                    </Border>
+                                    <Border
+                                        x:Name="SelPill"
+                                        Width="3"
+                                        Height="16"
+                                        Margin="0,20,0,0"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Top"
+                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        CornerRadius="1.5">
+                                        <Border.BackgroundTransition>
+                                            <BrushTransition Duration="0:0:0.15" />
+                                        </Border.BackgroundTransition>
+                                    </Border>
+                                </Grid>
                             </Border>
                         </Canvas>
                     </ListView.Header>
@@ -187,12 +204,14 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="56" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <Grid Padding="12,0,8,0" ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="24" />
                                         <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
 
@@ -206,17 +225,27 @@
                                             <ScalarTransition Duration="0:0:0.12" />
                                         </Image.OpacityTransition>
                                     </Image>
+                                    <!-- The glyph twice: plain, and in the row's colour when it has one
+                                         (x:Bind sets a null brush rather than leaving the theme's). -->
                                     <FontIcon
                                         FontSize="20"
                                         Glyph="{x:Bind Glyph, Mode=OneWay}"
-                                        Visibility="{x:Bind GlyphVisibility, Mode=OneWay}" />
+                                        Visibility="{x:Bind PlainGlyphVisibility, Mode=OneWay}" />
+                                    <FontIcon
+                                        FontSize="20"
+                                        Foreground="{x:Bind GlyphBrush, Mode=OneWay}"
+                                        Glyph="{x:Bind Glyph, Mode=OneWay}"
+                                        Visibility="{x:Bind ToneGlyphVisibility, Mode=OneWay}" />
                                     <FontIcon
                                         FontSize="20"
                                         Foreground="{ThemeResource SystemFillColorSuccessBrush}"
                                         Glyph="&#xE930;"
                                         Visibility="{x:Bind StatusVisibility, Mode=OneWay}" />
 
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        Margin="{x:Bind TitleMargin, Mode=OneWay}"
+                                        VerticalAlignment="Center">
                                         <TextBlock Text="{x:Bind Title, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
                                         <!-- Left-aligned, so the star column is only as wide as its text
                                              and trims it rather than pushing the badge away. -->
@@ -232,6 +261,7 @@
                                                 Text="{x:Bind SubText, Mode=OneWay}"
                                                 TextTrimming="CharacterEllipsis"
                                                 Visibility="{x:Bind SubTextVisibility, Mode=OneWay}" />
+                                            <!-- The badge and its word, in the accent or (second pair) the row's colour. -->
                                             <Border
                                                 Grid.Column="1"
                                                 Width="12"
@@ -239,22 +269,140 @@
                                                 Margin="0,1,4,0"
                                                 Background="{ThemeResource AccentFillColorDefaultBrush}"
                                                 CornerRadius="2.5"
-                                                Visibility="{x:Bind ActionVisibility, Mode=OneWay}">
+                                                Visibility="{x:Bind PlainActionVisibility, Mode=OneWay}">
                                                 <FontIcon
                                                     FontSize="8"
                                                     Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
-                                                    Glyph="&#xE945;" />
+                                                    Glyph="{x:Bind Glyph, Mode=OneWay}" />
                                             </Border>
                                             <TextBlock
                                                 Grid.Column="2"
                                                 Foreground="{ThemeResource AccentFillColorDefaultBrush}"
                                                 Text="Action"
-                                                Visibility="{x:Bind ActionVisibility, Mode=OneWay}" />
+                                                Visibility="{x:Bind PlainActionVisibility, Mode=OneWay}" />
+                                            <Border
+                                                Grid.Column="1"
+                                                Width="12"
+                                                Height="12"
+                                                Margin="0,1,4,0"
+                                                Background="{x:Bind FillBrush, Mode=OneWay}"
+                                                CornerRadius="2.5"
+                                                Visibility="{x:Bind ToneActionVisibility, Mode=OneWay}">
+                                                <FontIcon
+                                                    FontSize="8"
+                                                    Foreground="{x:Bind OnFillBrush, Mode=OneWay}"
+                                                    Glyph="{x:Bind Glyph, Mode=OneWay}" />
+                                            </Border>
+                                            <TextBlock
+                                                Grid.Column="2"
+                                                Foreground="{x:Bind FillBrush, Mode=OneWay}"
+                                                Text="Action"
+                                                Visibility="{x:Bind ToneActionVisibility, Mode=OneWay}" />
                                         </Grid>
                                     </StackPanel>
 
+                                    <!-- Shut down, restart, sign out: the first Enter asks (Controls.cs). -->
                                     <StackPanel
                                         Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="6"
+                                        Visibility="{x:Bind ConfirmVisibility, Mode=OneWay}">
+                                        <Button
+                                            Height="32"
+                                            Padding="12,0"
+                                            AllowFocusOnInteraction="False"
+                                            Click="OnConfirmCancel"
+                                            Content="Cancel"
+                                            IsTabStop="False" />
+                                        <Button
+                                            Height="32"
+                                            Padding="12,0"
+                                            AllowFocusOnInteraction="False"
+                                            Click="OnConfirmRun"
+                                            Background="{x:Bind FillBrush, Mode=OneWay}"
+                                            Content="{x:Bind ConfirmLabel, Mode=OneWay}"
+                                            Foreground="{x:Bind OnFillBrush, Mode=OneWay}"
+                                            IsTabStop="False"
+                                            Style="{StaticResource AccentButtonStyle}" />
+                                    </StackPanel>
+
+                                    <!-- A timer's countdown and its buttons (Timer.cs). -->
+                                    <StackPanel
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="4"
+                                        Visibility="{x:Bind TimerVisibility, Mode=OneWay}">
+                                        <TextBlock
+                                            Margin="0,0,8,0"
+                                            VerticalAlignment="Center"
+                                            FontSize="20"
+                                            FontWeight="SemiBold"
+                                            Text="{x:Bind TimerText, Mode=OneWay}" />
+                                        <Button
+                                            AutomationProperties.Name="{x:Bind TimerLabel, Mode=OneWay}"
+                                            Click="OnTimerToggle"
+                                            Style="{StaticResource RowButtonStyle}"
+                                            ToolTipService.ToolTip="{x:Bind TimerLabel, Mode=OneWay}">
+                                            <FontIcon FontSize="16" Glyph="{x:Bind TimerGlyph, Mode=OneWay}" />
+                                        </Button>
+                                        <Button
+                                            AutomationProperties.Name="Cancel timer"
+                                            Click="OnTimerCancel"
+                                            Style="{StaticResource RowButtonStyle}"
+                                            ToolTipService.ToolTip="Cancel timer"
+                                            Visibility="{x:Bind TimerCancelVisibility, Mode=OneWay}">
+                                            <FontIcon FontSize="14" Glyph="&#xE711;" />
+                                        </Button>
+                                    </StackPanel>
+                                    <ProgressBar
+                                        Grid.Column="1"
+                                        Grid.ColumnSpan="3"
+                                        Margin="0,0,4,5"
+                                        VerticalAlignment="Bottom"
+                                        Foreground="{x:Bind FillBrush, Mode=OneWay}"
+                                        Maximum="100"
+                                        Minimum="0"
+                                        Value="{x:Bind TimerPercent, Mode=OneWay}"
+                                        Visibility="{x:Bind TimerCancelVisibility, Mode=OneWay}" />
+
+                                    <!-- Changed in place, always showing: the transport buttons for media
+                                         (Controls.cs); an on/off setting's switch is with the row buttons. -->
+                                    <StackPanel
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="2"
+                                        Visibility="{x:Bind MediaVisibility, Mode=OneWay}">
+                                        <Button
+                                            AllowFocusOnInteraction="False"
+                                            AutomationProperties.Name="Previous track"
+                                            Click="OnMediaPrevious"
+                                            Style="{StaticResource RowButtonStyle}"
+                                            ToolTipService.ToolTip="Previous track">
+                                            <FontIcon FontSize="14" Glyph="&#xE892;" />
+                                        </Button>
+                                        <Button
+                                            AllowFocusOnInteraction="False"
+                                            AutomationProperties.Name="{x:Bind PlayLabel, Mode=OneWay}"
+                                            Click="OnMediaPlayPause"
+                                            Style="{StaticResource RowButtonStyle}"
+                                            ToolTipService.ToolTip="{x:Bind PlayLabel, Mode=OneWay}">
+                                            <FontIcon FontSize="16" Glyph="{x:Bind PlayGlyph, Mode=OneWay}" />
+                                        </Button>
+                                        <Button
+                                            AllowFocusOnInteraction="False"
+                                            AutomationProperties.Name="Next track"
+                                            Click="OnMediaNext"
+                                            Style="{StaticResource RowButtonStyle}"
+                                            ToolTipService.ToolTip="Next track">
+                                            <FontIcon FontSize="14" Glyph="&#xE893;" />
+                                        </Button>
+                                    </StackPanel>
+
+                                    <StackPanel
+                                        Grid.Column="3"
                                         VerticalAlignment="Center"
                                         IsHitTestVisible="{x:Bind ButtonsShown, Mode=OneWay}"
                                         Opacity="{x:Bind ButtonsOpacity, Mode=OneWay}"
@@ -264,6 +412,25 @@
                                         <StackPanel.OpacityTransition>
                                             <ScalarTransition Duration="0:0:0.15" />
                                         </StackPanel.OpacityTransition>
+                                        <StackPanel
+                                            Orientation="Horizontal"
+                                            Spacing="8"
+                                            Visibility="{x:Bind WindowButtonsVisibility, Mode=OneWay}">
+                                            <Button
+                                                AutomationProperties.Name="Minimize window"
+                                                Click="OnWindowMinimize"
+                                                Style="{StaticResource RowButtonStyle}"
+                                                ToolTipService.ToolTip="Minimize window (Ctrl+M)">
+                                                <FontIcon FontSize="14" Glyph="&#xE921;" />
+                                            </Button>
+                                            <Button
+                                                AutomationProperties.Name="Close window"
+                                                Click="OnWindowClose"
+                                                Style="{StaticResource RowButtonStyle}"
+                                                ToolTipService.ToolTip="Close window (Ctrl+W)">
+                                                <FontIcon FontSize="14" Glyph="&#xE8BB;" />
+                                            </Button>
+                                        </StackPanel>
                                         <Button
                                             AutomationProperties.Name="More options"
                                             Click="OnRowMoreClick"
@@ -280,10 +447,72 @@
                                             <FontIcon FontSize="16" Glyph="{x:Bind SecondGlyph, Mode=OneWay}" />
                                         </Button>
                                     </StackPanel>
+
+                                    <!-- An on/off setting's switch sits where the row buttons appear; when
+                                         the row is selected it slides left to make room for them. -->
+                                    <ToggleSwitch
+                                        Grid.Column="3"
+                                        MinWidth="0"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        AllowFocusOnInteraction="False"
+                                        AutomationProperties.Name="{x:Bind Title, Mode=OneWay}"
+                                        IsOn="{x:Bind SwitchOn, Mode=OneWay}"
+                                        IsTabStop="False"
+                                        OffContent="Off"
+                                        OnContent="On"
+                                        Toggled="OnRowSwitchToggled"
+                                        Translation="{x:Bind SwitchShift, Mode=OneWay}"
+                                        Visibility="{x:Bind SwitchVisibility, Mode=OneWay}">
+                                        <ToggleSwitch.TranslationTransition>
+                                            <Vector3Transition Duration="0:0:0.2" />
+                                        </ToggleSwitch.TranslationTransition>
+                                    </ToggleSwitch>
+                                </Grid>
+
+                                <!-- A level set by dragging: volume, brightness (Controls.cs). -->
+                                <Grid
+                                    Grid.Row="1"
+                                    Height="40"
+                                    Padding="42,0,22,6"
+                                    ColumnSpacing="8"
+                                    Visibility="{x:Bind SliderVisibility, Mode=OneWay}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="44" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button
+                                        AllowFocusOnInteraction="False"
+                                        AutomationProperties.Name="{x:Bind SliderGlyphLabel, Mode=OneWay}"
+                                        Click="OnSliderGlyphClick"
+                                        Style="{StaticResource RowButtonStyle}"
+                                        ToolTipService.ToolTip="{x:Bind SliderGlyphLabel, Mode=OneWay}">
+                                        <FontIcon FontSize="16" Glyph="{x:Bind SliderGlyph, Mode=OneWay}" />
+                                    </Button>
+                                    <Slider
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        AllowFocusOnInteraction="False"
+                                        AutomationProperties.Name="{x:Bind Title, Mode=OneWay}"
+                                        Foreground="{x:Bind FillBrush, Mode=OneWay}"
+                                        IsTabStop="False"
+                                        IsThumbToolTipEnabled="False"
+                                        Maximum="100"
+                                        Minimum="0"
+                                        StepFrequency="1"
+                                        ValueChanged="OnRowSliderChanged"
+                                        Value="{x:Bind SliderValue, Mode=OneWay}" />
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        VerticalAlignment="Center"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Text="{x:Bind SliderText, Mode=OneWay}"
+                                        TextAlignment="Right" />
                                 </Grid>
 
                                 <ContentPresenter
-                                    Grid.Row="1"
+                                    Grid.Row="2"
                                     Height="{x:Bind PreviewHeight, Mode=OneWay}"
                                     VerticalAlignment="Top"
                                     Content="{x:Bind PreviewContent, Mode=OneWay}" />

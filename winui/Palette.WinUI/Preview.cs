@@ -57,12 +57,55 @@ public sealed partial class MainWindow
 
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        foreach (var o in e.RemovedItems) if (o is HitVm v) v.Selected = false;
+        foreach (var o in e.RemovedItems) if (o is HitVm v) { v.Selected = false; v.Confirming = false; }
         foreach (var o in e.AddedItems) if (o is HitVm v) v.Selected = true;
         UpdateOpenButton();
         ScrollToSelection();
+        // A preview that opened by itself belongs to the row it opened for.
+        if (_pvAuto) { _pvAuto = false; _previewOn = false; }
         UpdatePreview();
         UpdateHighlight();
+        StartAutoPreview();
+    }
+
+    // ---- automatic preview: a file that rests on the selection for a second shows itself
+
+    private const int AutoPreviewMs = 1000;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _autoPv;
+    private bool _pvAuto;   // the preview is on because of the timer, not Tab
+
+    private static bool WarrantsPreview(HitVm? vm)
+    {
+        if (vm is not { RawKind: "File", Path: { } p } || vm.Answer != null) return false;
+        string ext = System.IO.Path.GetExtension(p);
+        return ImageExt.Contains(ext) || TextExt.Contains(ext)
+            || ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".docx", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>(Re)start the wait for the selected row; does nothing once a preview is already on.</summary>
+    private void StartAutoPreview()
+    {
+        _autoPv?.Stop();
+        if (_previewOn || !_visible || _view != View.Results) return;
+        int i = ResultsList.SelectedIndex;
+        if (i < 0 || i >= Items.Count || !WarrantsPreview(Items[i])) return;
+        if (_autoPv == null)
+        {
+            _autoPv = DispatcherQueue.CreateTimer();
+            _autoPv.Interval = TimeSpan.FromMilliseconds(AutoPreviewMs);
+            _autoPv.IsRepeating = false;
+            _autoPv.Tick += (_, _) =>
+            {
+                int j = ResultsList.SelectedIndex;
+                if (_previewOn || !_visible || _view != View.Results
+                    || j < 0 || j >= Items.Count || !WarrantsPreview(Items[j])) return;
+                _previewOn = true;
+                _pvAuto = true;
+                UpdatePreview();
+            };
+        }
+        _autoPv.Start();
     }
 
     private void OnPreviewDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) =>
@@ -73,6 +116,8 @@ public sealed partial class MainWindow
     {
         _pvVersion++;
         _previewOn = false;
+        _pvAuto = false;
+        _autoPv?.Stop();
         _pvPath = null;
         _pvU = _pvTarget = 0;
         foreach (var c in _pvClosing) c.vm.PreviewHeight = 0;
@@ -85,6 +130,8 @@ public sealed partial class MainWindow
     private void TogglePreview()
     {
         _previewOn = !_previewOn;
+        _pvAuto = false;   // Tab's choice sticks
+        _autoPv?.Stop();
         UpdatePreview();
     }
 
