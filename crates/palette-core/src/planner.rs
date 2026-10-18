@@ -293,7 +293,7 @@ fn kill_with_us(child: &Child) {
 }
 
 /// One HTTP/1.1 request to the helper; the body of a 200 reply.
-fn http(port: u16, method: &str, path: &str, body: &str, timeout: Duration) -> Option<String> {
+pub(crate) fn http(port: u16, method: &str, path: &str, body: &str, timeout: Duration) -> Option<String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
     s.set_read_timeout(Some(timeout)).ok()?;

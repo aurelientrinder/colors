@@ -770,10 +770,22 @@ pub extern "C" fn pc_clip_clear() {
 pub unsafe extern "C" fn pc_ask_prepare(question: *const c_char) -> *mut c_char {
     let q = if question.is_null() { "" } else { CStr::from_ptr(question).to_str().unwrap_or("") };
     let out = match crate::chat::prepare(q.trim()) {
-        Ok(p) => serde_json::json!({"ok": true, "port": p.port, "body": p.body, "app": p.app, "model": p.model, "source": p.source}),
+        Ok(p) => serde_json::json!({"ok": true, "port": p.port, "path": p.path, "body": p.body, "app": p.app, "model": p.model, "source": p.source}),
         Err(e) => serde_json::json!({"ok": false, "error": e}),
     };
     into_c(out.to_string())
+}
+
+/// A row offers an answer about the window: read the window and have the model read it ahead, once
+/// typing pauses (chat.rs). Returns at once.
+///
+/// # Safety
+/// `question` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_ask_warm(question: *const c_char) {
+    if !question.is_null() {
+        crate::chat::warm(CStr::from_ptr(question).to_str().unwrap_or(""));
+    }
 }
 
 /// Let go of the chat model (its memory is freed; the next question loads it again).

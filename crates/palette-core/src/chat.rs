@@ -12,11 +12,25 @@
 //! `models\chat`, or one LM Studio already downloaded (Qwen3.5 4B is preferred, then Gemma 3 4B).
 //! The runtime is llama.cpp's server, the GPU (Vulkan) build, in `models\chat` too
 //! (`scripts\get-chat.ps1`).
+//!
+//! Speed, without taking the PC over:
+//! * the long part of a question is the model reading the window (about 450 words a second on an
+//!   Arc GPU, so six seconds for a long page). It is done ahead (`warm`): once a row offers an answer
+//!   and typing pauses, the window is read and its text fed to the model, which keeps it in its cache.
+//!   The text fed is exactly what comes before the question in the final prompt (the chat template is
+//!   the server's own, from `/apply-template`), so Enter adds only the question's dozen tokens and the
+//!   first words come in about a second. Qwen3.5 is a hybrid model whose cache can only go back to a
+//!   saved point, and the end of that text is one. A second question about the same window reuses
+//!   it all.
+//! * the server runs below normal priority, which Windows also applies to its GPU work: whatever you
+//!   are doing comes first, the model takes what is left. It uses two CPU threads (the GPU does the
+//!   work) and flash attention (measured the quickest here).
 
 use crate::model::{Action, Hit, Kind};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Child;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -29,6 +43,10 @@ const SELECTION_CHARS: usize = 6_000;
 const AROUND_CHARS: usize = 3_000;
 /// Longest a read of the window may take.
 const READ_WAIT: Duration = Duration::from_secs(8);
+/// A window read this lately is not read again for the next question.
+const READ_FRESH: Duration = Duration::from_secs(60);
+/// The pause in typing before the window is read ahead.
+const WARM_AFTER: Duration = Duration::from_millis(400);
 
 /// Names to prefer, best first, when several models are about.
 const PREFERRED: [&str; 8] = ["qwen3.5-4b", "qwen3-4b", "gemma-3-4b", "gemma-3n", "llama-3.2-3b", "phi-4-mini", "qwen3-8b", "gemma-3-12b"];
@@ -148,8 +166,8 @@ fn ensure_server() -> Result<(u16, String), String> {
         }
         a.push(model.clone().into_os_string());
         for s in [
-            "--host", "127.0.0.1", "--port", &port.to_string(), "-c", "8192", "-ngl", "99", "-t", "4", "--jinja", "--no-webui",
-            "--parallel", "1",
+            "--host", "127.0.0.1", "--port", &port.to_string(), "-c", "8192", "-ngl", "99", "-t", "2", "-fa", "on", "--jinja",
+            "--no-webui", "--parallel", "1",
         ] {
             a.push(s.into());
         }
@@ -158,11 +176,23 @@ fn ensure_server() -> Result<(u16, String), String> {
     let (child, port) = crate::planner::launch_wait(&dir.join("llama-server.exe"), args, &dir, Duration::from_secs(90))
         .ok_or("The chat model did not start")?;
     let name = label(&model);
+    behind_you(&child);
     *g = Some(Server { child, port, model: name.clone() });
     drop(g);
     touch();
     watch();
     Ok((port, name))
+}
+
+/// Below normal priority: Windows schedules the process's GPU work at the same class, so the model
+/// waits for whatever else wants the CPU or the GPU.
+fn behind_you(child: &Child) {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Threading::{SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS};
+    unsafe {
+        let _ = SetPriorityClass(HANDLE(child.as_raw_handle()), BELOW_NORMAL_PRIORITY_CLASS);
+    }
 }
 
 /// Let go of the model after it has been idle for a while.
@@ -238,9 +268,108 @@ pub fn hits(query: &str) -> Vec<Hit> {
     }]
 }
 
+/// The window's text by the palette opening it was read for, so a warm-up and the question, or two
+/// questions, read it once.
+static READ: Mutex<Option<(u64, Instant, crate::uia::WindowText)>> = Mutex::new(None);
+
+fn window(scan: u64) -> Option<crate::uia::WindowText> {
+    if let Some((s, at, w)) = READ.lock().unwrap().as_ref() {
+        if *s == scan && at.elapsed() < READ_FRESH {
+            return Some(w.clone());
+        }
+    }
+    let w = crate::uia::window_text(WINDOW_CHARS, READ_WAIT)?;
+    *READ.lock().unwrap() = Some((scan, Instant::now(), w.clone()));
+    Some(w)
+}
+
+static WARM_SEQ: AtomicU64 = AtomicU64::new(0);
+static WARMED: Mutex<Option<u64>> = Mutex::new(None);
+
+/// A row offers an answer: once typing pauses, start the model and have it read the window, so the
+/// answer starts at once when asked for. Returns at once; at most one warm-up per palette opening.
+pub fn warm(question: &str) {
+    let n = WARM_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let q = question.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(WARM_AFTER);
+        if WARM_SEQ.load(Ordering::SeqCst) == n {
+            warm_now(&q);
+        }
+    });
+}
+
+/// `warm`, without the wait; blocks until the model has read the window.
+pub fn warm_now(question: &str) {
+    let scan = crate::uia::scan_id();
+    {
+        let mut w = WARMED.lock().unwrap();
+        if *w == Some(scan) {
+            return;
+        }
+        *w = Some(scan);
+    }
+    let server = std::thread::spawn(ensure_server);
+    let ctx = window(scan);
+    let Ok(Ok((port, _))) = server.join() else { return };
+    let _ = question;
+    let Some((user, _)) = ctx.as_ref().and_then(|c| build_prompt(c, SENTINEL)) else { return };
+    let Some(prompt) = template(port, &user) else { return };
+    let Some(at) = prompt.find(SENTINEL) else { return };
+    // Everything before the question, and nothing written: the model reads it and keeps it.
+    let prefix = prompt[..at].trim_end_matches(' ');
+    let _ = crate::planner::http(port, "POST", "/completion", &completion(prefix, false, 0), Duration::from_secs(120));
+}
+
+/// Stands for the question while the text before it is found in the templated prompt.
+const SENTINEL: &str = "\u{2063}Q\u{2063}";
+
+/// The prompt the server makes of the conversation, with the model's own chat template.
+fn template(port: u16, user: &str) -> Option<String> {
+    let body = serde_json::json!({
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "chat_template_kwargs": {"enable_thinking": false},
+    });
+    let reply = crate::planner::http(port, "POST", "/apply-template", &body.to_string(), Duration::from_secs(10))?;
+    serde_json::from_str::<serde_json::Value>(&reply).ok()?["prompt"].as_str().map(str::to_string)
+}
+
+fn completion(prompt: &str, stream: bool, n_predict: i32) -> String {
+    serde_json::json!({
+        "prompt": prompt,
+        "n_predict": n_predict,
+        "stream": stream,
+        "cache_prompt": true,
+        "temperature": 0.3,
+        "top_p": 0.9,
+    })
+    .to_string()
+}
+
+fn request(user: &str, stream: bool, max_tokens: u32) -> String {
+    serde_json::json!({
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "stream": stream,
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "cache_prompt": true,
+        "chat_template_kwargs": {"enable_thinking": false},
+    })
+    .to_string()
+}
+
 /// Everything the shell needs to stream an answer: where the server is and the request to send it.
 pub struct Prepared {
     pub port: u16,
+    /// Where to post `body`: `/completion` (a prompt in the model's template), else the chat API.
+    pub path: &'static str,
     /// The JSON body for `/v1/chat/completions` (streaming).
     pub body: String,
     pub app: String,
@@ -253,23 +382,16 @@ pub struct Prepared {
 /// few seconds when the model has to load). Blocks: call from a worker thread.
 pub fn prepare(question: &str) -> Result<Prepared, String> {
     let server = std::thread::spawn(ensure_server);
-    let ctx = crate::uia::window_text(WINDOW_CHARS, READ_WAIT);
+    let ctx = window(crate::uia::scan_id());
     let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
     let ctx = ctx.ok_or("I couldn't read that window")?;
     let (user, source) = build_prompt(&ctx, question).ok_or_else(|| format!("There is no text to read in {}", ctx.app))?;
-    let body = serde_json::json!({
-        "messages": [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": user},
-        ],
-        "stream": true,
-        "max_tokens": 700,
-        "temperature": 0.3,
-        "top_p": 0.9,
-        "chat_template_kwargs": {"enable_thinking": false},
-    })
-    .to_string();
-    Ok(Prepared { port, body, app: ctx.app, model, source })
+    // The same prompt the warm-up began, so the model only reads the question.
+    let (path, body) = match template(port, &user) {
+        Some(prompt) => ("/completion", completion(&prompt, true, 700)),
+        None => ("/v1/chat/completions", request(&user, true, 700)),
+    };
+    Ok(Prepared { port, path, body, app: ctx.app, model, source })
 }
 
 /// The user's message for the model, and what it is from; None when there is nothing to read.

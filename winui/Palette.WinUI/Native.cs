@@ -38,6 +38,9 @@ public static class Native
     private static extern void pc_ask_stop();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void pc_ask_warm([MarshalAs(UnmanagedType.LPUTF8Str)] string question);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern int pc_rename(ulong gen, int index, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -193,6 +196,7 @@ public static class Native
     public sealed record AskReady(
         [property: JsonPropertyName("ok")] bool Ok,
         [property: JsonPropertyName("port")] int Port = 0,
+        [property: JsonPropertyName("path")] string? Path = null,
         [property: JsonPropertyName("body")] string? Body = null,
         [property: JsonPropertyName("app")] string? App = null,
         [property: JsonPropertyName("model")] string? Model = null,
@@ -201,6 +205,12 @@ public static class Native
 
     public static AskReady AskPrepare(string question) =>
         Read(pc_ask_prepare(question), NativeJson.Default.AskReady) ?? new AskReady(false, Error: "I couldn't answer that");
+
+    /// <summary>
+    /// A row offers an answer: the engine has the model read the window ahead, once typing pauses,
+    /// so Enter only adds the question. Returns at once.
+    /// </summary>
+    public static void AskWarm(string question) => pc_ask_warm(question);
 
     /// <summary>Let go of the chat model's memory.</summary>
     public static void AskStop() => pc_ask_stop();

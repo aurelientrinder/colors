@@ -86,7 +86,7 @@ public sealed partial class MainWindow
             ask.Status = "Thinking…";
             RenderAskIfShown(ask);
 
-            using var req = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{ready.Port}/v1/chat/completions")
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{ready.Port}{ready.Path ?? "/v1/chat/completions"}")
             {
                 Content = new StringContent(ready.Body ?? "{}", Encoding.UTF8, "application/json"),
             };
@@ -102,9 +102,18 @@ public sealed partial class MainWindow
                 string data = line[6..];
                 if (data == "[DONE]") break;
                 using var doc = JsonDocument.Parse(data);
-                if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
-                if (!choices[0].TryGetProperty("delta", out var delta) || !delta.TryGetProperty("content", out var part)) continue;
-                text.Append(part.GetString());
+                var root = doc.RootElement;
+                // llama.cpp's own endpoint sends {"content", "stop"}; the chat API, choices[0].delta.content.
+                if (root.TryGetProperty("content", out var piece))
+                {
+                    text.Append(piece.GetString());
+                }
+                else if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0
+                         && choices[0].TryGetProperty("delta", out var delta) && delta.TryGetProperty("content", out var part))
+                {
+                    text.Append(part.GetString());
+                }
+                else continue;
                 ask.Text = text.ToString();
                 if (Environment.TickCount64 - drawn > 60)
                 {

@@ -2,7 +2,8 @@
 //!
 //!     cargo run -p palette-core --release --example ask_probe -- "<part of the window's title>" "summarise this"
 //!
-//! Reads the window's text, starts the chat model, and prints the answer as it streams.
+//! Reads the window's text, starts the chat model, and prints the answer as it streams. With
+//! `--warm` after the question, the window is read ahead first, as while typing.
 
 use palette_core::{chat, uia};
 use std::io::{Read, Write};
@@ -41,6 +42,12 @@ fn main() {
     println!("model: {:?}, available: {}", chat::model_path(), chat::available());
     let Some(hwnd) = find(&title) else { return println!("no window with '{title}'") };
     uia::begin(hwnd);
+    if args.iter().any(|a| a == "--warm") {
+        // As the palette does while you type: the model reads the window before the question comes.
+        let t = Instant::now();
+        chat::warm_now("summarise this");
+        println!("warmed in {:.1}s (model started and the window read)", t.elapsed().as_secs_f32());
+    }
     let t = Instant::now();
     let p = match chat::prepare(&question) {
         Ok(p) => p,
@@ -51,7 +58,8 @@ fn main() {
     let mut s = TcpStream::connect(("127.0.0.1", p.port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(120))).unwrap();
     let req = format!(
-        "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "POST {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        p.path,
         p.body.len(),
         p.body
     );
@@ -76,7 +84,7 @@ fn main() {
             }
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
                 seen += 1;
-                if let Some(c) = v["choices"][0]["delta"]["content"].as_str() {
+                if let Some(c) = v["content"].as_str().or_else(|| v["choices"][0]["delta"]["content"].as_str()) {
                     first.get_or_insert(t.elapsed());
                     answer.push_str(c);
                 }

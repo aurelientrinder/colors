@@ -160,8 +160,12 @@ France") stay web answers.
 Setup: `scripts\get-chat.ps1` fetches llama.cpp's server (the Vulkan build, 32 MB) into `models\chat`;
 the model is any chat GGUF of 2 to 12 GB: `PALETTE_CHAT_MODEL`, a file in `models\chat`, or one LM
 Studio already has (Qwen3.5 4B preferred, then Gemma 3 4B). The model loads on the first question
-(a few seconds) and is let go after ten idle minutes. On an Intel Arc GPU a 4B model reads about 280
-words a second and writes about 25. `examples\ask_probe.rs` asks about any window from the command line.
+(a few seconds) and is let go after ten idle minutes. On an Intel Arc GPU a 4B model reads about 450
+tokens a second and writes about 19-25, so reading a long page takes six seconds: that is done while
+you type. Once the row appears and typing pauses, the window's text, exactly as it comes before the
+question in the final prompt, is fed to the model, which keeps it; Enter adds only the question, and
+the first words come in about a second (8 s without). The server runs below normal priority, which
+Windows applies to its GPU work too, with two CPU threads and flash attention. `examples\ask_probe.rs` asks about any window from the command line.
 
 ## The window in front
 

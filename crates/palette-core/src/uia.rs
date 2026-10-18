@@ -152,12 +152,18 @@ pub fn commands(wait: Duration) -> Vec<(String, String)> {
     }
 }
 
+/// Which opening of the palette the current read belongs to: it changes each time `begin` is called.
+pub fn scan_id() -> u64 {
+    STATE.0.lock().unwrap().as_ref().map_or(0, |s| s.seq)
+}
+
 /// Is some text selected in the window (read when the palette opened)? Does not wait.
 pub fn has_selection() -> bool {
     STATE.0.lock().unwrap().as_ref().is_some_and(|s| s.selection_raw.is_some())
 }
 
 /// What a window shows, as text, for asking about it (chat.rs).
+#[derive(Clone)]
 pub struct WindowText {
     pub app: String,
     pub title: String,

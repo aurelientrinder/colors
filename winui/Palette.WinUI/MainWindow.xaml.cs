@@ -1011,6 +1011,8 @@ public sealed partial class MainWindow : Window
         }
         while (Items.Count > hits.Count + off) Items.RemoveAt(Items.Count - 1);
         UpdateMediaRows();
+        // A row that offers an answer about the window: the model starts reading it now (AskView.cs).
+        if (hits.FirstOrDefault(h => h.Kind == "Ask") is { } ask) Native.AskWarm(ask.Title);
     }
 
     /// <summary>Appends rows for <paramref name="hits"/> (indices continue from the current list).</summary>
