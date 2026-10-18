@@ -82,7 +82,12 @@ public sealed partial class MainWindow
                 Finish(ask, error: ready.Error ?? "I couldn't answer that");
                 return;
             }
-            ask.Footer = $"{ready.Model} · on this PC · from {(ready.Source == "selection" ? "your selection" : "the " + ready.App + " window")}";
+            ask.Footer = $"{ready.Model} · on this PC · from " + ready.Source switch
+            {
+                "selection" => "your selection",
+                "documents" => "your documents: " + string.Join(" · ", (ready.Sources ?? new()).Select((n, i) => $"[{i + 1}] {n}")),
+                _ => "the " + ready.App + " window",
+            };
             ask.Status = "Thinking…";
             RenderAskIfShown(ask);
 
@@ -157,7 +162,8 @@ public sealed partial class MainWindow
 
         double width = Math.Max(200, (AskPreview.ActualWidth > 0 ? AskPreview.ActualWidth : 560) - 40);
         AskText.Measure(new Windows.Foundation.Size(width, double.PositiveInfinity));
-        double h = Math.Clamp(AskText.DesiredSize.Height + 14 + 8 + 10 + 18, 84, 340);
+        AskFooter.Measure(new Windows.Foundation.Size(width, double.PositiveInfinity));
+        double h = Math.Clamp(AskText.DesiredSize.Height + 14 + 8 + 10 + Math.Max(16, AskFooter.DesiredSize.Height), 84, 340);
         bool grew = Math.Abs(AskPreview.Height - h) > 1;
         AskPreview.Height = h;
         _pvFull = 6 + h + 12;

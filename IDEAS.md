@@ -148,6 +148,10 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Ask your documents (`chat.rs`, `serve.rs` `context`, `lex.rs` `rank`): `? when does my lease end`
+  answers from the best passages of your files with [1] [2] citations, the files listed under the answer
+  and openable from the row's actions. Still to do: a page number or a highlighted passage when a
+  source opens, follow-up questions, and asking about one file (Hold Tab on a result).
 - Ask about the window in front (`chat.rs`, `AskView.cs`, `uia.rs` window text): `summarise this`,
   `what does this error mean`, `? anything` offer a row, and Enter streams an answer from a 4B model
   on this PC into a card under it. Still to do: follow-up questions (keep the window as context),

@@ -5,9 +5,11 @@
 //!        key starts so; without it items under "clip:" (what was copied) are left out)
 //!        {"op":"items","items":[{"key":"...","title":"...","text":"..."}]}
 //!        {"op":"passage","id":2,"path":"...","q":"..."}
+//!        {"op":"context","id":3,"q":"...","k":4,"min":0.72}   the best chunk of the k best documents
 //!        {"op":"ping"} | {"op":"shutdown"}
 //!   out: {"id":1,"ms":23,"hits":[{"src":"doc"|"item","key":"...","score":0.53}]}
 //!        {"id":2,"text":"...","marks":[[start,len],...]}   (no text: none found)
+//!        {"id":3,"docs":[{"path":"...","text":"..."}]}
 
 use crate::discover::{self, Candidate};
 use crate::embed::{self, Embedder};
@@ -660,6 +662,11 @@ impl Shared {
     /// chunk whose vector is nearest the query. Cut down to the sentences that share the query's words
     /// (or the chunk's opening, when none do).
     pub fn passage(&self, path: &str, q: &str) -> Option<Passage> {
+        extract::passage(&self.best_chunk(path, q)?, q)
+    }
+
+    /// The chunk of `path` that `q` matched, whole (see `passage`).
+    pub fn best_chunk(&self, path: &str, q: &str) -> Option<String> {
         let stamp = self.docs.read().unwrap().stamp(path)?;
         let texts = self.texts_of(path, stamp)?;
 
@@ -677,7 +684,7 @@ impl Shared {
                 .max_by_key(|&(i, n)| (n, std::cmp::Reverse(i)));
             if let Some((i, n)) = best {
                 if n * 10 >= wanted.len() * 6 {
-                    return extract::passage(&texts.all[i], q);
+                    return Some(texts.all[i].clone());
                 }
             }
         }
@@ -709,7 +716,70 @@ impl Shared {
                 .max_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(n, _)| n)?
         };
-        extract::passage(texts.sampled.get(best)?, q)
+        texts.sampled.get(best).cloned()
+    }
+
+    /// Up to `n` chunks of `path` to answer `q` from, with how many of the question's words the best has:
+    /// those with the most of them, best first (at least two for a question of several words), else the
+    /// chunk nearest in meaning (0). A question is rarely about the few chunks that were embedded, so
+    /// every chunk is looked at.
+    pub fn answer_chunks(&self, path: &str, q: &str, n: usize) -> (usize, Vec<String>) {
+        let stamp = match self.docs.read().unwrap().stamp(path) {
+            Some(s) => s,
+            None => return (0, Vec::new()),
+        };
+        let terms = extract::query_terms(q);
+        if !terms.is_empty() {
+            if let Some(texts) = self.texts_of(path, stamp) {
+                let need = if terms.len() >= 3 { 2 } else { 1 };
+                let mut scored: Vec<(usize, usize)> = texts
+                    .all
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (extract::coverage(c, &terms), i))
+                    .filter(|(c, _)| *c >= need)
+                    .collect();
+                scored.sort_by_key(|&(c, i)| (std::cmp::Reverse(c), i));
+                if let Some(&(best, _)) = scored.first() {
+                    return (best, scored.into_iter().take(n).map(|(_, i)| texts.all[i].clone()).collect());
+                }
+            }
+        }
+        (0, self.best_chunk(path, q).into_iter().collect())
+    }
+
+    /// The best chunks of the `k` documents that best answer `q`, to answer a question from: (path,
+    /// chunks joined). Candidates are the documents near the question in meaning (at least `min`) and the
+    /// ones whose words match it (lex.rs); they are ranked by how many of the question's words their best
+    /// chunk has, and read in parallel.
+    pub fn context(&self, q: &str, k: usize, min: f32) -> Vec<(String, String)> {
+        let mut cands: Vec<(String, f32)> = match self.query(q, 12, None) {
+            Ok(hits) => hits.into_iter().filter(|(_, src, _)| *src == "doc").map(|(key, _, s)| (key, s)).collect(),
+            Err(_) => Vec::new(),
+        };
+        let terms = extract::query_terms(q);
+        for path in self.lex.read().unwrap().rank(&terms, 8) {
+            if !cands.iter().any(|(p, _)| *p == path) {
+                cands.push((path, 0.0));
+            }
+        }
+        let need = if terms.len() >= 3 { 2 } else { 1 };
+        let mut read: Vec<(usize, f32, String, String)> = std::thread::scope(|s| {
+            let handles: Vec<_> = cands
+                .iter()
+                .map(|(p, score)| {
+                    s.spawn(move || {
+                        let (cov, chunks) = self.answer_chunks(p, q, 2);
+                        // Kept for its words, or for its meaning alone when that is strong.
+                        let keep = !chunks.is_empty() && (cov >= need || *score >= min);
+                        keep.then(|| (cov, *score, p.clone(), chunks.join("\n[...]\n")))
+                    })
+                })
+                .collect();
+            handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
+        });
+        read.sort_by(|a, b| (b.0, b.1).partial_cmp(&(a.0, a.1)).unwrap_or(std::cmp::Ordering::Equal));
+        read.into_iter().take(k).map(|(_, _, p, t)| (p, t)).collect()
     }
 
     /// A document's chunks, as when it was indexed and all of them; the last few are kept.
@@ -755,6 +825,7 @@ struct Req {
     paths: Option<Vec<String>>,
     path: Option<String>,
     only: Option<String>,
+    min: Option<f32>,
 }
 
 pub fn serve(sh: Arc<Shared>) {
@@ -841,6 +912,20 @@ pub fn serve(sh: Arc<Shared>) {
                         None => serde_json::json!({"id": id}),
                     };
                     println!("{reply}");
+                });
+            }
+            "context" => {
+                let id = req.id.unwrap_or(0);
+                let q = req.q.unwrap_or_default();
+                let (k, min) = (req.k.unwrap_or(4), req.min.unwrap_or(0.0));
+                let sh = sh.clone();
+                std::thread::spawn(move || {
+                    let docs: Vec<_> = sh
+                        .context(&q, k, min)
+                        .into_iter()
+                        .map(|(path, text)| serde_json::json!({"path": path, "text": text}))
+                        .collect();
+                    println!("{}", serde_json::json!({"id": id, "docs": docs}));
                 });
             }
             "items" => {

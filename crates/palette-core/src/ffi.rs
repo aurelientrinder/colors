@@ -769,8 +769,12 @@ pub extern "C" fn pc_clip_clear() {
 #[no_mangle]
 pub unsafe extern "C" fn pc_ask_prepare(question: *const c_char) -> *mut c_char {
     let q = if question.is_null() { "" } else { CStr::from_ptr(question).to_str().unwrap_or("") };
-    let out = match crate::chat::prepare(q.trim()) {
-        Ok(p) => serde_json::json!({"ok": true, "port": p.port, "path": p.path, "body": p.body, "app": p.app, "model": p.model, "source": p.source}),
+    let documents = |question: &str| match ENGINE.get() {
+        Some(e) => e.sem.context(question, 4, Duration::from_secs(25)),
+        None => Vec::new(),
+    };
+    let out = match crate::chat::prepare(q.trim(), &documents) {
+        Ok(p) => serde_json::json!({"ok": true, "port": p.port, "path": p.path, "body": p.body, "app": p.app, "model": p.model, "source": p.source, "sources": p.sources}),
         Err(e) => serde_json::json!({"ok": false, "error": e}),
     };
     into_c(out.to_string())

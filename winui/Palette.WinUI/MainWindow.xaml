@@ -992,7 +992,9 @@
                                 Grid.Row="1"
                                 FontSize="11"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                TextTrimming="CharacterEllipsis" />
+                                MaxLines="2"
+                                TextTrimming="CharacterEllipsis"
+                                TextWrapping="Wrap" />
                         </Grid>
                     </Grid>
                 </Border>

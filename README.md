@@ -157,6 +157,21 @@ a page's text; for a terminal the newest lines). Only what is on screen is read,
 fields or password managers. Questions that do not point at the screen ("what is the capital of
 France") stay web answers.
 
+### Asking your documents
+
+A question that does not point at the screen is answered from your own files:
+
+| You type | Palette |
+|---|---|
+| `? when does my lease end`, `? what voltage does the clutch motor need`, `ask which supplier was late` | a row "Ask your documents · on this PC"; Enter writes the answer under it, citing the files as [1], [2] |
+
+It finds the passages that answer (the meaning index for which documents are near the question, the
+word index for which ones have its words, then every chunk of the best few is scored by how many of the
+question's words it has) and gives the model about four short excerpts, never whole files. The card's
+footer lists the files by the numbers the answer cites; Hold Tab on the row has "Open [1] file" for
+each. If nothing in your documents matches well enough it says so, instead of guessing. Only files
+the semantic index covers (PDF, Word, PowerPoint, text, Markdown) can answer.
+
 Setup: `scripts\get-chat.ps1` fetches llama.cpp's server (the Vulkan build, 32 MB) into `models\chat`;
 the model is any chat GGUF of 2 to 12 GB: `PALETTE_CHAT_MODEL`, a file in `models\chat`, or one LM
 Studio already has (Qwen3.5 4B preferred, then Gemma 3 4B). The model loads on the first question

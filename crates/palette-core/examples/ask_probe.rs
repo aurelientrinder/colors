@@ -1,6 +1,7 @@
 //! Ask about a window from the command line, as the palette does:
 //!
 //!     cargo run -p palette-core --release --example ask_probe -- "<part of the window's title>" "summarise this"
+//!     cargo run -p palette-core --release --example ask_probe -- - "which key opens the actions" --docs
 //!
 //! Reads the window's text, starts the chat model, and prints the answer as it streams. With
 //! `--warm` after the question, the window is read ahead first, as while typing.
@@ -40,8 +41,13 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (title, question) = (args.first().cloned().unwrap_or_default(), args.get(1).cloned().unwrap_or("summarise this".into()));
     println!("model: {:?}, available: {}", chat::model_path(), chat::available());
-    let Some(hwnd) = find(&title) else { return println!("no window with '{title}'") };
-    uia::begin(hwnd);
+    // `--docs`: answer from the documents instead (the title argument is then ignored).
+    let docs = args.iter().any(|a| a == "--docs");
+    let client = palette_core::semantic::Client::new(std::sync::Arc::new(std::sync::RwLock::new(palette_core::index::Catalog::default())));
+    if !docs {
+        let Some(hwnd) = find(&title) else { return println!("no window with '{title}'") };
+        uia::begin(hwnd);
+    }
     if args.iter().any(|a| a == "--warm") {
         // As the palette does while you type: the model reads the window before the question comes.
         let t = Instant::now();
@@ -49,11 +55,11 @@ fn main() {
         println!("warmed in {:.1}s (model started and the window read)", t.elapsed().as_secs_f32());
     }
     let t = Instant::now();
-    let p = match chat::prepare(&question) {
+    let p = match chat::prepare(&question, &|q| client.context(q, 4, Duration::from_secs(30))) {
         Ok(p) => p,
         Err(e) => return println!("error: {e}"),
     };
-    println!("prepared in {:.1}s: app {}, from the {}, model {}, request {} bytes", t.elapsed().as_secs_f32(), p.app, p.source, p.model, p.body.len());
+    println!("prepared in {:.1}s: app {}, from the {}, model {}, request {} bytes, sources {:?}", t.elapsed().as_secs_f32(), p.app, p.source, p.model, p.body.len(), p.sources);
 
     let mut s = TcpStream::connect(("127.0.0.1", p.port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(120))).unwrap();

@@ -67,6 +67,15 @@ struct RawReply {
     text: Option<String>,
     #[serde(default)]
     marks: Vec<(usize, usize)>,
+    /// A context reply: the best chunk of each document that matched.
+    #[serde(default)]
+    docs: Vec<RawDoc>,
+}
+
+#[derive(Deserialize)]
+struct RawDoc {
+    path: String,
+    text: String,
 }
 
 /// The part of a document that answers a query (see `Client::passage`).
@@ -440,6 +449,30 @@ impl Client {
             return None;
         };
         reply.text.map(|text| Passage { text, marks: reply.marks })
+    }
+
+    /// The best chunk of each of the `k` documents that match `q` best, to answer a question from:
+    /// (path, text). Empty when none match well enough or there is no helper. Blocks up to `timeout`
+    /// (reading a PDF takes a moment); call from a worker thread.
+    pub fn context(&self, q: &str, k: usize, timeout: Duration) -> Vec<(String, String)> {
+        if self.disabled || !self.ensure_started() {
+            return Vec::new();
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        let msg = serde_json::json!({"op": "context", "id": id, "q": q, "k": k, "min": thresholds().doc}).to_string();
+        if !self.send(&msg) {
+            self.pending.lock().unwrap().remove(&id);
+            return Vec::new();
+        }
+        match rx.recv_timeout(timeout) {
+            Ok(reply) => reply.docs.into_iter().map(|d| (d.path, d.text)).collect(),
+            Err(_) => {
+                self.pending.lock().unwrap().remove(&id);
+                Vec::new()
+            }
+        }
     }
 
     /// One-line human status for the footer, from the helper's status file.

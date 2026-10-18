@@ -1,4 +1,4 @@
-//! Asking about the window in front: "summarise this", "what does this error mean", "translate
+//! Asking about the window in front, or about your own documents: "summarise this", "what does this error mean", "translate
 //! this". A language model that runs on this PC answers from the text the window shows (or the text
 //! you selected), and the answer is streamed into the palette itself (the shell does the
 //! streaming; this module readies everything it needs).
@@ -47,6 +47,12 @@ const READ_WAIT: Duration = Duration::from_secs(8);
 const READ_FRESH: Duration = Duration::from_secs(60);
 /// The pause in typing before the window is read ahead.
 const WARM_AFTER: Duration = Duration::from_millis(400);
+
+const SYSTEM_DOCS: &str = "You are Palette, an assistant built into the user's PC. The user asks a question about their own documents. \
+Excerpts from the most relevant ones follow, numbered [1], [2], and so on; each is a piece of a longer file. \
+Answer only from the excerpts, briefly and concretely, in the language of the question, and cite the excerpt behind each fact as [1] or [2]. \
+If the excerpts do not answer it, say so plainly and say what they do cover. Never invent. \
+Use plain text: no markdown headings, no bold, no tables.";
 
 /// Names to prefer, best first, when several models are about.
 const PREFERRED: [&str; 8] = ["qwen3.5-4b", "qwen3-4b", "gemma-3-4b", "gemma-3n", "llama-3.2-3b", "phi-4-mini", "qwen3-8b", "gemma-3-12b"];
@@ -254,8 +260,23 @@ pub fn wants(query: &str) -> Option<String> {
 /// The row that offers the answer, when the query asks, there is a window to ask about and a model.
 pub fn hits(query: &str) -> Vec<Hit> {
     let Some(question) = wants(query) else { return Vec::new() };
+    if !available() {
+        return Vec::new();
+    }
+    if about_documents(&question) {
+        if !crate::semantic::available() {
+            return Vec::new();
+        }
+        return vec![Hit {
+            title: question,
+            subtitle: "Ask your documents  \u{b7}  on this PC".into(),
+            kind: Kind::Ask,
+            action: Action::Builtin("ask".into()),
+            score: 9500,
+        }];
+    }
     let app = crate::uia::app_name();
-    if app.is_empty() || !available() {
+    if app.is_empty() {
         return Vec::new();
     }
     let about = if crate::uia::has_selection() { format!("your selection in {app}") } else { format!("the {app} window") };
@@ -314,7 +335,7 @@ pub fn warm_now(question: &str) {
     let Ok(Ok((port, _))) = server.join() else { return };
     let _ = question;
     let Some((user, _)) = ctx.as_ref().and_then(|c| build_prompt(c, SENTINEL)) else { return };
-    let Some(prompt) = template(port, &user) else { return };
+    let Some(prompt) = template(port, SYSTEM, &user) else { return };
     let Some(at) = prompt.find(SENTINEL) else { return };
     // Everything before the question, and nothing written: the model reads it and keeps it.
     let prefix = prompt[..at].trim_end_matches(' ');
@@ -325,10 +346,10 @@ pub fn warm_now(question: &str) {
 const SENTINEL: &str = "\u{2063}Q\u{2063}";
 
 /// The prompt the server makes of the conversation, with the model's own chat template.
-fn template(port: u16, user: &str) -> Option<String> {
+fn template(port: u16, system: &str, user: &str) -> Option<String> {
     let body = serde_json::json!({
         "messages": [
-            {"role": "system", "content": SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "chat_template_kwargs": {"enable_thinking": false},
@@ -349,10 +370,10 @@ fn completion(prompt: &str, stream: bool, n_predict: i32) -> String {
     .to_string()
 }
 
-fn request(user: &str, stream: bool, max_tokens: u32) -> String {
+fn request(system: &str, user: &str, stream: bool, max_tokens: u32) -> String {
     serde_json::json!({
         "messages": [
-            {"role": "system", "content": SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "stream": stream,
@@ -374,24 +395,80 @@ pub struct Prepared {
     pub body: String,
     pub app: String,
     pub model: String,
-    /// "selection" or "window": what the answer is from.
+    /// "selection", "window" or "documents": what the answer is from.
     pub source: &'static str,
+    /// For "documents": the files the excerpts came from, numbered as the answer cites them.
+    pub sources: Vec<String>,
 }
 
 /// Read the window and ready the model, in parallel (the first takes a second or two, the second a
 /// few seconds when the model has to load). Blocks: call from a worker thread.
-pub fn prepare(question: &str) -> Result<Prepared, String> {
+pub fn prepare(question: &str, documents: &dyn Fn(&str) -> Vec<(String, String)>) -> Result<Prepared, String> {
+    if about_documents(question) {
+        return prepare_documents(question, documents);
+    }
     let server = std::thread::spawn(ensure_server);
     let ctx = window(crate::uia::scan_id());
     let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
     let ctx = ctx.ok_or("I couldn't read that window")?;
     let (user, source) = build_prompt(&ctx, question).ok_or_else(|| format!("There is no text to read in {}", ctx.app))?;
     // The same prompt the warm-up began, so the model only reads the question.
-    let (path, body) = match template(port, &user) {
+    let (path, body) = match template(port, SYSTEM, &user) {
         Some(prompt) => ("/completion", completion(&prompt, true, 700)),
-        None => ("/v1/chat/completions", request(&user, true, 700)),
+        None => ("/v1/chat/completions", request(SYSTEM, &user, true, 700)),
     };
-    Ok(Prepared { port, path, body, app: ctx.app, model, source })
+    Ok(Prepared { port, path, body, app: ctx.app, model, source, sources: Vec::new() })
+}
+
+/// Answer from the user's documents: the best chunk of each of the best few, found by the meaning
+/// search and the word index, in the prompt; the answer cites them by number.
+fn prepare_documents(question: &str, documents: &dyn Fn(&str) -> Vec<(String, String)>) -> Result<Prepared, String> {
+    let server = std::thread::spawn(ensure_server);
+    let found = documents(question);
+    let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
+    if found.is_empty() {
+        return Err("I found nothing about that in your documents".into());
+    }
+    let names: Vec<String> = found
+        .iter()
+        .map(|(p, _)| Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.clone()))
+        .collect();
+    *SOURCES.lock().unwrap() = found.iter().map(|(p, _)| p.clone()).collect();
+    let mut user = String::from("Excerpts from the user's documents:\n\n");
+    for (i, ((_, text), name)) in found.iter().zip(&names).enumerate() {
+        user.push_str(&format!("[{}] {name}\n\"\"\"\n{}\n\"\"\"\n\n", i + 1, text.trim()));
+    }
+    user.push_str(&format!("Question: {question}"));
+    let (path, body) = match template(port, SYSTEM_DOCS, &user) {
+        Some(prompt) => ("/completion", completion(&prompt, true, 700)),
+        None => ("/v1/chat/completions", request(SYSTEM_DOCS, &user, true, 700)),
+    };
+    Ok(Prepared { port, path, body, app: String::new(), model, source: "documents", sources: names })
+}
+
+/// The files the last answer from documents cited, in the order it numbered them.
+static SOURCES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub fn sources() -> Vec<String> {
+    SOURCES.lock().unwrap().clone()
+}
+
+/// Does the question point at what is on screen ("this", "here", "the error"), rather than ask about
+/// one's files? "? when does my lease end" is about documents; "? what does this mean" is the window.
+pub fn points_at_screen(question: &str) -> bool {
+    const POINTS: [&str; 24] = [
+        "this", "that", "it", "here", "selected", "selection", "above", "these", "page", "error", "text", "window", "screen",
+        "tab", "ce", "cette", "ceci", "cela", "\u{e7}a", "ici", "s\u{e9}lection", "ces", "\u{e9}cran", "message",
+    ];
+    question
+        .to_lowercase()
+        .split(|c: char| c.is_whitespace() || matches!(c, '?' | ',' | '!' | '.'))
+        .any(|w| POINTS.contains(&w))
+}
+
+/// Is this question to be answered from the user's documents?
+pub fn about_documents(question: &str) -> bool {
+    !points_at_screen(question)
 }
 
 /// The user's message for the model, and what it is from; None when there is nothing to read.
@@ -457,6 +534,15 @@ mod tests {
         assert_eq!(wants("r\u{e9}sume \u{e7}a").as_deref(), Some("r\u{e9}sume \u{e7}a"));
         assert_eq!(wants("? who wrote it").as_deref(), Some("who wrote it"));
         assert_eq!(wants("ask what is on this page").as_deref(), Some("what is on this page"));
+    }
+
+    #[test]
+    fn a_question_is_about_the_screen_or_about_files() {
+        assert!(points_at_screen("what does this error mean"));
+        assert!(points_at_screen("who wrote it"));
+        assert!(!points_at_screen("when does my lease end"));
+        assert!(about_documents("what voltage does the clutch motor need"));
+        assert!(!about_documents("summarise this page"));
     }
 
     #[test]

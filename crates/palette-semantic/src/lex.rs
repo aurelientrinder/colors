@@ -158,6 +158,36 @@ impl Lex {
         }
     }
 
+    /// Documents that have most of the words in `terms` (see `extract::query_terms`), best first: the
+    /// words are weighed by how rare they are among the documents, so "plan" and "NPU" count for more
+    /// than "model". At least two words, and three fifths of the weight, must be there. For a question
+    /// that is not one exact sentence.
+    pub fn rank(&self, terms: &[String], k: usize) -> Vec<String> {
+        if terms.len() < 2 || self.map.is_empty() {
+            return Vec::new();
+        }
+        let n = self.map.len() as f32;
+        let df: Vec<f32> = terms.iter().map(|t| self.map.values().filter(|e| has(&e.bits, t)).count() as f32).collect();
+        let weight: Vec<f32> = df.iter().map(|d| ((n + 1.0) / (d + 0.5)).ln()).collect();
+        let total: f32 = weight.iter().sum();
+        let mut scored: Vec<(f32, usize, &str)> = Vec::new();
+        for (path, e) in &self.map {
+            let mut got = 0.0;
+            let mut count = 0;
+            for (t, w) in terms.iter().zip(&weight) {
+                if has(&e.bits, t) {
+                    got += w;
+                    count += 1;
+                }
+            }
+            if count >= 2 && got >= 0.6 * total {
+                scored.push((got, e.bits.len(), path));
+            }
+        }
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        scored.into_iter().take(k).map(|(_, _, p)| p.to_string()).collect()
+    }
+
     /// Documents that have the words of `query`, best first, as (path, score): 1.0 for all of its
     /// words, 0.9 for all but one of a long query's. A shorter document ranks above a longer one that
     /// has the same words (the sentence is more of it).
@@ -214,6 +244,19 @@ mod tests {
         // Too few words: left to the other tiers.
         assert!(lex.search("lease ends", 5).is_empty());
         assert!(lex.search("zebra giraffe antelope", 5).is_empty());
+    }
+
+    #[test]
+    fn a_question_ranks_documents_by_the_rare_words_they_have() {
+        let mut lex = Lex { path: PathBuf::new(), map: HashMap::new(), dirty: false, flushed: Instant::now() };
+        lex.set("lease.pdf", (1, 1), Some(LEASE));
+        lex.set("notes.txt", (1, 1), Some("The tenant and the landlord met about the garden and the monthly newsletter."));
+        lex.set("recipe.pdf", (1, 1), Some("Whisk the eggs with sugar until pale, then bake for forty minutes."));
+        let terms: Vec<String> = ["tenant", "rent", "lease", "ends"].map(String::from).to_vec();
+        let ranked = lex.rank(&terms, 5);
+        assert_eq!(ranked.first().map(String::as_str), Some("lease.pdf"));
+        assert!(!ranked.iter().any(|p| p == "recipe.pdf"));
+        assert!(lex.rank(&["rent".to_string()], 5).is_empty());
     }
 
     #[test]

@@ -390,6 +390,13 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
     if hit.kind == Kind::Proc {
         v.push(row("endtask", "End task", ""));
     }
+    // The documents an answer cited, to open (chat.rs).
+    if hit.kind == Kind::Ask {
+        for (i, path) in crate::chat::sources().iter().enumerate() {
+            let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            v.push(row(&format!("opendoc:{i}"), format!("Open [{}] {name}", i + 1), ""));
+        }
+    }
     if crate::clip::link_of(hit).is_some() {
         v.push(row("openlink", "Open link", ""));
     }
@@ -560,6 +567,15 @@ pub fn act(hit: &Hit, id: &str, pins: &mut Pins, usage: &mut Usage) -> After {
             }
             None => After::NotApplicable,
         },
+        _ if id.starts_with("opendoc:") && hit.kind == Kind::Ask => {
+            match id["opendoc:".len()..].parse::<usize>().ok().and_then(|i| crate::chat::sources().get(i).cloned()) {
+                Some(path) => {
+                    actions::shell_open(&path);
+                    After::Hide
+                }
+                None => After::NotApplicable,
+            }
+        }
         "endtask" if hit.kind == Kind::Proc => match crate::pcinfo::pid_of(hit) {
             Some(pid) => {
                 crate::pcinfo::end(pid);

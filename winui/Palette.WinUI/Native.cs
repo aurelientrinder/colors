@@ -201,6 +201,7 @@ public static class Native
         [property: JsonPropertyName("app")] string? App = null,
         [property: JsonPropertyName("model")] string? Model = null,
         [property: JsonPropertyName("source")] string? Source = null,
+        [property: JsonPropertyName("sources")] List<string>? Sources = null,
         [property: JsonPropertyName("error")] string? Error = null);
 
     public static AskReady AskPrepare(string question) =>

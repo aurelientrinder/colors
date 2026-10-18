@@ -304,6 +304,27 @@ fn terms(q: &str) -> Vec<String> {
     out
 }
 
+/// The words of a question worth looking for in a text (lowercased, without the little ones).
+pub fn query_terms(q: &str) -> Vec<String> {
+    terms(q)
+}
+
+/// How many of `terms` (see `query_terms`) the text has, each counted once.
+pub fn coverage(text: &str, terms: &[String]) -> usize {
+    let mut seen = vec![false; terms.len()];
+    for (s, e, hit) in words_in(text, terms) {
+        if hit {
+            let w = text[s..e].to_lowercase();
+            for (i, t) in terms.iter().enumerate() {
+                if same_word(&w, t) {
+                    seen[i] = true;
+                }
+            }
+        }
+    }
+    seen.into_iter().filter(|b| *b).count()
+}
+
 /// Does `word` (lowercased) stand for `term`? The shorter one's first five letters must open the
 /// other, so "taxes" finds "tax" and "leasing" finds "lease" without a stemmer.
 fn same_word(word: &str, term: &str) -> bool {
@@ -456,6 +477,15 @@ mod tests {
         let chunk = format!("{filler}le comportement pr\u{e9}sentait un caract\u{e8}re plus qu'excessif et particuli\u{e8}rement abusif et rendait impossible la poursuite du contrat; {filler}");
         let p = passage(&chunk, "un caract\u{e8}re plus qu'excessif et particuli\u{e8}rement abusif et rendait impossible la poursuite du").unwrap();
         assert!(p.text.contains("particuli\u{e8}rement abusif"), "{}", p.text);
+    }
+
+    #[test]
+    fn a_text_is_counted_by_the_question_words_it_has() {
+        let terms = query_terms("how fast is the plan model on the NPU");
+        assert_eq!(terms, vec!["fast", "plan", "model", "npu"]);
+        assert_eq!(coverage("The plan model runs on the NPU in 30 ms, fast.", &terms), 4);
+        assert_eq!(coverage("Plans for the weekend.", &terms), 1);
+        assert_eq!(coverage("Nothing here.", &terms), 0);
     }
 
     #[test]
