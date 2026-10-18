@@ -359,6 +359,20 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
         hits.push(file_hit(path, dir, score));
     }
 
+    // "settings" asks for Palette's own too, which a dozen "... settings" pages would push out of the
+    // list: it goes right after Windows' Settings page.
+    if matches!(lq.as_str(), "settings" | "setting" | "preferences" | "options" | "palette settings" | "palette options") {
+        let after = hits.iter().filter(|h| h.title == "Settings").map(|h| h.score).max();
+        hits.retain(|h| !matches!(&h.action, Action::Builtin(id) if id == "palettesettings"));
+        hits.push(Hit {
+            title: "Palette: Settings".into(),
+            subtitle: "The shortcut, what Palette reads and remembers".into(),
+            kind: Kind::Command,
+            action: Action::Builtin("palettesettings".into()),
+            score: after.map_or(2000, |s| s - 1),
+        });
+    }
+
     // Always offer a web search as the last resort.
     hits.push(web_hit(q));
 
