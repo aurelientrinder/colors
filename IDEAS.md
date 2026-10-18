@@ -13,6 +13,29 @@ Cross one off (or move it to the README) when it ships.
   them by meaning too.
 - **Recent files per app.** "word" shows its recent documents, "code" its recent workspaces (jump
   lists, VS Code's `storage.json`). Extends Home's Recent folder idea to each app.
+- **Ranking that knows where you opened it from.** Key the learned picks (`usage.rs`) on the
+  foreground app as well as the typed prefix: `rep` opened over Excel finds the report workbook,
+  over VS Code the repo. Same data, one more key.
+- **A Home that guesses the next thing.** Time of day, weekday, the Wi-Fi network and whether the
+  external display is plugged in say "at work, Monday morning" well enough. A small model over
+  the usage log puts the likely next app or file at the top of Home.
+
+## The window in front
+Palette already sees the foreground window (it returns focus there) and, with UI Access, can
+read and drive elevated windows too. Nothing uses what is in them yet.
+- **Search the app's own commands.** Walk the foreground window's menus, ribbon and toolbar with
+  UI Automation and list them as rows: in Paint, "resize" presses the Resize button; in an app
+  with deep menus, "export pdf" finds File › Export › PDF. macOS's Help menu search, for every
+  app. Cache per app and window class, since walking a ribbon is slow.
+- **Selected text as the query.** Text selected when the palette opens (UIA `TextPattern`, else a
+  copy kept off the clipboard history) fills the field, with actions for what it is: calculate,
+  convert, define, open the URL, format the JSON, change case, find the files that mention it.
+  Enter pastes the result back over the selection.
+- **"This".** Requests that point at the window in front: "close this", "move this to the other
+  screen", "find the file this is", "pin this". The plan model needs one more slot.
+- **Click by keyboard.** Hold a key and every clickable thing on screen gets a letter (UI
+  Automation's invokable elements), as Vimium does in a browser. Two keystrokes press any button
+  in any app, elevated ones included.
 
 ## Files
 - **Quick actions on files.** Select a file, press a key: zip, copy as path, rename, move to,
@@ -24,6 +47,14 @@ Cross one off (or move it to the README) when it ships.
   the Recent folder: what you had open Tuesday, what you were editing in Word yesterday.
 - **OCR for scanned PDFs and images**, with the offline `Windows.Media.Ocr`. Closes a "Not yet
   done" item and makes screenshots searchable by their text.
+- **Show the passage, not just the file.** The semantic index already knows which chunk
+  matched; show it under the row with the matching words highlighted. "When does my lease end"
+  shows the sentence, and Enter opens the PDF at that page.
+- **Find similar** in a file's actions: its own vectors as the query. The same distances flag
+  near-duplicate documents for a tidy-up.
+- **File chores in plain words, shown before they run.** "Move last month's screenshots into
+  Pictures\2026-09": the plan model writes the steps, the palette lists the files they would
+  touch, Enter does it and Undo puts them back.
 
 ## Everyday features
 - **Clipboard history**, searchable from the palette (`Clipboard.GetHistoryItemsAsync` gives
@@ -35,6 +66,21 @@ Cross one off (or move it to the README) when it ships.
   aliases and snippets, written in plain words and read by the NPU model.
 - **Undo for plans**, not only quick settings (`Views.cs`). Save window positions before a snap or
   arrange step so Undo can put them back.
+- **Resume yesterday.** Keep a local log of which windows and files were in front, and when
+  (`ShellHooks` and the file watcher already see both). "What was I doing Tuesday afternoon"
+  lists them; "resume yesterday" opens them again where they were. Stays on the PC.
+- **Answers about the PC itself.** "port 3000" shows the process listening, with End task; "who
+  has this file open" asks the Restart Manager and offers to close it; "what's using my camera"
+  reads the consent store; "why is my fan loud" sorts the system card's processes by CPU.
+- **Hold the Copilot key to talk.** It is already intercepted. Speech to text offline (Windows'
+  recogniser, or Whisper on the NPU through the same OpenVINO setup) feeds the plan model.
+- **Shell history.** `>` searches past PowerShell commands (PSReadLine's
+  `ConsoleHost_history.txt`) before running anything new; Enter runs one again in Terminal.
+- **Screen tools.** "Copy text from screen" (drag a box, `Windows.Media.Ocr` reads it) and "pick
+  colour" (a magnifier, Enter copies the hex) as plain rows, without a separate PowerToys.
+- **Expand as you type, anywhere.** The keyboard hook sees every key, so a snippet trigger
+  (`;addr`) or `=2*3=` typed in any app can be replaced in place. Pairs with "Teach it in one
+  sentence".
 
 ## Polish and reach
 - **Teach the invisible parts**: a rotating tip on Home and a short first-run card. The footer
