@@ -34,6 +34,8 @@ const MAX_ELEMENTS: usize = 400;
 pub const MAX_ROWS: usize = 3;
 /// Longest selection kept, in characters (a paragraph is a fine query for the meaning search).
 const MAX_SELECTION: usize = 400;
+/// Longest selection kept as it is, to be asked about (chat.rs).
+const RAW_SELECTION: usize = 6000;
 
 /// Programs never read: what they show is not the palette's business.
 const PRIVATE_PROGRAMS: &[&str] = &["keepass", "1password", "bitwarden", "lastpass", "dashlane", "enpass", "nordpass", "roboform"];
@@ -64,6 +66,8 @@ struct Scan {
     app: String,
     icon: String,
     selection: Option<String>,
+    /// The same with its line breaks and up to a few thousand characters, for asking about it.
+    selection_raw: Option<String>,
     /// The selection step has finished (with or without text).
     selection_done: bool,
     cmds: Vec<Cmd>,
@@ -148,6 +152,49 @@ pub fn commands(wait: Duration) -> Vec<(String, String)> {
     }
 }
 
+/// Is some text selected in the window (read when the palette opened)? Does not wait.
+pub fn has_selection() -> bool {
+    STATE.0.lock().unwrap().as_ref().is_some_and(|s| s.selection_raw.is_some())
+}
+
+/// What a window shows, as text, for asking about it (chat.rs).
+pub struct WindowText {
+    pub app: String,
+    pub title: String,
+    /// Its text, as the program offers it (a document's, else its labels in reading order).
+    pub text: String,
+    /// What was selected in it when the palette opened, with its line breaks.
+    pub selection: Option<String>,
+    /// A terminal: the newest text is at the end.
+    pub terminal: bool,
+}
+
+/// The text of the window `begin` was given (and its selection). Reads the whole window through UI
+/// Automation, which another program may be slow to answer: gives up after `wait`. Blocks: call from
+/// a worker thread. None for no window, a private program, or a read that failed or took too long.
+pub fn window_text(max_chars: usize, wait: Duration) -> Option<WindowText> {
+    // The selection step is quick; wait for it so a selection is never missed.
+    let _ = selection(Duration::from_millis(600));
+    let (hwnd, app, selection) = {
+        let g = STATE.0.lock().unwrap();
+        let s = g.as_ref()?;
+        (s.hwnd, s.app.clone(), s.selection_raw.clone())
+    };
+    if hwnd == 0 || app.is_empty() || is_private(&app) || is_shell_window(hwnd) {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let r = unsafe {
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            read_window_text(hwnd, max_chars)
+        };
+        let _ = tx.send(r);
+    });
+    let (title, text, terminal) = rx.recv_timeout(wait).ok()??;
+    Some(WindowText { app, title, text, selection, terminal })
+}
+
 /// The program the selection was read from ("Notepad"), for the row that offers it.
 pub fn app_name() -> String {
     STATE.0.lock().unwrap().as_ref().map(|s| s.app.clone()).unwrap_or_default()
@@ -161,9 +208,10 @@ unsafe fn scan(seq: u64, hwnd: isize) {
     };
 
     // The selection first: it is what the Home view waits for.
-    let text = read_selection(&ui, hwnd);
+    let raw = read_selection(&ui, hwnd);
     publish(seq, |s| {
-        s.selection = text;
+        s.selection = raw.as_deref().and_then(one_line);
+        s.selection_raw = raw.filter(|t| t.chars().filter(|c| c.is_alphanumeric()).count() >= 2);
         s.selection_done = true;
     });
 
@@ -220,8 +268,8 @@ unsafe fn read_selection(ui: &IUIAutomation, hwnd: isize) -> Option<String> {
     if ranges.Length().ok()? < 1 {
         return None;
     }
-    let text = ranges.GetElement(0).ok()?.GetText(2000).ok()?.to_string();
-    one_line(&text)
+    let text = ranges.GetElement(0).ok()?.GetText(RAW_SELECTION as i32).ok()?.to_string();
+    Some(text)
 }
 
 /// The text on one line, trimmed and cut; None when it holds nothing worth a query.
@@ -238,6 +286,90 @@ fn one_line(text: &str) -> Option<String> {
     }
     let out: String = out.chars().take(MAX_SELECTION).collect();
     (out.chars().filter(|c| c.is_alphanumeric()).count() >= 2).then_some(out)
+}
+
+/// (title, text, is a terminal) of a window.
+unsafe fn read_window_text(hwnd: isize, max_chars: usize) -> Option<(String, String, bool)> {
+    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    let ui = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+    let root = ui.ElementFromHandle(HWND(hwnd as *mut _)).ok()?;
+    let title = root.CurrentName().map(|n| n.to_string()).unwrap_or_default();
+    let mut class = [0u16; 64];
+    let n = GetClassNameW(HWND(hwnd as *mut _), &mut class) as usize;
+    let class = String::from_utf16_lossy(&class[..n.min(class.len())]);
+    let terminal = matches!(class.as_str(), "CASCADIA_HOSTING_WINDOW_CLASS" | "ConsoleWindowClass" | "mintty" | "VirtualConsoleClass");
+
+    // Documents, editors and terminals hand over their whole text through TextPattern.
+    let mut parts: Vec<String> = Vec::new();
+    // Only what is on screen: another tab's text, in a program with tabs, is not what is being looked at.
+    let has_text = ui
+        .CreateAndCondition(
+            &ui.CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId, &VARIANT::from(true)).ok()?,
+            &ui.CreatePropertyCondition(UIA_IsOffscreenPropertyId, &VARIANT::from(false)).ok()?,
+        )
+        .ok()?;
+    if let Ok(found) = root.FindAll(TreeScope_Descendants, &has_text) {
+        for i in 0..found.Length().unwrap_or(0).min(12) {
+            let Ok(el) = found.GetElement(i) else { continue };
+            if el.CurrentIsPassword().is_ok_and(|p| p.as_bool()) {
+                continue;
+            }
+            let Ok(pattern) = el.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) else { continue };
+            let Ok(range) = pattern.DocumentRange() else { continue };
+            let Ok(text) = range.GetText(max_chars as i32 * 2) else { continue };
+            let text = text.to_string();
+            if text.trim().chars().count() >= 20 && !parts.iter().any(|p| p.contains(text.trim()) || text.contains(p.as_str())) {
+                parts.push(text.trim().to_string());
+            }
+        }
+    }
+    parts.sort_by_key(|p| std::cmp::Reverse(p.chars().count()));
+    let mut text = parts.join("\n\n");
+
+    // Otherwise what is written on the screen: labels, list items, links, in reading order.
+    if text.chars().filter(|c| !c.is_whitespace()).count() < 200 {
+        text = read_labels(&ui, &root).unwrap_or(text);
+    }
+    (!text.trim().is_empty()).then_some((title, text, terminal))
+}
+
+/// The names of the visible text-bearing elements of a window, top to bottom, left to right.
+unsafe fn read_labels(ui: &IUIAutomation, root: &IUIAutomationElement) -> Option<String> {
+    let cache = ui.CreateCacheRequest().ok()?;
+    cache.AddProperty(UIA_NamePropertyId).ok()?;
+    cache.AddProperty(UIA_BoundingRectanglePropertyId).ok()?;
+    cache.SetTreeScope(TreeScope_Element).ok()?;
+    let is_type = |t: UIA_CONTROLTYPE_ID| ui.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(t.0));
+    let mut kinds = is_type(UIA_TextControlTypeId).ok()?;
+    for t in [UIA_HyperlinkControlTypeId, UIA_ListItemControlTypeId, UIA_DataItemControlTypeId, UIA_TreeItemControlTypeId, UIA_HeaderItemControlTypeId] {
+        kinds = ui.CreateOrCondition(&kinds, &is_type(t).ok()?).ok()?;
+    }
+    let cond = ui.CreateAndCondition(&kinds, &ui.CreatePropertyCondition(UIA_IsOffscreenPropertyId, &VARIANT::from(false)).ok()?).ok()?;
+    let found = root.FindAllBuildCache(TreeScope_Descendants, &cond, &cache).ok()?;
+    let mut items: Vec<(i32, i32, String)> = Vec::new();
+    for i in 0..found.Length().ok()?.min(1500) {
+        let Ok(el) = found.GetElement(i) else { continue };
+        let Ok(name) = el.CachedName() else { continue };
+        let name = name.to_string();
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let r = el.CachedBoundingRectangle().unwrap_or_default();
+        items.push((r.top / 8, r.left, name.to_string()));
+    }
+    items.sort_by_key(|(row, left, _)| (*row, *left));
+    items.dedup_by(|a, b| a.2 == b.2);
+    let mut out = String::new();
+    let mut row = i32::MIN;
+    for (r, _, name) in items {
+        if !out.is_empty() {
+            out.push(if r == row { ' ' } else { '\n' });
+        }
+        row = r;
+        out.push_str(&name);
+    }
+    Some(out)
 }
 
 unsafe fn read_commands(ui: &IUIAutomation, hwnd: isize) -> Vec<Cmd> {

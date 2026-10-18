@@ -79,6 +79,7 @@ public sealed partial class MainWindow
             "Calculator" => "Copy result",
             "Clipboard" => "Copy",
             "Process" => "Show in folder",
+            "Ask" => row.Answer is AskAnswer { Text.Length: > 0 } ? "Copy answer" : "Ask",
             "Info" => "Copy",
             "Web" => "Search the web",
             "Toggle" => "Apply",

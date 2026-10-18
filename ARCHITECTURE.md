@@ -58,8 +58,25 @@ Access):
   menu bar items, checkboxes), read in one cached call when the palette opens, matched by name as
   you type, pressed through Invoke / Toggle / ExpandCollapse / SelectionItem.
 
-**next:** the window's text (for "summarise this"), OCR when UI Automation has nothing
-(`Windows.Media.Ocr`), a vision model only when layout is the question. Cheap first, always.
+- *Window text.* **now** (`uia.rs`, `window_text`): read when a question is asked, not before. The
+  on-screen elements that offer a TextPattern (documents, editors, terminals) give their whole text;
+  failing that, the visible labels in reading order. Off-screen elements (another tab's) are left
+  out. Capped, and cut at the start (or, for a terminal, the end).
+
+**next:** OCR when UI Automation has nothing (`Windows.Media.Ocr`), a vision model only when layout is
+the question. Cheap first, always.
+
+## The brain: asking about the window
+
+**now** (`chat.rs`, `AskView.cs`): the first model above the 270M plan model. A chat GGUF (Qwen3.5 4B
+here) runs behind llama.cpp's server on the GPU, on 127.0.0.1. The engine readies the question (reads
+the window and starts the server in parallel, builds the prompt) and returns the port and the request;
+the shell streams the reply into a card under the row. Local only by decision: no key, no account,
+nothing sent. It loads on demand and is released after ten idle minutes (rule 6: keystrokes are never
+blocked on it, the row is offered by rules and the model starts only on Enter).
+
+The router's rung above this, a cloud model, is not built; when it is, it is a second row that says
+so and asks for a yes each time (rule 5).
 
 ## Tools (next)
 
@@ -90,6 +107,8 @@ can use the file index, meaning search, window control and screen reader.
 
 1. Senses and the passage (now): selection, app commands, the matching passage under a result.
 2. The tool registry, with `intent.rs`'s steps moved onto it, and plans shown as a card.
-3. "Ask about this window": window text into a local model, answers in the same field.
+3. "Ask about this window": window text into a local model, answers in the same field. (**done**;
+   follow-up questions, the answer as a conversation, and "write in place" come next on the same
+   model.)
 4. A larger local model behind the router; MCP in both directions.
 5. Driving apps ("show it once"), triggers, memory.

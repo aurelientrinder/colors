@@ -139,6 +139,30 @@ Some settings change in place, without opening anything; the row says what Enter
 Open windows now also need every typed word to begin a word of their title or app, so a long
 page title no longer matches unrelated searches.
 
+## Asking about the window in front
+
+With a window open behind the palette, a request that points at it gets a row of its own, and Enter
+puts the answer under the row as the model writes it, in the same field. A model that runs on this PC
+reads the window's text (or the text you had selected) and answers; nothing leaves the machine.
+
+| You type | Palette |
+|---|---|
+| `summarise this`, `explain this`, `what does this error mean`, `translate this to french`, `résume ça` | a row "Ask about the Notepad window · on this PC"; Enter asks |
+| `? what is the open question here`, `ask who wrote it` | the same for any question |
+
+The answer streams into a card (up to a few lines, then it scrolls); Enter again copies it, typing or
+`Esc` stops it. Selected text is what it answers about when there is some (the row says "your
+selection"), with the window around it for context; otherwise the window's own text (a document's or
+a page's text; for a terminal the newest lines). Only what is on screen is read, never password
+fields or password managers. Questions that do not point at the screen ("what is the capital of
+France") stay web answers.
+
+Setup: `scripts\get-chat.ps1` fetches llama.cpp's server (the Vulkan build, 32 MB) into `models\chat`;
+the model is any chat GGUF of 2 to 12 GB: `PALETTE_CHAT_MODEL`, a file in `models\chat`, or one LM
+Studio already has (Qwen3.5 4B preferred, then Gemma 3 4B). The model loads on the first question
+(a few seconds) and is let go after ten idle minutes. On an Intel Arc GPU a 4B model reads about 280
+words a second and writes about 25. `examples\ask_probe.rs` asks about any window from the command line.
+
 ## The window in front
 
 When the palette opens it reads the window you were in (UI Automation, in memory only; Settings'

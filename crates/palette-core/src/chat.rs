@@ -1,0 +1,390 @@
+//! Asking about the window in front: "summarise this", "what does this error mean", "translate
+//! this". A language model that runs on this PC answers from the text the window shows (or the text
+//! you selected), and the answer is streamed into the palette itself (the shell does the
+//! streaming; this module readies everything it needs).
+//!
+//! Local, and visibly so: the row says "on this PC", the window's text goes to `llama-server`
+//! listening on 127.0.0.1 and nowhere else, the model is loaded only when asked and let go after ten
+//! idle minutes. Nothing is kept: the text is read when the question is asked and dropped once the
+//! prompt is built.
+//!
+//! The model is any chat GGUF of a few billion parameters: `PALETTE_CHAT_MODEL`, or one in
+//! `models\chat`, or one LM Studio already downloaded (Qwen3.5 4B is preferred, then Gemma 3 4B).
+//! The runtime is llama.cpp's server, the GPU (Vulkan) build, in `models\chat` too
+//! (`scripts\get-chat.ps1`).
+
+use crate::model::{Action, Hit, Kind};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::Child;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// How long the model stays loaded after the last question.
+const IDLE_STOP: Duration = Duration::from_secs(600);
+/// Characters of window text sent: about three thousand tokens, which the GPU reads in ten seconds.
+const WINDOW_CHARS: usize = 12_000;
+/// Characters of a selection, and of the window around it when there is one.
+const SELECTION_CHARS: usize = 6_000;
+const AROUND_CHARS: usize = 3_000;
+/// Longest a read of the window may take.
+const READ_WAIT: Duration = Duration::from_secs(8);
+
+/// Names to prefer, best first, when several models are about.
+const PREFERRED: [&str; 8] = ["qwen3.5-4b", "qwen3-4b", "gemma-3-4b", "gemma-3n", "llama-3.2-3b", "phi-4-mini", "qwen3-8b", "gemma-3-12b"];
+
+const SYSTEM: &str = "You are Palette, an assistant built into the user's PC. The user is looking at a window and asks about it. \
+Answer from the text given; it is read from the screen, so it may hold interface noise (menus, buttons) around the content. \
+Be brief and concrete: a few short sentences or a short list. Answer in the language of the question. \
+Use plain text: no markdown headings, no bold, no tables. \
+If the text does not hold the answer, say what is missing instead of guessing.";
+
+// ---------------------------------------------------------------------------------------------- the model
+
+/// The chat model to use, if there is one.
+pub fn model_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("PALETTE_CHAT_MODEL").map(PathBuf::from) {
+        return p.exists().then_some(p);
+    }
+    let mut files: Vec<(PathBuf, u64)> = Vec::new();
+    let mut add = |dir: &Path, depth: usize| gguf_in(dir, depth, &mut files);
+    if let Some(d) = crate::paths::chat_dir() {
+        add(&d, 1);
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+        add(&home.join(".lmstudio").join("models"), 3);
+    }
+    pick(files)
+}
+
+fn gguf_in(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, u64)>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        let Ok(meta) = e.metadata() else { continue };
+        if meta.is_dir() {
+            if depth > 1 {
+                gguf_in(&p, depth - 1, out);
+            }
+        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")) {
+            out.push((p, meta.len()));
+        }
+    }
+}
+
+/// The best of `files`: a chat model of two to twelve gigabytes (not a vision projector), the
+/// preferred names first.
+fn pick(files: Vec<(PathBuf, u64)>) -> Option<PathBuf> {
+    let mut ok: Vec<(PathBuf, u64)> = files
+        .into_iter()
+        .filter(|(p, size)| {
+            let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            !n.contains("mmproj") && (1_500_000_000..=12_000_000_000).contains(size)
+        })
+        .collect();
+    ok.sort_by_key(|(p, size)| {
+        let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        (PREFERRED.iter().position(|k| n.contains(k)).unwrap_or(PREFERRED.len()), *size)
+    });
+    ok.into_iter().next().map(|(p, _)| p)
+}
+
+/// "Qwen3.5-4B-Q4_K_S" as "Qwen3.5 4B".
+pub fn label(model: &Path) -> String {
+    let stem = model.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let parts: Vec<&str> = stem.split(['-', '_']).collect();
+    // Everything from the quantisation on ("Q4_K_S") is left out.
+    let end = parts
+        .iter()
+        .position(|p| {
+            let l = p.to_lowercase();
+            let rest = l.strip_prefix("iq").or_else(|| l.strip_prefix('q'));
+            rest.is_some_and(|r| r.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        })
+        .unwrap_or(parts.len());
+    let mut parts = parts[..end].to_vec();
+    while parts.last().is_some_and(|p| matches!(p.to_lowercase().as_str(), "it" | "instruct" | "gguf")) {
+        parts.pop();
+    }
+    parts.join(" ")
+}
+
+/// Is there a runtime and a model to ask?
+pub fn available() -> bool {
+    crate::paths::chat_dir().is_some() && model_path().is_some()
+}
+
+// ---------------------------------------------------------------------------------------------- the server
+
+struct Server {
+    child: Child,
+    port: u16,
+    model: String,
+}
+
+static SERVER: Mutex<Option<Server>> = Mutex::new(None);
+static LAST_USED: Mutex<Option<Instant>> = Mutex::new(None);
+
+fn touch() {
+    *LAST_USED.lock().unwrap() = Some(Instant::now());
+}
+
+/// The server's port and the model's name, starting it (and loading the model) if it is not running.
+fn ensure_server() -> Result<(u16, String), String> {
+    let mut g = SERVER.lock().unwrap();
+    if let Some(s) = g.as_mut() {
+        if matches!(s.child.try_wait(), Ok(None)) {
+            touch();
+            return Ok((s.port, s.model.clone()));
+        }
+        *g = None;
+    }
+    let dir = crate::paths::chat_dir().ok_or("The chat runtime is missing (run scripts\\get-chat.ps1)")?;
+    let model = model_path().ok_or("No chat model found (put a GGUF in models\\chat, or download one in LM Studio)")?;
+    let args = |port: u16| -> Vec<OsString> {
+        let mut a: Vec<OsString> = Vec::new();
+        for s in ["-m"] {
+            a.push(s.into());
+        }
+        a.push(model.clone().into_os_string());
+        for s in [
+            "--host", "127.0.0.1", "--port", &port.to_string(), "-c", "8192", "-ngl", "99", "-t", "4", "--jinja", "--no-webui",
+            "--parallel", "1",
+        ] {
+            a.push(s.into());
+        }
+        a
+    };
+    let (child, port) = crate::planner::launch_wait(&dir.join("llama-server.exe"), args, &dir, Duration::from_secs(90))
+        .ok_or("The chat model did not start")?;
+    let name = label(&model);
+    *g = Some(Server { child, port, model: name.clone() });
+    drop(g);
+    touch();
+    watch();
+    Ok((port, name))
+}
+
+/// Let go of the model after it has been idle for a while.
+fn watch() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(30));
+            let idle = LAST_USED.lock().unwrap().is_some_and(|t| t.elapsed() > IDLE_STOP);
+            if idle {
+                stop();
+            }
+        });
+    });
+}
+
+/// Stop the server (the model's memory is freed).
+pub fn stop() {
+    if let Some(mut s) = SERVER.lock().unwrap().take() {
+        let _ = s.child.kill();
+        let _ = s.child.wait();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------- asking
+
+/// Which typed queries ask about the window: a "?" first, "ask ...", or a request that points at
+/// what is on screen ("summarise this", "what does this error mean"). The question, without the lead.
+pub fn wants(query: &str) -> Option<String> {
+    let q = query.trim();
+    if let Some(rest) = q.strip_prefix('?') {
+        let rest = rest.trim();
+        return (rest.chars().count() >= 2).then(|| rest.to_string());
+    }
+    let lower = q.to_lowercase();
+    if let Some(rest) = lower.strip_prefix("ask ") {
+        let rest = q[q.len() - rest.len()..].trim();
+        return (rest.chars().count() >= 3).then(|| rest.to_string());
+    }
+    const LEADS: [&str; 24] = [
+        "summarise", "summarize", "summary", "explain", "translate", "what", "why", "how", "who", "fix", "rewrite", "shorten",
+        "proofread", "tldr", "tl;dr", "r\u{e9}sume", "r\u{e9}sumer", "resume", "explique", "traduis", "traduire", "pourquoi",
+        "comment", "corrige",
+    ];
+    const POINTS: [&str; 20] = [
+        "this", "that", "it", "here", "selected", "selection", "above", "these", "page", "error", "text", "ce", "cette", "ceci",
+        "cela", "\u{e7}a", "ici", "s\u{e9}lection", "ces", "message",
+    ];
+    let words: Vec<String> = lower
+        .split(|c: char| c.is_whitespace() || matches!(c, '?' | ',' | '!' | '.'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    let first = words.first()?;
+    (words.len() >= 2 && LEADS.contains(&first.as_str()) && words[1..].iter().any(|w| POINTS.contains(&w.as_str())))
+        .then(|| q.trim_end_matches('?').trim().to_string())
+}
+
+/// The row that offers the answer, when the query asks, there is a window to ask about and a model.
+pub fn hits(query: &str) -> Vec<Hit> {
+    let Some(question) = wants(query) else { return Vec::new() };
+    let app = crate::uia::app_name();
+    if app.is_empty() || !available() {
+        return Vec::new();
+    }
+    let about = if crate::uia::has_selection() { format!("your selection in {app}") } else { format!("the {app} window") };
+    vec![Hit {
+        title: question,
+        subtitle: format!("Ask about {about}  \u{b7}  on this PC"),
+        kind: Kind::Ask,
+        action: Action::Builtin("ask".into()),
+        score: 9500,
+    }]
+}
+
+/// Everything the shell needs to stream an answer: where the server is and the request to send it.
+pub struct Prepared {
+    pub port: u16,
+    /// The JSON body for `/v1/chat/completions` (streaming).
+    pub body: String,
+    pub app: String,
+    pub model: String,
+    /// "selection" or "window": what the answer is from.
+    pub source: &'static str,
+}
+
+/// Read the window and ready the model, in parallel (the first takes a second or two, the second a
+/// few seconds when the model has to load). Blocks: call from a worker thread.
+pub fn prepare(question: &str) -> Result<Prepared, String> {
+    let server = std::thread::spawn(ensure_server);
+    let ctx = crate::uia::window_text(WINDOW_CHARS, READ_WAIT);
+    let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
+    let ctx = ctx.ok_or("I couldn't read that window")?;
+    let (user, source) = build_prompt(&ctx, question).ok_or_else(|| format!("There is no text to read in {}", ctx.app))?;
+    let body = serde_json::json!({
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "stream": true,
+        "max_tokens": 700,
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "chat_template_kwargs": {"enable_thinking": false},
+    })
+    .to_string();
+    Ok(Prepared { port, body, app: ctx.app, model, source })
+}
+
+/// The user's message for the model, and what it is from; None when there is nothing to read.
+fn build_prompt(ctx: &crate::uia::WindowText, question: &str) -> Option<(String, &'static str)> {
+    let place = if ctx.title.is_empty() { ctx.app.clone() } else { format!("{} ({})", ctx.title, ctx.app) };
+    if let Some(sel) = ctx.selection.as_deref().filter(|s| !s.trim().is_empty()) {
+        let sel = cut(sel, SELECTION_CHARS, false);
+        let around = cut(&ctx.text, AROUND_CHARS, ctx.terminal);
+        let mut user = format!("In {place}, the user selected this text:\n\"\"\"\n{sel}\n\"\"\"\n");
+        if !around.trim().is_empty() {
+            user.push_str(&format!("\nThe rest of the window, for context only:\n\"\"\"\n{around}\n\"\"\"\n"));
+        }
+        user.push_str(&format!("\nQuestion about the selected text: {question}"));
+        return Some((user, "selection"));
+    }
+    if ctx.text.trim().is_empty() {
+        return None;
+    }
+    let text = cut(&ctx.text, WINDOW_CHARS, ctx.terminal);
+    Some((format!("Window: {place}\nText on screen:\n\"\"\"\n{text}\n\"\"\"\n\nQuestion: {question}"), "window"))
+}
+
+/// `text` cut to `max` characters: its start, or (`tail`: a terminal's newest lines are at the end)
+/// its end, with a note of the cut.
+fn cut(text: &str, max: usize, tail: bool) -> String {
+    let text = text.trim();
+    let n = text.chars().count();
+    if n <= max {
+        return text.to_string();
+    }
+    if tail {
+        let skip = text.chars().skip(n - max).collect::<String>();
+        let from = skip.find('\n').map_or(0, |i| i + 1);
+        format!("[earlier text left out]\n{}", &skip[from..])
+    } else {
+        let head: String = text.chars().take(max).collect();
+        let upto = head.rfind(['\n', ' ']).unwrap_or(head.len());
+        format!("{}\n[the rest is left out]", &head[..upto])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uia::WindowText;
+
+    fn ctx(text: &str, selection: Option<&str>, terminal: bool) -> WindowText {
+        WindowText {
+            app: "Notepad".into(),
+            title: "notes.txt - Notepad".into(),
+            text: text.into(),
+            selection: selection.map(str::to_string),
+            terminal,
+        }
+    }
+
+    #[test]
+    fn requests_that_point_at_the_screen_ask() {
+        assert_eq!(wants("summarise this").as_deref(), Some("summarise this"));
+        assert_eq!(wants("what does this error mean?").as_deref(), Some("what does this error mean"));
+        assert_eq!(wants("How do I fix this").as_deref(), Some("How do I fix this"));
+        assert_eq!(wants("translate this to french").as_deref(), Some("translate this to french"));
+        assert_eq!(wants("r\u{e9}sume \u{e7}a").as_deref(), Some("r\u{e9}sume \u{e7}a"));
+        assert_eq!(wants("? who wrote it").as_deref(), Some("who wrote it"));
+        assert_eq!(wants("ask what is on this page").as_deref(), Some("what is on this page"));
+    }
+
+    #[test]
+    fn everything_else_is_a_search() {
+        assert_eq!(wants("what is the capital of france"), None);
+        assert_eq!(wants("how tall is the eiffel tower"), None);
+        assert_eq!(wants("notepad"), None);
+        assert_eq!(wants("summarise"), None);
+        assert_eq!(wants("resume.docx"), None);
+        assert_eq!(wants("?"), None);
+        assert_eq!(wants("this is a file name"), None);
+    }
+
+    #[test]
+    fn a_model_is_chosen_by_name_then_size() {
+        let gb = |n: u64| n * 1_000_000_000;
+        let files = vec![
+            (PathBuf::from(r"C:\m\mmproj-F32.gguf"), gb(2)),
+            (PathBuf::from(r"C:\m\tiny-0.5b.gguf"), 400_000_000),
+            (PathBuf::from(r"C:\m\Llama-3.2-3B-Q4.gguf"), gb(2)),
+            (PathBuf::from(r"C:\m\Qwen3.5-4B-Q4_K_S.gguf"), gb(3)),
+            (PathBuf::from(r"C:\m\huge-70b.gguf"), gb(40)),
+        ];
+        assert_eq!(pick(files).as_deref(), Some(Path::new(r"C:\m\Qwen3.5-4B-Q4_K_S.gguf")));
+        assert_eq!(pick(vec![(PathBuf::from("a.gguf"), 100)]), None);
+        assert_eq!(label(Path::new(r"C:\m\Qwen3.5-4B-Q4_K_S.gguf")), "Qwen3.5 4B");
+        assert_eq!(label(Path::new("gemma-3-4b-it-Q4_0.gguf")), "gemma 3 4b");
+    }
+
+    #[test]
+    fn the_prompt_says_what_it_is_from() {
+        let (p, src) = build_prompt(&ctx("Dear Bob, the lease ends in August.", None, false), "summarise this").unwrap();
+        assert_eq!(src, "window");
+        assert!(p.contains("Text on screen") && p.contains("lease ends") && p.ends_with("Question: summarise this"), "{p}");
+
+        let (p, src) = build_prompt(&ctx("other text", Some("selected words"), false), "explain this").unwrap();
+        assert_eq!(src, "selection");
+        assert!(p.contains("selected this text") && p.contains("selected words") && p.contains("for context only"), "{p}");
+
+        assert!(build_prompt(&ctx("  ", None, false), "summarise this").is_none());
+    }
+
+    #[test]
+    fn long_text_is_cut_at_the_start_or_the_end() {
+        let text = (1..=2000).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let head = cut(&text, 100, false);
+        assert!(head.starts_with("line 1\n") && head.ends_with("[the rest is left out]"));
+        assert!(head.chars().count() < 140);
+        let tail = cut(&text, 100, true);
+        assert!(tail.starts_with("[earlier text left out]\nline ") && tail.ends_with("line 2000"), "{tail}");
+        assert_eq!(cut("short", 100, false), "short");
+    }
+}

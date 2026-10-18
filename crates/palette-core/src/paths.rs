@@ -47,6 +47,23 @@ pub fn planner_dir() -> Option<PathBuf> {
         .find(|c| c.join("plan.gguf").exists() && c.join("llama-server.exe").exists())
 }
 
+/// Folder holding `llama-server.exe` (the GPU build) for the chat model, as `models\chat` beside the
+/// exe or above it (scripts\get-chat.ps1).
+pub fn chat_dir() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("PALETTE_CHAT_DIR").map(PathBuf::from) {
+        return p.join("llama-server.exe").exists().then_some(p);
+    }
+    let mut dir = exe_dir();
+    let mut bases: Vec<PathBuf> = Vec::new();
+    for _ in 0..9 {
+        let Some(d) = dir else { break };
+        bases.push(d.join("models"));
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+    bases.push(data_dir().join("models"));
+    bases.into_iter().map(|b| b.join("chat")).find(|c| c.join("llama-server.exe").exists())
+}
+
 /// palette-plan.exe (the plan model on the NPU) sits next to the shell exe.
 pub fn plan_exe() -> Option<PathBuf> {
     let p = exe_dir()?.join("palette-plan.exe");

@@ -306,7 +306,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     let typed: Vec<String> = q.split_whitespace().map(&norm).filter(|w| !w.is_empty()).collect();
     let instant_is_real = last.1.first().is_some_and(|h| match h.kind {
         // A calculator result or a quick setting answers the query as typed.
-        crate::model::Kind::Calc | crate::model::Kind::Toggle | crate::model::Kind::Plan | crate::model::Kind::Clip | crate::model::Kind::Proc | crate::model::Kind::Info => true,
+        crate::model::Kind::Calc | crate::model::Kind::Toggle | crate::model::Kind::Plan | crate::model::Kind::Clip | crate::model::Kind::Proc | crate::model::Kind::Info | crate::model::Kind::Ask => true,
         crate::model::Kind::Web => false, // the fallback row says nothing about relevance
         _ => {
             let t = norm(&h.title);
@@ -514,6 +514,7 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
             | crate::model::Kind::Clip
             | crate::model::Kind::Proc
             | crate::model::Kind::Info
+            | crate::model::Kind::Ask
     ) {
         if let Ok(mut u) = e.usage.lock() {
             let query = match &*e.last_query.lock().unwrap() {
@@ -756,4 +757,27 @@ pub unsafe extern "C" fn pc_clip_add(text: *const c_char, at: i64) {
 #[no_mangle]
 pub extern "C" fn pc_clip_clear() {
     crate::clip::clear();
+}
+
+/// Ready an answer about the window in front: read its text and start the chat model (loading it
+/// the first time). Returns `{"ok":true,"port":N,"body":"<json to post>","app","model","source"}` or
+/// `{"ok":false,"error":"..."}`. Takes up to a few seconds: call from a worker thread. Free with
+/// `pc_free`.
+///
+/// # Safety
+/// `question` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_ask_prepare(question: *const c_char) -> *mut c_char {
+    let q = if question.is_null() { "" } else { CStr::from_ptr(question).to_str().unwrap_or("") };
+    let out = match crate::chat::prepare(q.trim()) {
+        Ok(p) => serde_json::json!({"ok": true, "port": p.port, "body": p.body, "app": p.app, "model": p.model, "source": p.source}),
+        Err(e) => serde_json::json!({"ok": false, "error": e}),
+    };
+    into_c(out.to_string())
+}
+
+/// Let go of the chat model (its memory is freed; the next question loads it again).
+#[no_mangle]
+pub extern "C" fn pc_ask_stop() {
+    crate::chat::stop();
 }

@@ -282,6 +282,7 @@ public sealed partial class MainWindow
         SystemPreview.Visibility = Visibility.Collapsed;
         SystemStats.Stop();
         FactPreview.Visibility = Visibility.Collapsed;
+        AskPreview.Visibility = Visibility.Collapsed;
         FactImage.Source = null;
         PreviewImage.Source = null;
         PreviewImage.Visibility = Visibility.Collapsed;

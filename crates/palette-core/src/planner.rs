@@ -94,6 +94,11 @@ fn npu_ready() -> Option<(PathBuf, PathBuf)> {
 
 /// Start `exe` with the arguments `args(port)` and wait until it answers `/health`.
 fn launch(exe: &Path, args: impl FnOnce(u16) -> Vec<OsString>, dir: &Path) -> Option<(Child, u16)> {
+    launch_wait(exe, args, dir, Duration::from_secs(20))
+}
+
+/// As `launch`, waiting up to `wait` for the server (a big model takes longer to load).
+pub(crate) fn launch_wait(exe: &Path, args: impl FnOnce(u16) -> Vec<OsString>, dir: &Path, wait: Duration) -> Option<(Child, u16)> {
     // A free port on this PC only.
     let port = TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
     let mut child = Command::new(exe)
@@ -107,7 +112,7 @@ fn launch(exe: &Path, args: impl FnOnce(u16) -> Vec<OsString>, dir: &Path) -> Op
         .ok()?;
     kill_with_us(&child);
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(20) {
+    while start.elapsed() < wait {
         if http(port, "GET", "/health", "", Duration::from_millis(500)).is_some_and(|b| b.contains("\"ok\"")) {
             return Some((child, port));
         }

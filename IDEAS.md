@@ -148,6 +148,11 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Ask about the window in front (`chat.rs`, `AskView.cs`, `uia.rs` window text): `summarise this`,
+  `what does this error mean`, `? anything` offer a row, and Enter streams an answer from a 4B model
+  on this PC into a card under it. Still to do: follow-up questions (keep the window as context),
+  write in place (rewrite the selection), OCR for windows that expose no text, a thinking mode for
+  harder questions, and a spoken question.
 - Exact sentences find their document (`lex.rs`): a word filter per document over its whole text,
   so a sentence copied from anywhere in a PDF finds it, and the passage shown is the chunk that has
   it. Still to do: the word filters could rank by how close together the words are (a phrase, not

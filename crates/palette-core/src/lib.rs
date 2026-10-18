@@ -3,6 +3,7 @@
 
 pub mod actions;
 pub mod browse;
+pub mod chat;
 pub mod ffi;
 pub mod home;
 pub mod iconsrc;

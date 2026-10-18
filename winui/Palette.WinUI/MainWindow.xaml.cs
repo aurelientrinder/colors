@@ -582,7 +582,8 @@ public sealed partial class MainWindow : Window
         double since = (DateTime.UtcNow - _shownAt).TotalMilliseconds;
         if (since > 400)
         {
-            HidePalette(restoreFocus: false);   // the user clicked or switched elsewhere
+            // The user clicked or switched elsewhere. (PALETTE_KEEP keeps it open, to look at it.)
+            if (Environment.GetEnvironmentVariable("PALETTE_KEEP") is null) HidePalette(restoreFocus: false);
         }
         else if (_reassertTries < 3)
         {
@@ -643,6 +644,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         _ignoreText = null;
+        CancelAsk();
         if (_view == View.Actions)
         {
             if (_renaming) ShowRename();
@@ -847,6 +849,11 @@ public sealed partial class MainWindow : Window
         if (vm.Does == "selection" && !reveal)
         {
             UseSelection();
+            return;
+        }
+        if (vm.RawKind == "Ask" && !reveal)
+        {
+            AskOrCopy(vm);
             return;
         }
         if (vm.RawKind == "Command" && vm.Title == KeyHintsCommand && !reveal)

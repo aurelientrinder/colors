@@ -204,6 +204,11 @@ public sealed partial class MainWindow
                 FactPreview.Visibility = Visibility.Visible;
                 h = FactPreview.Height;
                 break;
+            case AskAnswer ask:
+                AskPreview.Visibility = Visibility.Visible;
+                RenderAsk(ask);
+                h = AskPreview.Height;
+                break;
         }
         _pvFull = 6 + h + 12;   // the pane's gap above and margin below, as for a sum
     }

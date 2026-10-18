@@ -966,6 +966,34 @@
                                 <Image x:Name="FactImage" Stretch="UniformToFill" />
                             </Border>
                         </Grid>
+
+                        <!-- an answer about the window in front, written by the model as you watch -->
+                        <Grid
+                            x:Name="AskPreview"
+                            Height="120"
+                            Padding="20,14,20,10"
+                            RowSpacing="8"
+                            Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ScrollViewer
+                                x:Name="AskScroll"
+                                HorizontalScrollMode="Disabled"
+                                VerticalScrollBarVisibility="Auto">
+                                <TextBlock
+                                    x:Name="AskText"
+                                    LineHeight="21"
+                                    TextWrapping="Wrap" />
+                            </ScrollViewer>
+                            <TextBlock
+                                x:Name="AskFooter"
+                                Grid.Row="1"
+                                FontSize="11"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                TextTrimming="CharacterEllipsis" />
+                        </Grid>
                     </Grid>
                 </Border>
             </Grid>

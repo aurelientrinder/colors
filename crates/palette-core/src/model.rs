@@ -24,6 +24,8 @@ pub enum Kind {
     Proc,
     /// A plain statement answering a question ("Nothing is listening on port 3000"): not a result to open.
     Info,
+    /// A question about the window in front, answered by a model on this PC (see chat.rs).
+    Ask,
 }
 
 impl Kind {
@@ -43,6 +45,7 @@ impl Kind {
             Kind::Clip => "Clipboard",
             Kind::Proc => "Process",
             Kind::Info => "Info",
+            Kind::Ask => "Ask",
         }
     }
     /// Ranking nudge so apps beat same-scoring files.
@@ -57,7 +60,7 @@ impl Kind {
             Kind::Folder => 20,
             Kind::File => 0,
             // Quick settings are scored by how well the query names them (see quick.rs).
-            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip | Kind::Proc | Kind::Info => 0,
+            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip | Kind::Proc | Kind::Info | Kind::Ask => 0,
         }
     }
 }

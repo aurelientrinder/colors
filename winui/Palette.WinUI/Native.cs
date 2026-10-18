@@ -32,6 +32,12 @@ public static class Native
     private static extern void pc_clip_clear();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_ask_prepare([MarshalAs(UnmanagedType.LPUTF8Str)] string question);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void pc_ask_stop();
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern int pc_rename(ulong gen, int index, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -180,6 +186,25 @@ public static class Native
     /// <summary>Something was copied at that unix time; the engine keeps it in memory for "clip" searches.</summary>
     public static void ClipAdd(string text, long unixSeconds) => pc_clip_add(text, unixSeconds);
 
+    /// <summary>
+    /// Where an answer about the window in front comes from (see chat.rs): the model's server and the
+    /// request to send it. Reads the window and may load the model, so call off the UI thread.
+    /// </summary>
+    public sealed record AskReady(
+        [property: JsonPropertyName("ok")] bool Ok,
+        [property: JsonPropertyName("port")] int Port = 0,
+        [property: JsonPropertyName("body")] string? Body = null,
+        [property: JsonPropertyName("app")] string? App = null,
+        [property: JsonPropertyName("model")] string? Model = null,
+        [property: JsonPropertyName("source")] string? Source = null,
+        [property: JsonPropertyName("error")] string? Error = null);
+
+    public static AskReady AskPrepare(string question) =>
+        Read(pc_ask_prepare(question), NativeJson.Default.AskReady) ?? new AskReady(false, Error: "I couldn't answer that");
+
+    /// <summary>Let go of the chat model's memory.</summary>
+    public static void AskStop() => pc_ask_stop();
+
     /// <summary>Forget everything copied.</summary>
     public static void ClipClear() => pc_clip_clear();
 
@@ -302,6 +327,7 @@ public static class Native
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Native.Control))]
 [JsonSerializable(typeof(Native.FileOutcome))]
+[JsonSerializable(typeof(Native.AskReady))]
 [JsonSerializable(typeof(Native.PassageReply))]
 internal sealed partial class NativeJson : JsonSerializerContext
 {

@@ -134,6 +134,7 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
     hits.extend(crate::quick::hits(q));
     hits.extend(crate::clip::hits(q));
     hits.extend(crate::pcinfo::hits(q));
+    hits.extend(crate::chat::hits(q));
 
     let cat = catalog.read().unwrap();
     let usage = usage.lock().unwrap();

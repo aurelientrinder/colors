@@ -65,6 +65,7 @@ public sealed class HitVm : INotifyPropertyChanged
             "Control" => ("\uE768", "Run", false),
             "Clipboard" => ("\uE8C8", "Copy", false),
             "Process" => ("\uE8A7", "Show in folder", false),
+            "Ask" => ("\uE8BD", "Ask", false),
             "Info" => ("\uE8C8", "Copy", false),
             "Web" => ("\uE8A7", "Search the web", false),
             "File" or "Folder" or "App" => ("\uE8A7", "Open file location", true),
@@ -173,7 +174,7 @@ public sealed class HitVm : INotifyPropertyChanged
     {
         "File" when System.IO.Path.GetExtension(path ?? "") is { Length: > 1 } ext => ext[1..].ToUpperInvariant() + " File",
         "Setting" => "Settings",
-        "Toggle" or "Status" or "Plan" or "Control" or "Clipboard" or "Info" => "",
+        "Toggle" or "Status" or "Plan" or "Control" or "Clipboard" or "Info" or "Ask" => "",
         _ => kind,
     };
 
@@ -225,6 +226,7 @@ public sealed class HitVm : INotifyPropertyChanged
             "Plan" => "\uE8A7",
             "Calculator" => "\uE8EF",
             "Info" => "\uE946",
+            "Ask" => "\uE8BD",
             "Web" => "\uE721",
             "Window" => "\uE737",
             _ => "\uE7C3",
@@ -646,7 +648,7 @@ public sealed class HitVm : INotifyPropertyChanged
         CanUndo = o.CanUndo;
         if (IconKey != o.IconKey) _icon = o._icon;
         IconKey = o.IconKey;
-        Answer = o.Answer;
+        Answer = o.Answer ?? (Answer is AskAnswer ? Answer : null);   // an answer being written stays through a refresh
         AnswerUrl = o.AnswerUrl;
         AnswerAltUrl = o.AnswerAltUrl;
         if (o.Does != Does || o.ControlKey != ControlKey) { _nowPlaying = ""; _playing = false; }
