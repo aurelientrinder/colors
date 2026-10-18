@@ -78,6 +78,7 @@ public sealed partial class MainWindow
             "Calculator" => "Copy result",
             "Clipboard" => "Copy",
             "Process" => "Show in folder",
+            "Info" => "Copy",
             "Web" => "Search the web",
             "Toggle" => "Apply",
             "Plan" => "Run",

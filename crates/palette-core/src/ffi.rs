@@ -306,7 +306,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     let typed: Vec<String> = q.split_whitespace().map(&norm).filter(|w| !w.is_empty()).collect();
     let instant_is_real = last.1.first().is_some_and(|h| match h.kind {
         // A calculator result or a quick setting answers the query as typed.
-        crate::model::Kind::Calc | crate::model::Kind::Toggle | crate::model::Kind::Plan | crate::model::Kind::Clip | crate::model::Kind::Proc => true,
+        crate::model::Kind::Calc | crate::model::Kind::Toggle | crate::model::Kind::Plan | crate::model::Kind::Clip | crate::model::Kind::Proc | crate::model::Kind::Info => true,
         crate::model::Kind::Web => false, // the fallback row says nothing about relevance
         _ => {
             let t = norm(&h.title);
@@ -505,6 +505,7 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
             | crate::model::Kind::Plan
             | crate::model::Kind::Clip
             | crate::model::Kind::Proc
+            | crate::model::Kind::Info
     ) {
         if let Ok(mut u) = e.usage.lock() {
             let query = match &*e.last_query.lock().unwrap() {

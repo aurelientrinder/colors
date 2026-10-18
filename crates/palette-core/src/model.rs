@@ -22,6 +22,8 @@ pub enum Kind {
     Clip,
     /// A running program, found by a question about the PC (see pcinfo.rs).
     Proc,
+    /// A plain statement answering a question ("Nothing is listening on port 3000"): not a result to open.
+    Info,
 }
 
 impl Kind {
@@ -40,6 +42,7 @@ impl Kind {
             Kind::Control => "Control",
             Kind::Clip => "Clipboard",
             Kind::Proc => "Process",
+            Kind::Info => "Info",
         }
     }
     /// Ranking nudge so apps beat same-scoring files.
@@ -54,7 +57,7 @@ impl Kind {
             Kind::Folder => 20,
             Kind::File => 0,
             // Quick settings are scored by how well the query names them (see quick.rs).
-            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip | Kind::Proc => 0,
+            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip | Kind::Proc | Kind::Info => 0,
         }
     }
 }

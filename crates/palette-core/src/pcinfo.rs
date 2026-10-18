@@ -126,7 +126,7 @@ fn port_hits(port: u16) -> Vec<Hit> {
         return vec![Hit {
             title: format!("Nothing is listening on port {port}"),
             subtitle: "It is free to use".into(),
-            kind: Kind::Calc,
+            kind: Kind::Info,
             action: Action::Copy(port.to_string()),
             score: 9000,
         }];
