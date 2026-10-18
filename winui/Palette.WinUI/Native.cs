@@ -32,6 +32,18 @@ public static class Native
     private static extern void pc_clip_clear();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int pc_rename(ulong gen, int index, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_destinations(ulong gen, int index);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_file_outcome();
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void pc_file_undo();
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr pc_selection(int waitMs);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -205,7 +217,24 @@ public static class Native
     public static List<ActionRow> Actions(ulong gen, int index) =>
         Read(pc_actions(gen, index), NativeJson.Default.ListActionRow) ?? new();
 
-    public enum ActResult { NotApplicable = -1, Hide = 1, Refresh = 3 }
+    public enum ActResult { NotApplicable = -1, Hide = 1, Refresh = 3, Done = 5 }
+
+    /// <summary>How the last file operation (zip, rename, move, recycle) went.</summary>
+    public sealed record FileOutcome(
+        [property: JsonPropertyName("message")] string Message,
+        [property: JsonPropertyName("ok")] bool Ok,
+        [property: JsonPropertyName("undo")] bool Undo);
+
+    public static FileOutcome Outcome() => Read(pc_file_outcome(), NativeJson.Default.FileOutcome) ?? new("", false, false);
+
+    public static void UndoFile() => pc_file_undo();
+
+    /// <summary>Rename the file or folder of a row; the result is in <see cref="Outcome"/>.</summary>
+    public static ActResult Rename(ulong gen, int index, string name) => (ActResult)pc_rename(gen, index, name);
+
+    /// <summary>Folders the row could be moved to, as action rows.</summary>
+    public static List<ActionRow> Destinations(ulong gen, int index) =>
+        Read(pc_destinations(gen, index), NativeJson.Default.ListActionRow) ?? new();
 
     public static ActResult Act(ulong gen, int index, string id) => (ActResult)pc_act(gen, index, id);
 
@@ -272,6 +301,7 @@ public static class Native
 [JsonSerializable(typeof(List<Native.ActionRow>))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Native.Control))]
+[JsonSerializable(typeof(Native.FileOutcome))]
 [JsonSerializable(typeof(Native.PassageReply))]
 internal sealed partial class NativeJson : JsonSerializerContext
 {

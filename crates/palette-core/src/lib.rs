@@ -18,6 +18,7 @@ pub mod semantic;
 pub mod settings_index;
 pub mod clip;
 pub mod convert;
+pub mod fileops;
 pub mod uia;
 pub mod usage;
 pub mod wins;

@@ -30,6 +30,8 @@ public sealed partial class MainWindow
     private int _actIndex;
     private string? _actCopyText;
     private string _actTitle = "";
+    private string? _actPath;                 // the file or folder the actions are for
+    private bool _renaming;                   // the field holds a new name for it
     private List<Native.ActionRow> _actions = new();
     private List<Native.ActionRow> _shownActions = new();
     private string _savedQuery = "";
@@ -131,11 +133,13 @@ public sealed partial class MainWindow
     // ------------------------------------------------------------------ done
 
     private string? _undoQuery;               // what to search for to reverse the setting just changed
+    private bool _undoFile;                   // Undo reverses the last file operation instead
     private bool _undoPending;                // the next results are for Undo: run their quick setting
 
     /// <summary>A quick setting ran: keep the palette open on one line saying so.</summary>
     private void ShowDone(string title)
     {
+        _undoFile = false;
         _undoQuery = Inverse(title);
         Interlocked.Increment(ref _queryVersion);   // drop any search still on its way
         SetView(View.Done, SearchPlaceholder);
@@ -159,8 +163,33 @@ public sealed partial class MainWindow
         _ => null,
     };
 
+    /// <summary>A file operation ran (or failed): one line saying so, with Undo when it can be.</summary>
+    private void ShowFileDone(Native.FileOutcome? outcome = null)
+    {
+        var o = outcome ?? Native.Outcome();
+        _undoQuery = null;
+        _undoFile = o.Undo;
+        Interlocked.Increment(ref _queryVersion);
+        SetView(View.Done, SearchPlaceholder);
+        SetInputText("");
+        _latestQuery = "";
+        _holdHeight = false;
+        Items.Clear();
+        Items.Add(HitVm.Status(o.Message, o.Ok ? "Done" : "Not done", canUndo: o.Undo));
+        Resize(recenter: false);
+        UpdatePreview();
+        UpdateOpenButton();
+    }
+
     private void Undo()
     {
+        if (_undoFile)
+        {
+            _undoFile = false;
+            Native.UndoFile();
+            ShowFileDone();
+            return;
+        }
         if (_undoQuery is not { } q) return;
         _undoPending = true;
         SetView(View.Results, SearchPlaceholder);
@@ -220,6 +249,8 @@ public sealed partial class MainWindow
         _actIndex = engine;
         _actCopyText = vm.CopyText;
         _actTitle = vm.Title;
+        _actPath = vm.Path ?? vm.Folder;
+        _renaming = false;
         _actions = acts;
         _savedQuery = Input.Text;
         SetView(View.Actions, $"Actions for {vm.Title}");
@@ -230,6 +261,12 @@ public sealed partial class MainWindow
 
     private static string GlyphFor(string id) => id switch
     {
+        "copyfile" => "\uE8C8",
+        "zip" => "\uF012",
+        "rename" => "\uE8AC",
+        "moveto" => "\uE8DE",
+        _ when id.StartsWith("moveto:", StringComparison.Ordinal) => "\uE8B7",
+        "recycle" => "\uE74D",
         "open" => "",
         "admin" => "",
         "openwith" => "",
@@ -267,6 +304,7 @@ public sealed partial class MainWindow
     private void LeaveActions()
     {
         if (_view != View.Actions) return;
+        _renaming = false;
         if (_actFrom == View.AllApps)
         {
             ShowAllApps(_actIndex);
@@ -280,8 +318,32 @@ public sealed partial class MainWindow
 
     private void RunAction(int row)
     {
+        if (_renaming)
+        {
+            DoRename();
+            return;
+        }
         if (row < 0 || row >= _shownActions.Count) return;
         var a = _shownActions[row];
+        if (a.Id == "rename")
+        {
+            StartRename();
+            return;
+        }
+        if (a.Id == "moveto")
+        {
+            // The same list, now of folders to move it to; typing filters it.
+            _actions = Native.Destinations(_actGen, _actIndex);
+            SetView(View.Actions, "Move to \u2026 type to filter");
+            SetInputText("");
+            ShowActions("");
+            return;
+        }
+        if (a.Id is "zip" or "recycle" or "copyfile" || a.Id.StartsWith("moveto:", StringComparison.Ordinal))
+        {
+            _ = RunFileAction(a.Id);
+            return;
+        }
         if (a.Id == "open")
         {
             LaunchHit(_actGen, _actIndex, _actCopyText, reveal: false);
@@ -304,6 +366,59 @@ public sealed partial class MainWindow
                 LeaveActions();                      // pins changed: show the list again
                 break;
         }
+    }
+
+    /// <summary>Zipping a big folder or copying to the clipboard can take a moment: not on the UI thread.</summary>
+    private async Task RunFileAction(string id)
+    {
+        ulong gen = _actGen;
+        int index = _actIndex;
+        var result = await Task.Run(() => Native.Act(gen, index, id));
+        if (!_visible || _view != View.Actions) return;
+        switch (result)
+        {
+            case Native.ActResult.Done:
+                ShowFileDone();
+                break;
+            case Native.ActResult.Hide:
+                HidePalette(restoreFocus: id == "copyfile");
+                break;
+            case Native.ActResult.NotApplicable when id == "copyfile":
+                ShowFileDone(new Native.FileOutcome("Couldn't copy it", false, false));
+                break;
+        }
+    }
+
+    private void StartRename()
+    {
+        if (_actPath is not { } path) return;
+        string name = System.IO.Path.GetFileName(path.TrimEnd('\\'));
+        int dot = name.LastIndexOf('.');
+        _renaming = true;
+        SetView(View.Actions, "New name");
+        SetInputText(name);
+        Input.Select(0, dot > 0 && !System.IO.Directory.Exists(path) ? dot : name.Length);
+        ShowRename();
+    }
+
+    /// <summary>One line saying what Enter will do with what is typed.</summary>
+    private void ShowRename()
+    {
+        string typed = Input.Text.Trim();
+        string from = _actPath is { } p ? System.IO.Path.GetFileName(p.TrimEnd('\\')) : "";
+        Items.Clear();
+        Items.Add(new HitVm(new Native.Hit(typed.Length == 0 ? "Type a new name" : $"Rename to {typed}", from, "Command", null, null), "\uE8AC", "Enter"));
+        ResultsList.SelectedIndex = 0;
+        _holdHeight = false;
+        Resize(recenter: false);
+        UpdatePreview();
+    }
+
+    private void DoRename()
+    {
+        if (Input.Text.Trim().Length == 0) return;
+        _renaming = false;
+        if (Native.Rename(_actGen, _actIndex, Input.Text) == Native.ActResult.Done) ShowFileDone();
     }
 
     private void OnRowRightTapped(object sender, RightTappedRoutedEventArgs e)

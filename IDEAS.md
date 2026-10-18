@@ -98,8 +98,6 @@ A hub:
   local by default.
 
 ## Files
-- **Quick actions on files.** Select a file, press a key: zip, copy as path, rename, move to,
-  send to. With folder browsing the palette is already a small file manager; this finishes it.
 - **Drop zone.** Drag a file onto the palette; it offers where it could go (recent and pinned
   folders, "send to" apps).
 - **Drag a result out** into an email or chat. Nothing handles dragging in the WinUI code yet.
@@ -152,6 +150,9 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Quick actions on files (`fileops.rs`): copy, compress to ZIP, rename, move to, Recycle Bin, with
+  Undo for the zip, rename and move. Still to do: a key from the results list (F2 renames), several
+  files at once, extract a zip, send to / share, "copy to" beside "move to".
 - Clipboard history by meaning (`clip.rs`, `Clipboard.cs`): `clip ...` lists and finds what was copied,
   by words and then by meaning, with the kind of each (URL, email, path, colour, phone, number, JSON).
   Still to do: more per-kind actions (copy a colour as rgb, format JSON, call a number), paste straight

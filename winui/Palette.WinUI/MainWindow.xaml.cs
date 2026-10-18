@@ -653,7 +653,8 @@ public sealed partial class MainWindow : Window
         _ignoreText = null;
         if (_view == View.Actions)
         {
-            ShowActions(Input.Text);
+            if (_renaming) ShowRename();
+            else ShowActions(Input.Text);
             return;
         }
         if (_view is View.AllApps or View.Done) SetView(View.Results, SearchPlaceholder);   // typing searches everything

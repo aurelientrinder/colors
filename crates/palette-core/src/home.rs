@@ -343,6 +343,14 @@ fn path_of(hit: &Hit) -> Option<PathBuf> {
     }
 }
 
+/// The path of a file or folder row (not an app's), the target of the file actions.
+pub fn file_of(hit: &Hit) -> Option<PathBuf> {
+    match (hit.kind, &hit.action) {
+        (Kind::File | Kind::Folder, Action::Open(p)) => Some(PathBuf::from(p)),
+        _ => None,
+    }
+}
+
 fn elevatable(hit: &Hit) -> bool {
     match hit.kind {
         Kind::App => app_file(hit).is_some() || matches!(&hit.action, Action::Open(t) if !t.starts_with("shell:")),
@@ -394,6 +402,13 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
         c.copy = Some(p.display().to_string());
         v.push(c);
     }
+    if file_of(hit).is_some() {
+        v.push(row("copyfile", if hit.kind == Kind::Folder { "Copy folder" } else { "Copy file" }, ""));
+        v.push(row("zip", "Compress to ZIP", ""));
+        v.push(row("rename", "Rename\u{2026}", ""));
+        v.push(row("moveto", "Move to\u{2026}", ""));
+        v.push(row("recycle", "Move to Recycle Bin", ""));
+    }
     if pinnable(hit) {
         match pin {
             Some((i, n)) => {
@@ -429,6 +444,8 @@ pub enum After {
     Hide,
     /// The list changed (pins): show it again.
     Refresh,
+    /// A file operation ran; `fileops::outcome` says what happened.
+    Done,
 }
 
 /// Runs action `id` on `hit`. Opening plainly is `pc_launch`'s job (it records usage).
@@ -499,6 +516,37 @@ pub fn act(hit: &Hit, id: &str, pins: &mut Pins, usage: &mut Usage) -> After {
                 After::Refresh
             }
             _ => After::NotApplicable,
+        },
+        "copyfile" => match file_of(hit) {
+            Some(p) => {
+                if crate::fileops::copy_file(&p) {
+                    After::Hide
+                } else {
+                    After::NotApplicable
+                }
+            }
+            None => After::NotApplicable,
+        },
+        "zip" => match file_of(hit) {
+            Some(p) => {
+                crate::fileops::zip(&p);
+                After::Done
+            }
+            None => After::NotApplicable,
+        },
+        "recycle" => match file_of(hit) {
+            Some(p) => {
+                crate::fileops::recycle(&p);
+                After::Done
+            }
+            None => After::NotApplicable,
+        },
+        _ if id.starts_with("moveto:") => match file_of(hit) {
+            Some(p) => {
+                crate::fileops::move_to(&p, Path::new(&id["moveto:".len()..]));
+                After::Done
+            }
+            None => After::NotApplicable,
         },
         "openlink" => match crate::clip::link_of(hit) {
             Some(url) => {

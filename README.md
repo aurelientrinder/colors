@@ -172,9 +172,16 @@ result; typing filters them, `Esc` goes back:
 | Open with…, Properties | files (Properties for folders too) | |
 | Open in Terminal | folders | |
 | Copy path | files, folders, desktop apps | |
+| Copy file, Compress to ZIP, Rename…, Move to…, Move to Recycle Bin | files, folders | |
 | Pin to Home / Unpin / Move pin up, down | anything but windows, calculator and web rows | |
 | Uninstall… | apps (opens Settings › Installed apps) | |
 | Close window | open windows | |
+
+The file actions never overwrite or delete for good: a name that is taken gets "(2)" added, and
+Recycle Bin is the only way out. Afterwards a line says what happened, with **Undo** for the zip
+(recycled), rename and move (put back). Rename opens the name in the search field, the part before
+the extension selected. Move to… lists the folder above, Desktop, Documents, Downloads, Pictures,
+Videos, Music, then your pinned and most used folders; typing filters.
 
 Pins live in `%LOCALAPPDATA%\palette\pins.json`. A desktop app's file is the one the shell
 itself reports for it (`System.Link.TargetParsingPath`); Store apps have none, so they get no

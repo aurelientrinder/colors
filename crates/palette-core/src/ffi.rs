@@ -574,7 +574,65 @@ pub unsafe extern "C" fn pc_act(gen: u64, index: i32, id: *const c_char) -> i32 
         home::After::NotApplicable => -1,
         home::After::Hide => 1,
         home::After::Refresh => 3,
+        home::After::Done => 5,
     }
+}
+
+/// Rename the file or folder of hit `index` of generation `gen`. Returns 5 (`pc_file_outcome` says
+/// how it went) or -1 when the row is not a file or folder.
+///
+/// # Safety
+/// `name` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_rename(gen: u64, index: i32, name: *const c_char) -> i32 {
+    let Some(e) = ENGINE.get() else { return -1 };
+    let name = if name.is_null() { "" } else { CStr::from_ptr(name).to_str().unwrap_or("") };
+    let Some(path) = hit_at(e, gen, index).and_then(|h| home::file_of(&h)) else { return -1 };
+    crate::fileops::rename(&path, name);
+    5
+}
+
+/// Folders hit `index` could be moved to, as a JSON array of `{"id":"moveto:<path>","title",...}`
+/// action rows (pinned and often used folders after the usual ones). Free with `pc_free`.
+#[no_mangle]
+pub extern "C" fn pc_destinations(gen: u64, index: i32) -> *mut c_char {
+    #[derive(Serialize)]
+    struct Dest {
+        id: String,
+        title: String,
+        hint: &'static str,
+        copy: Option<String>,
+    }
+    let none = || into_c("[]".into());
+    let Some(e) = ENGINE.get() else { return none() };
+    let Some(path) = hit_at(e, gen, index).and_then(|h| home::file_of(&h)) else { return none() };
+    let mut favourites: Vec<std::path::PathBuf> = Vec::new();
+    let mut folders = |hits: Vec<Hit>| {
+        for h in hits {
+            if let (crate::model::Kind::Folder, Action::Open(p)) = (h.kind, &h.action) {
+                favourites.push(p.into());
+            }
+        }
+    };
+    folders(e.pins.lock().unwrap().list().to_vec());
+    folders(e.usage.lock().unwrap().top(40));
+    let rows: Vec<Dest> = crate::fileops::destinations(&path, &favourites)
+        .into_iter()
+        .map(|(p, title)| Dest { id: format!("moveto:{}", p.display()), title, hint: "", copy: None })
+        .collect();
+    into_c(serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into()))
+}
+
+/// What the last file operation did: `{"message":"Created a.zip","undo":true}`. Free with `pc_free`.
+#[no_mangle]
+pub extern "C" fn pc_file_outcome() -> *mut c_char {
+    into_c(serde_json::to_string(&crate::fileops::outcome()).unwrap_or_else(|_| "{}".into()))
+}
+
+/// Reverse the last file operation that can be; `pc_file_outcome` then says how it went.
+#[no_mangle]
+pub extern "C" fn pc_file_undo() {
+    crate::fileops::undo();
 }
 
 /// Write the icon of hit `index` into `buf` as premultiplied BGRA
