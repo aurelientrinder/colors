@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 
 namespace Palette;
@@ -28,10 +30,12 @@ public sealed class HitVm : INotifyPropertyChanged
         Path = h.Path;
         Folder = h.Folder;
         Does = h.Does;
+        Related = h.Related;
         IsActionRow = glyph != null;
         SetControl(h.Control ?? (glyph == null ? LocalControl?.Invoke(h) : null));
 
         string label = chip ?? (h.Related ? "Related" : h.Pinned ? "Pinned" : KindLabel(h.Kind, h.Path));
+        if (h.Does == "selection") label = "";
         if (h.Kind == "Calculator")
         {
             // The row reads as the sum typed; the answer opens under it (see Preview.cs).
@@ -58,10 +62,12 @@ public sealed class HitVm : INotifyPropertyChanged
             "Command" => ("\uE751", "Run", false),
             "Calculator" => ("\uE8C8", "Copy result", false),
             "Window" => ("\uE8A7", "Switch to", false),
+            "Control" => ("\uE768", "Run", false),
             "Web" => ("\uE8A7", "Search the web", false),
             "File" or "Folder" or "App" => ("\uE8A7", "Open file location", true),
             _ => ("\uE8A7", "Open", false),
         };
+        if (h.Does == "selection") (SecondGlyph, SecondLabel) = ("\uE721", "Search with it");
     }
 
     /// <summary>The line left after a quick setting ran: a check, what was done, and Undo.</summary>
@@ -150,7 +156,7 @@ public sealed class HitVm : INotifyPropertyChanged
     {
         "File" when System.IO.Path.GetExtension(path ?? "") is { Length: > 1 } ext => ext[1..].ToUpperInvariant() + " File",
         "Setting" => "Settings",
-        "Toggle" or "Status" or "Plan" => "",
+        "Toggle" or "Status" or "Plan" or "Control" => "",
         _ => kind,
     };
 
@@ -244,6 +250,7 @@ public sealed class HitVm : INotifyPropertyChanged
         "settings" => "\uE713",
         "shot" => "\uE722",            // Camera
         "url" => "\uE774",             // Globe
+        "selection" => "\uE721",       // Search
         _ => null,
     };
 
@@ -348,7 +355,7 @@ public sealed class HitVm : INotifyPropertyChanged
     public bool HasSwitch => _control?.Kind == "switch";
     public bool HasSlider => _control?.Kind == "slider";
     public bool HasMedia => _control?.Kind == "media";
-    public double ExtraDip => HasSlider ? SliderDip : 0;
+    public double ExtraDip => HasSlider ? SliderDip : HasPassage ? PassageDip : 0;
 
     /// <summary>Take the engine's reading of the control, unless the user moved it a moment ago.</summary>
     public void SetControl(Native.Control? c)
@@ -438,6 +445,68 @@ public sealed class HitVm : INotifyPropertyChanged
     }
 
     public Visibility SwitchVisibility => Vis(HasSwitch);
+
+    // ------------------------------------------------------------ passages
+
+    /// <summary>Room the passage strip takes under its row: two lines of small type.</summary>
+    public const double PassageDip = 42;
+
+    private TextBlock? _passage;
+    private string? _passageKey;
+
+    /// <summary>Found by meaning rather than by name.</summary>
+    public bool Related { get; private set; }
+
+    public bool HasPassage => _passage != null;
+    public object? PassageContent => _passage;
+    public Visibility PassageVisibility => Vis(HasPassage);
+
+    /// <summary>The file and query the passage under the row was made for (null: none).</summary>
+    public string? PassageKey => _passageKey;
+
+    /// <summary>
+    /// Show the part of the document that matched, under the row, the matching words in bold. It
+    /// fades in rather than popping; the list makes room for it (<see cref="ExtraDip"/>).
+    /// </summary>
+    public void SetPassage(string key, string text, IReadOnlyList<int[]> marks)
+    {
+        var tb = new TextBlock
+        {
+            FontSize = 12,
+            MaxLines = 2,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Top,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            IsHitTestVisible = false,
+            Opacity = 0,
+            OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(160) },
+        };
+        var strong = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+        int at = 0;
+        foreach (var m in marks.OrderBy(m => m[0]))
+        {
+            int s = Math.Clamp(m[0], at, text.Length), e = Math.Clamp(m[0] + m[1], s, text.Length);
+            if (s > at) tb.Inlines.Add(new Run { Text = text[at..s] });
+            if (e > s) tb.Inlines.Add(new Run { Text = text[s..e], FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = strong });
+            at = e;
+        }
+        if (at < text.Length) tb.Inlines.Add(new Run { Text = text[at..] });
+        _passage = tb;
+        _passageKey = key;
+        Changed(nameof(PassageContent));
+        Changed(nameof(PassageVisibility));
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.TryEnqueue(() => tb.Opacity = 1);
+    }
+
+    public void ClearPassage()
+    {
+        if (_passage == null && _passageKey == null) return;
+        _passage = null;
+        _passageKey = null;
+        Changed(nameof(PassageContent));
+        Changed(nameof(PassageVisibility));
+    }
 
     // ------------------------------------------------------------ confirming
 
@@ -540,6 +609,9 @@ public sealed class HitVm : INotifyPropertyChanged
     /// <summary>Turn this row into <paramref name="o"/>, keeping the object (and so its list container).</summary>
     public void CopyFrom(HitVm o)
     {
+        // A passage belongs to the file it was read from, and only to a row found by meaning.
+        if (!o.Related || o.Path != Path) ClearPassage();
+        Related = o.Related;
         RawKind = o.RawKind;
         Title = o.Title;
         Subtitle = o.Subtitle;

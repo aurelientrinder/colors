@@ -58,6 +58,13 @@ impl Usage {
         self.record(hit);
     }
 
+    /// Remember what was picked for `query`, without listing it among the most used: for rows that
+    /// only exist while a window is open (its commands), which Home could not offer later.
+    pub fn record_pick(&mut self, hit: &Hit, query: &str) {
+        self.remember_pick(&hit.key(), query);
+        self.save();
+    }
+
     fn remember_pick(&mut self, key: &str, query: &str) {
         let q = query.trim().to_lowercase();
         if q.is_empty() || q.starts_with('>') || q.contains(['\\', '/']) {

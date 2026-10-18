@@ -151,6 +151,9 @@ fn run(raw: &str, catalog: &RwLock<Catalog>, usage: &Mutex<Usage>, cache: &mut N
         }
     }
 
+    // Commands of the window in front ("resize" in Paint): read when the palette opened (uia.rs).
+    hits.extend(crate::uia::search(&lq, &words, picks));
+
     // Apps, commands and settings: a few thousand entries, always a full scan. Scored first, and
     // only the few that can make the list are copied out.
     {

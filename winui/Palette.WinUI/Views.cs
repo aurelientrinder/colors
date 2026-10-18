@@ -71,7 +71,8 @@ public sealed partial class MainWindow
             : row.IsAnswer ? "Open" : row.RawKind switch
         {
             "Window" => "Switch to",
-            "Command" => "Run",
+            "Command" when row.Does == "selection" => "Search",
+            "Command" or "Control" => "Run",
             "Calculator" => "Copy result",
             "Web" => "Search the web",
             "Toggle" => "Apply",

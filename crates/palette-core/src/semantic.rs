@@ -62,6 +62,19 @@ struct RawReply {
     id: u64,
     #[serde(default)]
     hits: Vec<RawHit>,
+    /// A passage reply: the text and the (start, length) of its matching words.
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    marks: Vec<(usize, usize)>,
+}
+
+/// The part of a document that answers a query (see `Client::passage`).
+#[derive(serde::Serialize)]
+pub struct Passage {
+    pub text: String,
+    /// (start, length) of each matching word, in UTF-16 units.
+    pub marks: Vec<(usize, usize)>,
 }
 
 #[derive(Deserialize)]
@@ -379,6 +392,28 @@ impl Client {
             }
         }
         out
+    }
+
+    /// The passage of the document `path` that `q` matched, or none (a file the helper cannot read,
+    /// or no helper). Only talks to a helper that is running: rows found by meaning come from it.
+    /// Blocks up to `timeout` (reading a PDF takes a moment); call from a worker thread.
+    pub fn passage(&self, path: &str, q: &str, timeout: Duration) -> Option<Passage> {
+        if self.disabled || !self.ensure_started() {
+            return None;
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        let msg = serde_json::json!({"op": "passage", "id": id, "path": path, "q": q}).to_string();
+        if !self.send(&msg) {
+            self.pending.lock().unwrap().remove(&id);
+            return None;
+        }
+        let Ok(reply) = rx.recv_timeout(timeout) else {
+            self.pending.lock().unwrap().remove(&id);
+            return None;
+        };
+        reply.text.map(|text| Passage { text, marks: reply.marks })
     }
 
     /// One-line human status for the footer, from the helper's status file.

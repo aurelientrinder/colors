@@ -16,6 +16,8 @@ pub enum Kind {
     Toggle,
     /// A request carried out in steps: "open notepad and weather side by side" (see intent.rs).
     Plan,
+    /// A command of the window in front: a ribbon button, a tab, a menu ("resize" in Paint; see uia.rs).
+    Control,
 }
 
 impl Kind {
@@ -31,6 +33,7 @@ impl Kind {
             Kind::Window => "Window",
             Kind::Toggle => "Toggle",
             Kind::Plan => "Plan",
+            Kind::Control => "Control",
         }
     }
     /// Ranking nudge so apps beat same-scoring files.
@@ -45,7 +48,7 @@ impl Kind {
             Kind::Folder => 20,
             Kind::File => 0,
             // Quick settings are scored by how well the query names them (see quick.rs).
-            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan => 0,
+            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control => 0,
         }
     }
 }
@@ -67,6 +70,9 @@ pub enum Action {
     Exec { file: String, args: String },
     /// Steps read from a request (see intent.rs).
     Plan(Vec<crate::intent::Step>),
+    /// Press command `index` of the window scan `scan` of window `hwnd` (see uia.rs). `icon` is
+    /// the program's, as for `Focus`.
+    Ui { hwnd: isize, scan: u64, index: usize, icon: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -90,6 +96,8 @@ impl Hit {
             Action::Focus { hwnd, .. } => format!("window:{hwnd}"),
             Action::Exec { file, args } => format!("exec:{file} {args}"),
             Action::Plan(_) => format!("plan:{}", self.title),
+            // The program and place are in the subtitle: the same command is the same key next time.
+            Action::Ui { .. } => format!("ui:{}\u{1}{}", self.subtitle, self.title),
         }
     }
 

@@ -100,6 +100,7 @@ public sealed partial class MainWindow : Window
                 new("Hide the taskbar search box", Settings.TaskbarSearchHidden, on => _settings.ApplyTaskbarSearch(on)),
                 new("Answers from the web (weather, stocks, facts)", () => _settings.WebAnswers, on => { _settings.WebAnswers = on; _settings.Save(); }),
                 new("Key hints under the search field", () => _settings.KeyHints, on => { _settings.KeyHints = on; _settings.Save(); UpdateOpenButton(); }),
+                new("Read the window in front (selected text, its commands)", () => _settings.ReadWindow, on => { _settings.ReadWindow = on; _settings.Save(); if (!on) Native.ReadWindow(IntPtr.Zero); }),
             });
 
         new Thread(SearchLoop) { IsBackground = true, Name = "search" }.Start();
@@ -471,6 +472,7 @@ public sealed partial class MainWindow : Window
         var fg = Win32.GetForegroundWindow();
         _previousForeground = fg != _hwnd ? fg : IntPtr.Zero;
         _reassertTries = 0;
+        ReadWindowBehind();
 
         SetView(View.Results, SearchPlaceholder);
         SetInputText("");
@@ -508,6 +510,31 @@ public sealed partial class MainWindow : Window
     /// Give focus back to the window the user was in (Esc / hotkey toggle). Not wanted when a result
     /// was launched (the launched app takes focus) or the user clicked elsewhere.
     /// </param>
+    private int _showSeq;
+
+    /// <summary>
+    /// Start reading the window the palette opened over (uia.rs). Its selected text, if there is some,
+    /// is on Home as a row; a read that finishes after Home was drawn brings the row in then, but only
+    /// while nothing has been typed.
+    /// </summary>
+    private void ReadWindowBehind()
+    {
+        int show = ++_showSeq;
+        var target = _settings.ReadWindow ? _previousForeground : IntPtr.Zero;
+        Native.ReadWindow(target);
+        if (target == IntPtr.Zero) return;
+        Task.Run(() =>
+        {
+            if (Native.Selection(500) == null) return;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (show != _showSeq || !_visible || _view != View.Results || Input.Text.Length != 0) return;
+                if (Items.Any(i => i.Does == "selection")) return;
+                Enqueue("");
+            });
+        });
+    }
+
     private void HidePalette(bool restoreFocus = false, [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
     {
         App.Log($"HidePalette from {caller} restore={restoreFocus} visible={_visible} sinceShow={(DateTime.UtcNow - _shownAt).TotalMilliseconds:F0}ms");
@@ -805,6 +832,11 @@ public sealed partial class MainWindow : Window
             return;
         }
         vm.Confirming = false;
+        if (vm.Does == "selection" && !reveal)
+        {
+            UseSelection();
+            return;
+        }
         if (vm.RawKind == "Command" && vm.Title == KeyHintsCommand && !reveal)
         {
             // The footer is the shell's: flip it here, and say so on the Done line.
@@ -831,6 +863,12 @@ public sealed partial class MainWindow : Window
         LaunchHit(_gen, engine, vm.CopyText, reveal);
     }
 
+    /// <summary>The selected text becomes the search: the field keeps it, to be added to.</summary>
+    private void UseSelection()
+    {
+        if (Native.Selection(0) is { } text) Browse(text);
+    }
+
     private void LaunchHit(ulong gen, int index, string? copyText, bool reveal)
     {
         if (copyText is { } text && !reveal)
@@ -851,6 +889,9 @@ public sealed partial class MainWindow : Window
                 break;
             case Native.LaunchResult.AllApps:
                 ShowAllApps();
+                break;
+            case Native.LaunchResult.UseSelection:
+                UseSelection();
                 break;
         }
     }
@@ -1018,6 +1059,7 @@ public sealed partial class MainWindow : Window
         HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
+        RequestPassages(version, _semQuery);
     }
 
 
@@ -1062,6 +1104,7 @@ public sealed partial class MainWindow : Window
         HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
+        RequestPassages(version, _semQuery);
     }
 
     // ------------------------------------------------------------------ icons

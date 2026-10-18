@@ -35,4 +35,6 @@ features = [
   "Win32_UI_Input_KeyboardAndMouse",
   # the plan model's helper process ends with the launcher (planner.rs)
   "Win32_System_JobObjects",
+  # reading the window in front: its selected text and its commands (uia.rs)
+  "Win32_UI_Accessibility",
 ]

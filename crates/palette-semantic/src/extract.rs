@@ -272,6 +272,158 @@ pub fn chunk(text: &str, max_chunks: usize) -> Vec<String> {
     out
 }
 
+
+// ---------------------------------------------------------------------------- passages
+
+/// The part of a chunk that answers a query, for showing under a result.
+pub struct Passage {
+    pub text: String,
+    /// (start, length) of each matching word, in UTF-16 units.
+    pub marks: Vec<(usize, usize)>,
+}
+
+/// Longest passage shown, in characters: two lines of the row's strip.
+const PASSAGE_CHARS: usize = 190;
+
+const STOP_WORDS: &[&str] = &[
+    "the", "and", "for", "with", "what", "when", "where", "which", "who", "whom", "how", "why", "does", "did",
+    "are", "was", "were", "has", "have", "had", "from", "that", "this", "these", "those", "about", "into", "can",
+    "could", "would", "should", "will", "not", "you", "your", "its", "their", "there", "than", "then", "any",
+    "all", "per", "via", "get", "got", "find", "show", "file", "files", "document", "documents",
+];
+
+/// Words of a query worth looking for in a text (lowercased).
+fn terms(q: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for w in q.split(|c: char| !c.is_alphanumeric()) {
+        let w = w.to_lowercase();
+        if w.chars().count() >= 3 && !STOP_WORDS.contains(&w.as_str()) && !out.contains(&w) {
+            out.push(w);
+        }
+    }
+    out
+}
+
+/// Does `word` (lowercased) stand for `term`? The shorter one's first five letters must open the
+/// other, so "taxes" finds "tax" and "leasing" finds "lease" without a stemmer.
+fn same_word(word: &str, term: &str) -> bool {
+    let n = word.chars().count().min(term.chars().count()).min(5);
+    n >= 3 && word.chars().take(n).eq(term.chars().take(n))
+}
+
+/// The words of `text` as (byte start, byte end, matches a term).
+fn words_in(text: &str, terms: &[String]) -> Vec<(usize, usize, bool)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        if c.is_alphanumeric() {
+            start.get_or_insert(i);
+        } else if let Some(s) = start.take() {
+            let w = text[s..i].to_lowercase();
+            out.push((s, i, terms.iter().any(|t| same_word(&w, t))));
+        }
+    }
+    out
+}
+
+/// Byte ranges of the sentences of `text`.
+fn sentences(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let b = text.as_bytes();
+    for i in 0..b.len() {
+        if matches!(b[i], b'.' | b'?' | b'!') && b.get(i + 1).is_some_and(|c| *c == b' ') {
+            out.push((start, i + 1));
+            start = i + 2;
+        }
+    }
+    if start < text.len() {
+        out.push((start, text.len()));
+    }
+    out.retain(|&(s, e)| !text[s..e].trim().is_empty());
+    out
+}
+
+/// The sentences of `chunk` that share the most words with `q`, cut to a couple of lines, with
+/// the matching words marked. With no word in common (a match by meaning alone) it is the
+/// chunk's opening.
+pub fn passage(chunk: &str, q: &str) -> Option<Passage> {
+    let terms = terms(q);
+    let words = words_in(chunk, &terms);
+    let sents = sentences(chunk);
+    if sents.is_empty() {
+        return None;
+    }
+    // Distinct terms each sentence covers; the first of equals wins.
+    let covered = |&(s, e): &(usize, usize)| -> usize {
+        let mut seen: Vec<&String> = Vec::new();
+        for &(ws, we, hit) in &words {
+            if hit && ws >= s && we <= e {
+                let w = chunk[ws..we].to_lowercase();
+                if let Some(t) = terms.iter().find(|t| same_word(&w, t)) {
+                    if !seen.contains(&t) {
+                        seen.push(t);
+                    }
+                }
+            }
+        }
+        seen.len()
+    };
+    let (mut best, mut best_n) = (0, 0);
+    for (i, s) in sents.iter().enumerate() {
+        let n = covered(s);
+        if n > best_n {
+            (best, best_n) = (i, n);
+        }
+    }
+
+    // Start at the best sentence, add the next while it fits.
+    let (mut from, mut to) = sents[best];
+    if let Some(&(_, e)) = sents.get(best + 1) {
+        if chunk[from..e].chars().count() <= PASSAGE_CHARS {
+            to = e;
+        }
+    }
+    let mut lead = false;
+    let mut tail = false;
+    if chunk[from..to].trim().chars().count() > PASSAGE_CHARS {
+        // Too long: a window around the first matching word, on word boundaries.
+        let first = words.iter().find(|&&(ws, _, hit)| hit && ws >= from && ws < to).map(|w| w.0).unwrap_or(from);
+        let back = chunk[..first].char_indices().rev().nth(50).map(|(i, _)| i).unwrap_or(0).max(from);
+        if back > from {
+            from = chunk[back..].find(' ').map(|i| back + i + 1).unwrap_or(back);
+            lead = true;
+        }
+        let mut end = chunk[from..].char_indices().nth(PASSAGE_CHARS).map(|(i, _)| from + i).unwrap_or(to).min(to);
+        if end < to {
+            end = chunk[from..end].rfind(' ').map(|i| from + i).unwrap_or(end);
+            tail = true;
+        }
+        to = end;
+    }
+    let raw = &chunk[from..to];
+    let text = raw.trim();
+    let text_start = from + (raw.len() - raw.trim_start().len());
+
+    let mut out = String::new();
+    if lead {
+        out.push('\u{2026}');
+    }
+    let base = out.len();
+    out.push_str(text);
+    if tail {
+        out.push('\u{2026}');
+    }
+    let mut marks = Vec::new();
+    for &(ws, we, hit) in &words {
+        if hit && ws >= text_start && we <= text_start + text.len() {
+            let at = base + (ws - text_start);
+            marks.push((out[..at].encode_utf16().count(), chunk[ws..we].encode_utf16().count()));
+        }
+    }
+    Some(Passage { text: out, marks })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +452,41 @@ mod tests {
         let text = "Résumé des modèles thermodynamiques à très haute température. ".repeat(80);
         let c = chunk(&text, 6);
         assert!(!c.is_empty() && c.len() <= 6);
+    }
+
+    #[test]
+    fn the_passage_is_the_sentence_with_the_query_words() {
+        let chunk = "The agreement begins in March. The lease ends on 31 August 2027 unless renewed in writing. Rent is due monthly.";
+        let p = passage(chunk, "when does my lease end").unwrap();
+        assert!(p.text.contains("lease ends on 31 August"), "{}", p.text);
+        assert!(!p.marks.is_empty());
+        let units: Vec<u16> = p.text.encode_utf16().collect();
+        let (s, l) = p.marks[0];
+        assert_eq!(String::from_utf16_lossy(&units[s..s + l]).to_lowercase(), "lease");
+    }
+
+    #[test]
+    fn a_long_sentence_is_cut_around_the_match_and_never_panics() {
+        let filler = "Résumé des modèles très complexes à température élevée, ".repeat(12);
+        let chunk = format!("{filler}the turbine blade is cooled by bled air {filler}");
+        let p = passage(&chunk, "turbine cooling").unwrap();
+        assert!(p.text.chars().count() <= PASSAGE_CHARS + 2);
+        assert!(p.text.contains("turbine"));
+        let units: Vec<u16> = p.text.encode_utf16().collect();
+        for (s, l) in &p.marks {
+            assert!(s + l <= units.len());
+        }
+    }
+
+    #[test]
+    fn no_shared_word_gives_the_opening() {
+        let p = passage("Vacation days accrue monthly. Carry-over is capped.", "time off policy").unwrap();
+        assert!(p.text.starts_with("Vacation days accrue monthly."));
+        assert!(p.marks.is_empty());
+    }
+
+    #[test]
+    fn taxes_matches_tax() {
+        assert!(same_word("taxes", "tax") && same_word("leased", "lease") && !same_word("cat", "car"));
     }
 }

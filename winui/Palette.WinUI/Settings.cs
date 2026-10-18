@@ -18,6 +18,12 @@ internal sealed class Settings
     /// <summary>The line of keys for the selected row, in the search card.</summary>
     public bool KeyHints { get; set; } = true;
 
+    /// <summary>
+    /// When the palette opens it reads the window behind it: the text selected there (offered on Home)
+    /// and its commands (found by typing). Nothing is kept or sent anywhere (see uia.rs).
+    /// </summary>
+    public bool ReadWindow { get; set; } = true;
+
     /// <summary>The taskbar search mode before we hid it, put back when the option is turned off.</summary>
     public int? SavedSearchboxMode { get; set; }
 
