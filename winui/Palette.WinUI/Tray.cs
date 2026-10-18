@@ -86,6 +86,7 @@ internal sealed class TrayIcon : IDisposable
     private readonly Action<bool> _setAutostart;
     private readonly Action _reindex;
     private readonly Action _quit;
+    private readonly Action _settings;
     private readonly Option[] _options;
 
     /// <summary>A checkable menu entry.</summary>
@@ -98,8 +99,9 @@ internal sealed class TrayIcon : IDisposable
     private string _tip = "Palette";
     private bool _disposed;
 
-    public TrayIcon(Action toggle, Func<bool> isAutostart, Action<bool> setAutostart, Action reindex, Action quit, Option[] options)
+    public TrayIcon(Action toggle, Func<bool> isAutostart, Action<bool> setAutostart, Action reindex, Action quit, Action settings, Option[] options)
     {
+        _settings = settings;
         _options = options;
         _toggle = toggle;
         _isAutostart = isAutostart;
@@ -217,6 +219,7 @@ internal sealed class TrayIcon : IDisposable
 
         var menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING, (UIntPtr)1, "Open Palette");
+        AppendMenu(menu, MF_STRING, (UIntPtr)5, "Settings\u2026");
         AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenu(menu, MF_STRING | (autostart ? MF_CHECKED : 0), (UIntPtr)2, "Run at startup");
         var on = new bool[_options.Length];
@@ -225,7 +228,6 @@ internal sealed class TrayIcon : IDisposable
             try { on[i] = _options[i].Get(); } catch { }
             AppendMenu(menu, MF_STRING | (on[i] ? MF_CHECKED : 0), (UIntPtr)(100 + i), _options[i].Label);
         }
-        AppendMenu(menu, MF_STRING, (UIntPtr)3, "Re-index files");
         AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null);
         AppendMenu(menu, MF_STRING, (UIntPtr)4, "Quit Palette");
 
@@ -240,6 +242,7 @@ internal sealed class TrayIcon : IDisposable
             case 1: SafeInvoke(_toggle); break;
             case 2: SafeInvoke(() => _setAutostart(!autostart)); break;
             case 3: SafeInvoke(_reindex); break;
+            case 5: SafeInvoke(_settings); break;
             case 4: SafeInvoke(_quit); break;
             case >= 100 when cmd - 100 < _options.Length:
                 int o = (int)cmd - 100;

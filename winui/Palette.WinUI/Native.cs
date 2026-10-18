@@ -262,7 +262,7 @@ public static class Native
         }
     }
 
-    public enum LaunchResult { Nothing = 0, Hide = 1, Quit = 2, AllApps = 4, UseSelection = 5 }
+    public enum LaunchResult { Nothing = 0, Hide = 1, Quit = 2, AllApps = 4, UseSelection = 5, Settings = 6 }
 
     public static LaunchResult Launch(ulong gen, int index, bool reveal) =>
         (LaunchResult)pc_launch(gen, index, reveal ? 1 : 0);

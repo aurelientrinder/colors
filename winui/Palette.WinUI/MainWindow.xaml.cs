@@ -94,16 +94,12 @@ public sealed partial class MainWindow : Window
             setAutostart: enable => Native.SetAutostart(enable),
             reindex: Native.Reindex,
             quit: () => DispatcherQueue.TryEnqueue(QuitApp),
-            options: new TrayIcon.Option[]
+            settings: () => DispatcherQueue.TryEnqueue(() =>
             {
-                new("Open with the Windows key", () => _settings.WinKeyOpens, on => { _settings.WinKeyOpens = on; _settings.Save(); }),
-                new("Replace Windows Search (Win+S, taskbar search)", () => _settings.ReplaceSearch, on => { _settings.ReplaceSearch = on; _settings.Save(); }),
-                new("Hide the taskbar search box", Settings.TaskbarSearchHidden, on => _settings.ApplyTaskbarSearch(on)),
-                new("Answers from the web (weather, stocks, facts)", () => _settings.WebAnswers, on => { _settings.WebAnswers = on; _settings.Save(); }),
-                new("Key hints under the search field", () => _settings.KeyHints, on => { _settings.KeyHints = on; _settings.Save(); UpdateOpenButton(); }),
-                new("Remember what is copied (find it with \"clip\")", () => _settings.ClipboardHistory, on => { _settings.ClipboardHistory = on; _settings.Save(); if (on) _ = ReadClipboardHistory(); else Native.ClipClear(); }),
-                new("Read the window in front (selected text, its commands)", () => _settings.ReadWindow, on => { _settings.ReadWindow = on; _settings.Save(); if (!on) Native.ReadWindow(IntPtr.Zero); }),
-            });
+                if (!_visible) ShowPalette();
+                ShowSettings();
+            }),
+            options: Array.Empty<TrayIcon.Option>());   // every option lives in the settings list (SettingsView.cs)
 
         new Thread(SearchLoop) { IsBackground = true, Name = "search" }.Start();
         for (int i = 0; i < IconThreads; i++) new Thread(IconLoop) { IsBackground = true, Name = "icons" }.Start();
@@ -607,21 +603,13 @@ public sealed partial class MainWindow : Window
 
     private void HotkeyLoop()
     {
-        // Alt+Space, falling back if another app owns it.
-        uint[] combos = { Win32.MOD_ALT, Win32.MOD_CONTROL, Win32.MOD_CONTROL | Win32.MOD_ALT };
-        string[] names = { "Alt+Space", "Ctrl+Space", "Ctrl+Alt+Space" };
-        int used = -1;
-        for (int i = 0; i < combos.Length && used < 0; i++)
-        {
-            if (Win32.RegisterHotKey(IntPtr.Zero, 1, combos[i] | Win32.MOD_NOREPEAT, Win32.VK_SPACE)) used = i;
-        }
+        // The shortcut from the settings (Alt+Space by default), falling back if another app owns it.
+        _hotkeyThread = Win32.GetCurrentThreadId();
+        RegisterHotkey();
 
         // Windows key, Win+S, the Copilot key and the search flyout.
-        bool hooked = _hooks.Install();
-
-        string label = used >= 0 ? names[used] : "";
-        if (hooked) label = label.Length > 0 ? label + ", Windows key or Copilot key" : "Windows key or Copilot key";
-        _tray.SetTooltip(label.Length > 0 ? $"Palette ({label})" : "Palette (no hotkey available; use this icon)");
+        _hooked = _hooks.Install();
+        UpdateTip();
 
         while (Win32.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
         {
@@ -629,6 +617,10 @@ public sealed partial class MainWindow : Window
             {
                 App.Log($"WM_HOTKEY visible={_visible}");
                 _hooks.OnHotkey();
+            }
+            else if (msg.message == WM_REHOTKEY)
+            {
+                OnRehotkey();
             }
             else if (msg.message == ShellHooks.WM_FLUSH)
             {
@@ -655,6 +647,11 @@ public sealed partial class MainWindow : Window
         {
             if (_renaming) ShowRename();
             else ShowActions(Input.Text);
+            return;
+        }
+        if (_view == View.Settings)
+        {
+            ShowSettings(Input.Text);
             return;
         }
         if (_view is View.AllApps or View.Done) SetView(View.Results, SearchPlaceholder);   // typing searches everything
@@ -701,6 +698,12 @@ public sealed partial class MainWindow : Window
             case VirtualKey.Back when empty && _view == View.Actions:
             case VirtualKey.Escape when _view == View.Actions:
                 LeaveActions();
+                e.Handled = true;
+                return;
+            case VirtualKey.Back when empty && _view == View.Settings:
+            case VirtualKey.Escape when _view == View.Settings:
+                StopCapture();
+                ShowHome();
                 e.Handled = true;
                 return;
             case VirtualKey.Back when empty && _view == View.AllApps:
@@ -821,6 +824,11 @@ public sealed partial class MainWindow : Window
             RunAction(index);
             return;
         }
+        if (_view == View.Settings)
+        {
+            RunSetting(index);
+            return;
+        }
         if (_view == View.Done || index < 0 || index >= Items.Count) return;
         var vm = Items[index];
         if (vm.IsTimer)
@@ -897,6 +905,9 @@ public sealed partial class MainWindow : Window
             case Native.LaunchResult.UseSelection:
                 UseSelection();
                 break;
+            case Native.LaunchResult.Settings:
+                ShowSettings();
+                break;
         }
     }
 
@@ -917,7 +928,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyResults(int version, string query, Native.SearchResult r)
     {
-        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done) return;
+        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done or View.Settings) return;
         _gen = r.Gen;
         if (_undoPending)
         {
@@ -1044,7 +1055,7 @@ public sealed partial class MainWindow : Window
     private void AppendRelated(int version, Native.Appended r)
     {
         // Drop the rows if the user kept typing or the list was rebuilt in the meantime.
-        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings) return;
         if (r.Replace)
         {
             // Strong meaning matches lead; the engine rebuilt the whole list around them.
@@ -1096,7 +1107,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowPlan(int version, Native.Appended r)
     {
-        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings) return;
         // Enter runs the plan unless a row further down was chosen meanwhile.
         int sel = ResultsList.SelectedIndex;
         bool lead = sel <= AnswerOffset;

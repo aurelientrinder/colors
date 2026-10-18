@@ -74,7 +74,12 @@ public sealed partial class MainWindow
     {
         if (sender is not ToggleSwitch ts || RowOf(sender) is not { ControlKey: { } key } vm) return;
         if (ts.IsOn == vm.SwitchOn) return;   // the binding catching up, not a click
-        bool on = ts.IsOn;
+        ApplySwitch(vm, key, ts.IsOn);
+    }
+
+    /// <summary>A row's switch was clicked, or Enter was pressed on its row (settings list).</summary>
+    private void ApplySwitch(HitVm vm, string key, bool on)
+    {
         vm.TouchedAt = Environment.TickCount64;
         vm.SwitchOn = on;
         SelectRow(vm);
@@ -100,6 +105,12 @@ public sealed partial class MainWindow
                     });
                 });
                 return;
+        }
+
+        if (_view == View.Settings && ApplySetting(key, on))
+        {
+            vm.TouchedAt = 0;
+            return;
         }
 
         Task.Run(() =>

@@ -472,6 +472,10 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     if matches!(&hit.action, Action::Builtin(id) if id == home::ALL_APPS) {
         return 4;
     }
+    // Palette's own settings are a list the shell shows.
+    if matches!(&hit.action, Action::Builtin(id) if id == "palettesettings") {
+        return 6;
+    }
     // Selected text: the shell puts it in the search field (`pc_selection`). Never remembered.
     if matches!(&hit.action, Action::Builtin(id) if id == home::SELECTION) {
         return 5;

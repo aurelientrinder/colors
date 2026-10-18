@@ -658,6 +658,16 @@ public sealed class HitVm : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));   // every property
     }
 
+    /// <summary>Change the second line, and the second button's label, of a row the app builds itself.</summary>
+    public void Describe(string subText, string? secondLabel = null)
+    {
+        SubText = subText;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SubText)));
+        if (secondLabel == null) return;
+        SecondLabel = secondLabel;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SecondLabel)));
+    }
+
     /// <summary>Would this row look identical to <paramref name="o"/>? (Then the list can keep it.)</summary>
     public bool SameRow(HitVm o) =>
         RawKind == o.RawKind && Title == o.Title && SubText == o.SubText && IconKey == o.IconKey && Path == o.Path && Folder == o.Folder

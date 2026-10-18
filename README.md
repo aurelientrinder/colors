@@ -1,7 +1,7 @@
 # Palette
 
 A Spotlight-style launcher for Windows: a Rust engine with a WinUI 3 interface.
-Resident, instant on a tap of the Windows key, `Alt+Space` (falls back to `Ctrl+Space` if taken) or the Copilot key
+Resident, instant on a tap of the Windows key, `Alt+Space` (falls back to `Ctrl+Space` if taken; any combination can be chosen in Settings) or the Copilot key
 (Win+Shift+F23, intercepted with a low-level keyboard hook so Copilot does not open).
 
 ## Layout
@@ -52,24 +52,25 @@ works exactly as before, just without "Related" results.
 | `10 km in mi`, `72f to c`, `2 h to min` | unit conversion (length, weight, volume, time, speed, area, data, temperature), offline |
 | `days until 25 dec`, `3 weeks from today`, `2 months ago` | date arithmetic, offline |
 | `time in tokyo`, `3pm london to new york` | time zones with daylight saving, offline |
-| `clip`, `clip invoice`, `clipboard the tracking number` | what you copied lately (Windows' clipboard history plus copies made while Palette runs): words find it at once, otherwise it is searched by meaning. Enter copies it again; Hold Tab offers Open link for a URL and Remove. Kept in memory only, never on Home or among ordinary results; copies a password manager marks private are skipped; the tray menu turns it off |
+| `clip`, `clip invoice`, `clipboard the tracking number` | what you copied lately (Windows' clipboard history plus copies made while Palette runs): words find it at once, otherwise it is searched by meaning. Enter copies it again; Hold Tab offers Open link for a URL and Remove. Kept in memory only, never on Home or among ordinary results; copies a password manager marks private are skipped; Settings turns it off |
 | `port 3000`, `what's using port 8080`, `:5173` | the program listening on that port, with its icon; Enter shows it in its folder, Hold Tab › End task ends it |
 | `what's using my camera`, `is my microphone on` | the apps using it now, from Windows' own privacy record (or who used it last); Enter opens its privacy settings |
-| `50 usd to eur` | currency, a card with the European Central Bank's daily rate (needs the web; "Answers from the web" in the tray menu turns it off) |
+| `50 usd to eur` | currency, a card with the European Central Bank's daily rate (needs the web; "Answers from the web" in Settings turns it off) |
 | `> ipconfig` | run a command in cmd |
 | `Palette: Run at startup` | toggle start-at-sign-in (per-user logon task "Palette", no admin; starts right away, unlike Run-key apps that Windows delays) |
+| `Palette: Settings` | the options below, as a list in the palette: a switch each, typing filters, Esc goes back |
 | `Palette: Reindex files` | refresh the file index now |
 | `Palette: Quit` | exit |
 | launch `PaletteWinUI.exe` again | opens the palette of the running copy; `--query "text"` opens it with that text typed |
 | tray icon: click | show / hide the palette |
-| tray icon: right-click | Open, Run at startup (checked when on), the Windows Search options below, Re-index files, Quit |
+| tray icon: right-click | Open, Settings, Run at startup (checked when on), Quit |
 
 New tray icons start in Windows' overflow area; drag it onto the taskbar to pin it.
 Closing the palette with `Esc` or the hotkey returns focus to the window you were in.
 
 ## In place of Windows Search
 
-Palette takes over the ways into Windows' own search (each switchable from the tray menu,
+Palette takes over the ways into Windows' own search (each switchable in `Palette: Settings`,
 saved in `%LOCALAPPDATA%\palette\settings.json`):
 
 | Input | Does |
@@ -78,7 +79,7 @@ saved in `%LOCALAPPDATA%\palette\settings.json`):
 | `Win+S`, `Win+Q` | open Palette instead of Windows Search |
 | type into Start or the taskbar search box | Start closes and Palette carries on with what you typed |
 | Start button, `Ctrl+Esc`, or the `Start menu` row | still open Start, for browsing pinned apps |
-| tray: Hide the taskbar search box | removes Windows' search box from the taskbar; unchecking puts back the style you had |
+| Settings: Hide the taskbar search box | removes Windows' search box from the taskbar; unchecking puts back the style you had |
 
 Keys typed between the trigger and the palette taking focus are held back by the keyboard
 hook and replayed into it, so typing straight after the Windows key loses nothing. On
@@ -140,7 +141,7 @@ page title no longer matches unrelated searches.
 
 ## The window in front
 
-When the palette opens it reads the window you were in (UI Automation, in memory only; the tray's
+When the palette opens it reads the window you were in (UI Automation, in memory only; Settings'
 "Read the window in front" turns it off, and password managers, the desktop and password fields are
 never read):
 
@@ -274,5 +275,4 @@ default, falls back to the GPU, then the CPU; `gpu`; `cpu`),
 
 - Semantic tier: source code is not indexed; scanned PDFs (no text layer) need OCR;
   embedding runs at ~4-5 chunks/s (GPU or CPU), so a full rebuild takes tens of minutes
-- Configurable hotkey
 - Non-NTFS drives (exFAT/FAT) are not in the MFT snapshot

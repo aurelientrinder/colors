@@ -30,6 +30,27 @@ internal sealed class Settings
     /// </summary>
     public bool ClipboardHistory { get; set; } = true;
 
+    /// <summary>
+    /// The shortcut that opens Palette: modifiers (MOD_ALT = 1, MOD_CONTROL = 2, MOD_SHIFT = 4, MOD_WIN = 8)
+    /// and a virtual key. Key 0 is the default, Alt+Space, with Ctrl+Space and Ctrl+Alt+Space tried when
+    /// another program has it.
+    /// </summary>
+    public uint HotkeyMods { get; set; }
+    public uint HotkeyVk { get; set; }
+
+    /// <summary>Find documents and settings by meaning (the helper process and its model). Read at start.</summary>
+    public bool SemanticSearch { get; set; } = true;
+
+    /// <summary>Let the meaning index keep working on battery. Read at start.</summary>
+    public bool IndexOnBattery { get; set; }
+
+    /// <summary>The engine reads these two options from the environment when it starts (before it does).</summary>
+    public void ApplyEnvironment()
+    {
+        if (!SemanticSearch) Environment.SetEnvironmentVariable("PALETTE_SEMANTIC", "0");
+        if (IndexOnBattery) Environment.SetEnvironmentVariable("PALETTE_SEM_ON_BATTERY", "1");
+    }
+
     /// <summary>The taskbar search mode before we hid it, put back when the option is turned off.</summary>
     public int? SavedSearchboxMode { get; set; }
 

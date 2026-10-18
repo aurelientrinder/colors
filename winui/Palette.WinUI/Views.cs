@@ -20,7 +20,7 @@ namespace Palette;
 /// </summary>
 public sealed partial class MainWindow
 {
-    private enum View { Results, AllApps, Actions, Done }
+    private enum View { Results, AllApps, Actions, Done, Settings }
 
     private const string SearchPlaceholder = "Search";
 
@@ -68,6 +68,7 @@ public sealed partial class MainWindow
         KeyHints.Text = KeyHintsFor(Items[i]);
         var row = Items[i];
         OpenButton.Content = _view == View.Actions ? "Run"
+            : _view == View.Settings ? SettingButton(row)
             : row.IsTimer ? row.TimerLabel
             : row.Confirming ? row.ConfirmLabel
             : row.IsAnswer ? "Open" : row.RawKind switch

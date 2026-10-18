@@ -140,15 +140,18 @@ A hub:
 - **Teach the invisible parts**: a rotating tip on Home and a short first-run card. The footer
   covers the selected row's keys; Ctrl+Shift+Enter, requests in plain words, `vol 30` and `>` are
   still invisible unless you have read the README.
-- **A settings page** (`Palette: Settings`): the hotkey (still on the README's "Not yet done"
-  list), the semantic tier on or off, indexing on battery, excluded folders. Replaces the tray
-  menu plus about ten environment variables.
+- **Excluded folders** in Settings, for the file index and the meaning index. Both keep their own
+  skip lists today (`scan.rs`, `discover.rs`), so this needs one shared list.
 - **Accessibility.** No `AutomationProperties` anywhere, so Narrator cannot announce the selected
   row; high contrast is not handled. It replaces Start, so this matters.
 - **The "turn off wifi and bluetooth" gap** in the plan model's training data (`ml/intent`).
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Settings (`SettingsView.cs`, `Hotkey.cs`): `Palette: Settings` or the tray lists every option as a
+  switch in the palette itself, with the shortcut that opens Palette chosen by pressing it. The tray
+  menu shrank to Open, Settings, Run at startup and Quit. Still to do: excluded folders, and the
+  other environment variables (threads, device) if anyone needs them.
 - Answers about the PC itself (`pcinfo.rs`): "port 3000" shows the program listening (End task in its
   actions), "what's using my camera / microphone" reads Windows' privacy record, and a file's actions
   list the programs that have it open, each with End. Still to do: UDP ports, a graceful Close

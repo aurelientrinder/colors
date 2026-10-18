@@ -4,7 +4,7 @@ namespace Palette;
 
 internal static class Win32
 {
-    public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
+    public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_WIN = 0x8, MOD_NOREPEAT = 0x4000;
     public const uint VK_SPACE = 0x20;
     public const uint WM_HOTKEY = 0x0312;
 
@@ -24,6 +24,12 @@ internal static class Win32
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [DllImport("user32.dll")]
+    public static extern uint MapVirtualKey(uint code, uint mapType);
 
     [DllImport("user32.dll")]
     public static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
