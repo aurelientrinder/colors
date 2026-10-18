@@ -538,6 +538,8 @@ public sealed partial class MainWindow : Window
     {
         App.Log($"HidePalette from {caller} restore={restoreFocus} visible={_visible} sinceShow={(DateTime.UtcNow - _shownAt).TotalMilliseconds:F0}ms");
         if (!_visible) return;
+        CancelAsk();
+        CancelChat();
         _visible = false;
         _lastHidden = DateTime.UtcNow;
         if (AnimationsOn)
@@ -645,6 +647,7 @@ public sealed partial class MainWindow : Window
         }
         _ignoreText = null;
         CancelAsk();
+        if (_view == View.Chat) return;   // what is typed is the message
         if (_view == View.Actions)
         {
             if (_renaming) ShowRename();
@@ -691,6 +694,16 @@ public sealed partial class MainWindow : Window
             case VirtualKey.F10 when Held(VirtualKey.Shift) && canAct:
                 if (sel < 0) ResultsList.SelectedIndex = sel = 0;
                 EnterActions(sel);
+                e.Handled = true;
+                return;
+            case VirtualKey.Tab when !Held(VirtualKey.Shift) && _view == View.Results && n == 0:
+                StartChat(Input.Text);
+                e.Handled = true;
+                return;
+            case VirtualKey.Tab when _view == View.Chat:
+            case VirtualKey.Escape when _view == View.Chat:
+            case VirtualKey.Back when empty && _view == View.Chat:
+                LeaveChat();
                 e.Handled = true;
                 return;
             case VirtualKey.Tab when _view == View.Actions:
@@ -797,7 +810,7 @@ public sealed partial class MainWindow : Window
         _tabDown = false;
         _tabHold?.Stop();
         e.Handled = true;
-        if (_view is View.Results or View.AllApps) TogglePreview();
+        if (_view is View.Results or View.AllApps) StartChat(Input.Text);   // a tap: the chat
     }
 
     private void OnItemClick(object sender, ItemClickEventArgs e)
@@ -829,6 +842,11 @@ public sealed partial class MainWindow : Window
         if (_view == View.Settings)
         {
             RunSetting(index);
+            return;
+        }
+        if (_view == View.Chat)
+        {
+            SendChat(Input.Text);
             return;
         }
         if (_view == View.Done || index < 0 || index >= Items.Count) return;
@@ -935,7 +953,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyResults(int version, string query, Native.SearchResult r)
     {
-        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done or View.Settings) return;
+        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done or View.Settings or View.Chat) return;
         _gen = r.Gen;
         if (_undoPending)
         {
@@ -1064,7 +1082,7 @@ public sealed partial class MainWindow : Window
     private void AppendRelated(int version, Native.Appended r)
     {
         // Drop the rows if the user kept typing or the list was rebuilt in the meantime.
-        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings or View.Chat) return;
         if (r.Replace)
         {
             // Strong meaning matches lead; the engine rebuilt the whole list around them.
@@ -1116,7 +1134,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowPlan(int version, Native.Appended r)
     {
-        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings or View.Chat) return;
         // Enter runs the plan unless a row further down was chosen meanwhile.
         int sel = ResultsList.SelectedIndex;
         bool lead = sel <= AnswerOffset;

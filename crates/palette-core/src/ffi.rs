@@ -792,6 +792,37 @@ pub unsafe extern "C" fn pc_ask_warm(question: *const c_char) {
     }
 }
 
+/// Open a chat: start the model, read the window in front and have the model read it ahead. Returns
+/// `{"ok":true,"port":N,"system":"...","app","model","source"}` or `{"ok":false,"error":"..."}`. Takes a
+/// few seconds: call from a worker thread. Free with `pc_free`.
+#[no_mangle]
+pub extern "C" fn pc_chat_open() -> *mut c_char {
+    let out = match crate::chat::open() {
+        Ok(o) => serde_json::json!({"ok": true, "port": o.port, "system": o.system, "app": o.app, "model": o.model, "source": o.source}),
+        Err(e) => serde_json::json!({"ok": false, "error": e}),
+    };
+    into_c(out.to_string())
+}
+
+/// Excerpts of the user's documents for a chat message: `{"text":"...","names":["a.pdf",...]}`, with an
+/// empty text when the message is about the screen or nothing matches. Free with `pc_free`.
+///
+/// # Safety
+/// `question` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_chat_docs(question: *const c_char) -> *mut c_char {
+    let q = if question.is_null() { "" } else { CStr::from_ptr(question).to_str().unwrap_or("") };
+    let documents = |question: &str| match ENGINE.get() {
+        Some(e) => e.sem.context(question, 4, Duration::from_secs(25)),
+        None => Vec::new(),
+    };
+    let out = match crate::chat::message_documents(q.trim(), &documents) {
+        Some((text, names)) => serde_json::json!({"text": text, "names": names}),
+        None => serde_json::json!({"text": "", "names": []}),
+    };
+    into_c(out.to_string())
+}
+
 /// Let go of the chat model (its memory is freed; the next question loads it again).
 #[no_mangle]
 pub extern "C" fn pc_ask_stop() {

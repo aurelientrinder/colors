@@ -157,6 +157,18 @@ a page's text; for a terminal the newest lines). Only what is on screen is read,
 fields or password managers. Questions that do not point at the screen ("what is the capital of
 France") stay web answers.
 
+### Chat
+
+A tap on `Tab` turns the list into a conversation with the model, in the same field (a question already
+typed becomes the first message). The model has read the window in front before you type, so the first
+reply starts at once. Your messages sit on the right, its answers on the left; the footer says what it
+has read. Enter sends, `Tab` or `Esc` leaves (a held `Tab` still opens a result's actions).
+
+- About the window: just ask ("and who decides?"); follow-ups keep the whole conversation.
+- About your files: start the message with `?`, or say "my documents" / "mes fichiers"; the answer
+  cites them [1] [2] and the card names the files. With no window to read, every message looks in your
+  files first.
+
 ### Asking your documents
 
 A question that does not point at the screen is answered from your own files:

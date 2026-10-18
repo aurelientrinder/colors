@@ -38,6 +38,12 @@ public static class Native
     private static extern void pc_ask_stop();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_chat_open();
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_chat_docs([MarshalAs(UnmanagedType.LPUTF8Str)] string question);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern void pc_ask_warm([MarshalAs(UnmanagedType.LPUTF8Str)] string question);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -213,6 +219,29 @@ public static class Native
     /// </summary>
     public static void AskWarm(string question) => pc_ask_warm(question);
 
+    /// <summary>A chat is open: the model's server and the system message (instructions and the window's text).</summary>
+    public sealed record ChatOpened(
+        [property: JsonPropertyName("ok")] bool Ok,
+        [property: JsonPropertyName("port")] int Port = 0,
+        [property: JsonPropertyName("system")] string? System = null,
+        [property: JsonPropertyName("app")] string? App = null,
+        [property: JsonPropertyName("model")] string? Model = null,
+        [property: JsonPropertyName("source")] string? Source = null,
+        [property: JsonPropertyName("error")] string? Error = null);
+
+    /// <summary>Excerpts of your documents for a chat message (empty text: none).</summary>
+    public sealed record ChatExcerpts(
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("names")] List<string> Names);
+
+    /// <summary>Open a chat: starts the model and reads the window in front. Takes seconds: call off the UI thread.</summary>
+    public static ChatOpened ChatOpen() =>
+        Read(pc_chat_open(), NativeJson.Default.ChatOpened) ?? new ChatOpened(false, Error: "The model did not start");
+
+    /// <summary>Excerpts from your documents for a message that is not about the screen.</summary>
+    public static ChatExcerpts ChatDocs(string question) =>
+        Read(pc_chat_docs(question), NativeJson.Default.ChatExcerpts) ?? new ChatExcerpts("", new());
+
     /// <summary>Let go of the chat model's memory.</summary>
     public static void AskStop() => pc_ask_stop();
 
@@ -339,6 +368,8 @@ public static class Native
 [JsonSerializable(typeof(Native.Control))]
 [JsonSerializable(typeof(Native.FileOutcome))]
 [JsonSerializable(typeof(Native.AskReady))]
+[JsonSerializable(typeof(Native.ChatOpened))]
+[JsonSerializable(typeof(Native.ChatExcerpts))]
 [JsonSerializable(typeof(Native.PassageReply))]
 internal sealed partial class NativeJson : JsonSerializerContext
 {

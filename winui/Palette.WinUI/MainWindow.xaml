@@ -967,6 +967,33 @@
                             </Border>
                         </Grid>
 
+                        <!-- a chat with the model: the conversation so far, and what it has read -->
+                        <Grid
+                            x:Name="ChatPreview"
+                            Height="140"
+                            Padding="20,12,20,10"
+                            RowSpacing="6"
+                            Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ScrollViewer
+                                x:Name="ChatScroll"
+                                HorizontalScrollMode="Disabled"
+                                VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="ChatMessages" Spacing="10" />
+                            </ScrollViewer>
+                            <TextBlock
+                                x:Name="ChatFooter"
+                                Grid.Row="1"
+                                FontSize="11"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                MaxLines="2"
+                                TextTrimming="CharacterEllipsis"
+                                TextWrapping="Wrap" />
+                        </Grid>
+
                         <!-- an answer about the window in front, written by the model as you watch -->
                         <Grid
                             x:Name="AskPreview"

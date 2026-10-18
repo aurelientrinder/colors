@@ -54,6 +54,13 @@ Answer only from the excerpts, briefly and concretely, in the language of the qu
 If the excerpts do not answer it, say so plainly and say what they do cover. Never invent. \
 Use plain text: no markdown headings, no bold, no tables.";
 
+const SYSTEM_CHAT: &str = "You are Palette, an assistant built into the user's PC, talking with them in a small chat box. \
+Be brief and concrete: a few short sentences or a short list, unless asked for more. Answer in the language the user writes in. \
+Use plain text: no markdown headings, no bold, no tables. \
+You may be told what is on the user's screen (text read from a window, which may hold interface noise) and, with a message, \
+excerpts from the user's own documents (numbered [1], [2]; they may not be relevant: use them only when they help, and then cite them). \
+If you do not know or cannot tell from what you have been given, say so instead of guessing.";
+
 /// Names to prefer, best first, when several models are about.
 const PREFERRED: [&str; 8] = ["qwen3.5-4b", "qwen3-4b", "gemma-3-4b", "gemma-3n", "llama-3.2-3b", "phi-4-mini", "qwen3-8b", "gemma-3-12b"];
 
@@ -444,6 +451,77 @@ fn prepare_documents(question: &str, documents: &dyn Fn(&str) -> Vec<(String, St
         None => ("/v1/chat/completions", request(SYSTEM_DOCS, &user, true, 700)),
     };
     Ok(Prepared { port, path, body, app: String::new(), model, source: "documents", sources: names })
+}
+
+/// A chat is open: what the shell needs to talk with the model.
+pub struct Opened {
+    pub port: u16,
+    /// The system message: the instructions and the window's text, which every turn repeats (the
+    /// model has read it already).
+    pub system: String,
+    pub app: String,
+    pub model: String,
+    /// "selection", "window" or "none" (no window to read: a plain chat).
+    pub source: &'static str,
+}
+
+/// Open a chat: start the model and read the window in front at once, then have the model read the
+/// window's text ahead, so the first message is answered without waiting for it. Blocks until the model
+/// has read it (a few seconds on a long page): call from a worker thread.
+pub fn open() -> Result<Opened, String> {
+    let server = std::thread::spawn(ensure_server);
+    let ctx = window(crate::uia::scan_id());
+    let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
+    let (mut system, mut source, mut app) = (SYSTEM_CHAT.to_string(), "none", String::new());
+    if let Some(c) = &ctx {
+        app = c.app.clone();
+        let place = if c.title.is_empty() { c.app.clone() } else { format!("{} ({})", c.title, c.app) };
+        if let Some(sel) = c.selection.as_deref().filter(|s| !s.trim().is_empty()) {
+            system.push_str(&format!("\n\nThe user selected this text in {place}:\n\"\"\"\n{}\n\"\"\"", cut(sel, SELECTION_CHARS, false)));
+            let around = cut(&c.text, AROUND_CHARS, c.terminal);
+            if !around.trim().is_empty() {
+                system.push_str(&format!("\n\nThe rest of the window, for context only:\n\"\"\"\n{around}\n\"\"\""));
+            }
+            source = "selection";
+        } else if !c.text.trim().is_empty() {
+            system.push_str(&format!("\n\nThe user is looking at {place}. Its text:\n\"\"\"\n{}\n\"\"\"", cut(&c.text, WINDOW_CHARS, c.terminal)));
+            source = "window";
+        }
+    }
+    // The model reads the system message now and keeps it (see `warm_now`).
+    if let Some(prompt) = template(port, &system, SENTINEL) {
+        if let Some(at) = prompt.find(SENTINEL) {
+            let prefix = prompt[..at].trim_end_matches(' ');
+            let _ = crate::planner::http(port, "POST", "/completion", &completion(prefix, false, 0), Duration::from_secs(120));
+        }
+    }
+    touch();
+    Ok(Opened { port, system, app, model, source })
+}
+
+/// Excerpts of the user's documents for a chat message that is not about the screen: a block to put
+/// before the message, and the files they came from; None when nothing matches well.
+pub fn message_documents(
+    question: &str,
+    documents: &dyn Fn(&str) -> Vec<(String, String)>,
+) -> Option<(String, Vec<String>)> {
+    if points_at_screen(question) {
+        return None;
+    }
+    let found = documents(question);
+    if found.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = found
+        .iter()
+        .map(|(p, _)| Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.clone()))
+        .collect();
+    *SOURCES.lock().unwrap() = found.iter().map(|(p, _)| p.clone()).collect();
+    let mut block = String::from("Excerpts from the user's documents, which may or may not be relevant:\n\n");
+    for (i, ((_, text), name)) in found.iter().zip(&names).enumerate() {
+        block.push_str(&format!("[{}] {name}\n\"\"\"\n{}\n\"\"\"\n\n", i + 1, text.trim()));
+    }
+    Some((block, names))
 }
 
 /// The files the last answer from documents cited, in the order it numbered them.

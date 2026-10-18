@@ -29,7 +29,7 @@ public sealed partial class MainWindow
 
     private void ApplyPassage(int version, HitVm vm, string path, string key, Native.PassageReply r)
     {
-        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done or View.Settings) return;
+        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done or View.Settings or View.Chat) return;
         if (vm.Path != path || !vm.Related || !Items.Contains(vm)) return;
         vm.SetPassage(key, r.Text, r.Marks);
         HoldHeight();

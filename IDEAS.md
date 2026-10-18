@@ -148,6 +148,10 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Chat (`ChatView.cs`, `chat.rs` `open`): a tap on Tab opens a conversation with the model that has
+  already read the window in front; messages about your files bring their best passages. Still to do:
+  keep the conversation when the palette closes and reopens, tools in the chat (do things, not only
+  answer), and the cloud step-up with a yes.
 - Ask your documents (`chat.rs`, `serve.rs` `context`, `lex.rs` `rank`): `? when does my lease end`
   answers from the best passages of your files with [1] [2] citations, the files listed under the answer
   and openable from the row's actions. Still to do: a page number or a highlighted passage when a

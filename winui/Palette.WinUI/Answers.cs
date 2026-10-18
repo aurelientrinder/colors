@@ -209,6 +209,11 @@ public sealed partial class MainWindow
                 RenderAsk(ask);
                 h = AskPreview.Height;
                 break;
+            case ChatAnswer chat:
+                ChatPreview.Visibility = Visibility.Visible;
+                RenderChat(chat);
+                h = ChatPreview.Height;
+                break;
         }
         _pvFull = 6 + h + 12;   // the pane's gap above and margin below, as for a sum
     }

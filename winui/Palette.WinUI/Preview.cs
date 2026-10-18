@@ -283,6 +283,7 @@ public sealed partial class MainWindow
         SystemStats.Stop();
         FactPreview.Visibility = Visibility.Collapsed;
         AskPreview.Visibility = Visibility.Collapsed;
+        ChatPreview.Visibility = Visibility.Collapsed;
         FactImage.Source = null;
         PreviewImage.Source = null;
         PreviewImage.Visibility = Visibility.Collapsed;
