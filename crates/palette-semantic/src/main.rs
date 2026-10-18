@@ -11,6 +11,7 @@
 mod discover;
 mod embed;
 mod extract;
+mod lex;
 mod power;
 mod serve;
 mod store;

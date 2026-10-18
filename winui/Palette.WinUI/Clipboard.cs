@@ -25,8 +25,17 @@ public sealed partial class MainWindow
         if (!_settings.ClipboardHistory || Interlocked.Exchange(ref _clipBusy, 1) == 1) return;
         try
         {
+            // Windows answers only while this program is in front, and otherwise never does: give it a
+            // few seconds, then try again the next time the palette opens (it is in front then).
+            var request = Windows.ApplicationModel.DataTransfer.Clipboard.GetHistoryItemsAsync().AsTask();
+            if (await Task.WhenAny(request, Task.Delay(4000)) != request)
+            {
+                App.Log("clipboard history: no answer");
+                return;
+            }
             _clipRead = DateTime.UtcNow;
-            var found = await Windows.ApplicationModel.DataTransfer.Clipboard.GetHistoryItemsAsync();
+            var found = await request;
+            App.Log($"clipboard history: {found.Status}, {(found.Status == ClipboardHistoryItemsResultStatus.Success ? found.Items.Count : 0)} items");
             if (found.Status != ClipboardHistoryItemsResultStatus.Success) return;
             // Newest first in the result; the engine wants oldest first so the newest ends in front.
             foreach (var item in found.Items.Reverse())
@@ -55,12 +64,19 @@ public sealed partial class MainWindow
             try
             {
                 var view = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
-                if (view.Contains("ExcludeClipboardContentFromMonitorProcessing") || !view.Contains(StandardDataFormats.Text)) return;
-                Native.ClipAdd(await view.GetTextAsync(), DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                if (view.Contains("ExcludeClipboardContentFromMonitorProcessing") || !view.Contains(StandardDataFormats.Text))
+                {
+                    App.Log("clipboard changed: skipped (private or not text)");
+                    return;
+                }
+                string copied = await view.GetTextAsync();
+                App.Log($"clipboard changed: {copied.Length} chars");
+                Native.ClipAdd(copied, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                 return;
             }
-            catch
+            catch (Exception ex)
             {
+                App.Log("clipboard read failed: " + ex.Message);
                 await Task.Delay(150); // the copying program still has the clipboard open
             }
         }

@@ -148,6 +148,10 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Exact sentences find their document (`lex.rs`): a word filter per document over its whole text,
+  so a sentence copied from anywhere in a PDF finds it, and the passage shown is the chunk that has
+  it. Still to do: the word filters could rank by how close together the words are (a phrase, not
+  just the same words), and a PDF's page number for the passage.
 - Settings (`SettingsView.cs`, `Hotkey.cs`): `Palette: Settings` or the tray lists every option as a
   switch in the palette itself, with the shortcut that opens Palette chosen by pressing it. The tray
   menu shrank to Open, Settings, Run at startup and Quit. Still to do: excluded folders, and the

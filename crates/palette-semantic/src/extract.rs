@@ -307,8 +307,10 @@ fn terms(q: &str) -> Vec<String> {
 /// Does `word` (lowercased) stand for `term`? The shorter one's first five letters must open the
 /// other, so "taxes" finds "tax" and "leasing" finds "lease" without a stemmer.
 fn same_word(word: &str, term: &str) -> bool {
-    let n = word.chars().count().min(term.chars().count()).min(5);
-    n >= 3 && word.chars().take(n).eq(term.chars().take(n))
+    let (lw, lt) = (word.chars().count(), term.chars().count());
+    // Not "par" for "particulièrement": the words must be about as long as each other.
+    let n = lw.min(lt).min(5);
+    n >= 3 && lw.abs_diff(lt) <= 4 && word.chars().take(n).eq(term.chars().take(n))
 }
 
 /// The words of `text` as (byte start, byte end, matches a term).
@@ -387,8 +389,28 @@ pub fn passage(chunk: &str, q: &str) -> Option<Passage> {
     let mut lead = false;
     let mut tail = false;
     if chunk[from..to].trim().chars().count() > PASSAGE_CHARS {
-        // Too long: a window around the first matching word, on word boundaries.
-        let first = words.iter().find(|&&(ws, _, hit)| hit && ws >= from && ws < to).map(|w| w.0).unwrap_or(from);
+        // Too long: a window where the most of the query's words are close together (the first of
+        // equals), on word boundaries.
+        let hits: Vec<&(usize, usize, bool)> = words.iter().filter(|&&(ws, _, hit)| hit && ws >= from && ws < to).collect();
+        let first = hits
+            .iter()
+            .map(|&&(ws, _, _)| {
+                let mut seen: Vec<&String> = Vec::new();
+                for &&(a, b, _) in &hits {
+                    if a >= ws && b <= ws + PASSAGE_CHARS {
+                        let w = chunk[a..b].to_lowercase();
+                        if let Some(t) = terms.iter().find(|t| same_word(&w, t)) {
+                            if !seen.contains(&t) {
+                                seen.push(t);
+                            }
+                        }
+                    }
+                }
+                (seen.len(), ws)
+            })
+            .max_by_key(|&(n, ws)| (n, std::cmp::Reverse(ws)))
+            .map(|(_, ws)| ws)
+            .unwrap_or(from);
         let back = chunk[..first].char_indices().rev().nth(50).map(|(i, _)| i).unwrap_or(0).max(from);
         if back > from {
             from = chunk[back..].find(' ').map(|i| back + i + 1).unwrap_or(back);
@@ -427,6 +449,21 @@ pub fn passage(chunk: &str, q: &str) -> Option<Passage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_sentence_is_cut_where_the_words_are() {
+        let filler = "la cour d'appel a statu\u{e9} par des motifs contradictoires, ce qui \u{e9}quivaut \u{e0} un d\u{e9}faut de motifs, ".repeat(4);
+        let chunk = format!("{filler}le comportement pr\u{e9}sentait un caract\u{e8}re plus qu'excessif et particuli\u{e8}rement abusif et rendait impossible la poursuite du contrat; {filler}");
+        let p = passage(&chunk, "un caract\u{e8}re plus qu'excessif et particuli\u{e8}rement abusif et rendait impossible la poursuite du").unwrap();
+        assert!(p.text.contains("particuli\u{e8}rement abusif"), "{}", p.text);
+    }
+
+    #[test]
+    fn short_words_do_not_stand_for_long_ones() {
+        assert!(same_word("taxes", "tax"));
+        assert!(same_word("leasing", "leasi"));
+        assert!(!same_word("par", "particulierement"));
+    }
 
     #[test]
     fn short_text_is_one_chunk() {

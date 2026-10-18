@@ -87,6 +87,8 @@ pub struct Shared {
     used_at: AtomicU64,
     activity: AtomicU64,
     docs: RwLock<Store>,
+    /// Every word of every document (lex.rs): finds a sentence from anywhere in a file.
+    lex: RwLock<crate::lex::Lex>,
     /// One vector per document from the previous index layout; consulted for documents the
     /// new index has not reached yet, then dropped.
     legacy: RwLock<Option<Store>>,
@@ -107,7 +109,13 @@ pub struct Shared {
     /// The last query and its vector: the passage asked for right after a query reuses it.
     last_query: Mutex<Option<(String, Vec<f32>)>>,
     /// Chunks of the documents whose passages were asked for lately (path, stamp, chunks).
-    texts: Mutex<Vec<(String, (u64, u64), Arc<Vec<String>>)>>,
+    texts: Mutex<Vec<(String, (u64, u64), Arc<Cached>)>>,
+}
+
+/// A document's text cut into chunks twice: the few that were embedded, and all of them.
+pub struct Cached {
+    sampled: Vec<String>,
+    all: Vec<String>,
 }
 
 pub fn now_secs() -> u64 {
@@ -159,6 +167,7 @@ impl Shared {
         Arc::new(Shared {
             legacy: RwLock::new(legacy),
             docs: RwLock::new(Store::open(&dir.join(docs_file))),
+            lex: RwLock::new(crate::lex::Lex::open(&dir.join(format!("lex-{SCHEME}.plx")))),
             items: RwLock::new(Store::open(&dir.join(items_file))),
             items_sent: AtomicU64::new(0),
             items_pass: Mutex::new(()),
@@ -251,12 +260,11 @@ impl Shared {
             .unwrap_or_default()
     }
 
-    /// Extract and embed one batch of documents. `skipped` counts those indexed by name only.
-    fn index_batch(&self, chunk: &[&Candidate], skipped: &mut usize) -> Result<(), String> {
+    /// The text of a batch of documents, read in parallel. PDFs already run in their own (killable)
+    /// child processes; the journal names the in-process files so a crash blames them.
+    fn read_batch(&self, chunk: &[&Candidate]) -> Vec<Option<String>> {
         let journal = self.cfg.dir().join("current.txt");
 
-        // Extract the whole batch in parallel; PDFs already run in their own (killable)
-        // child processes. The journal names the in-process files so a crash blames them.
         let in_process: Vec<&str> = chunk
             .iter()
             .map(|c| c.path.as_str())
@@ -273,6 +281,19 @@ impl Shared {
         });
         let _ = std::fs::remove_file(&journal);
         self.t_extract_ms.fetch_add(t_ext.elapsed().as_millis() as u64, Ordering::Relaxed);
+        extracted
+    }
+
+    /// Extract and embed one batch of documents. `skipped` counts those indexed by name only.
+    fn index_batch(&self, chunk: &[&Candidate], skipped: &mut usize) -> Result<(), String> {
+        let extracted = self.read_batch(chunk);
+        {
+            let mut lex = self.lex.write().unwrap();
+            for (c, text) in chunk.iter().zip(&extracted) {
+                lex.set(&c.path, (c.mtime_ms, c.size), text.as_deref());
+            }
+            lex.flush(false);
+        }
 
         // Every document is searchable. When the body could not be read in time (big or
         // scanned PDFs), the file name alone is embedded: papers are usually named by title.
@@ -377,6 +398,7 @@ impl Shared {
                 return;
             }
         }
+        self.lex.write().unwrap().flush(true);
         let mut docs = self.docs.write().unwrap();
         docs.flush();
         let n = docs.len();
@@ -406,6 +428,7 @@ impl Shared {
             }
         });
 
+        self.lex.write().unwrap().retain(|k| live.contains_key(k));
         let todo: Vec<&Candidate> = {
             let docs = self.docs.read().unwrap();
             cands
@@ -468,6 +491,9 @@ impl Shared {
         }
         self.docs.write().unwrap().flush();
         if completed {
+            self.read_words(&cands, &bad, verbose);
+        }
+        if completed {
             // Every document now has chunk vectors; the old single-vector index is obsolete.
             if let Some(old) = self.legacy.write().unwrap().take() {
                 drop(old);
@@ -495,6 +521,48 @@ impl Shared {
                 chunks as f64 / emb.max(0.001)
             );
         }
+    }
+
+    /// Give every document that has no word filter yet (indexed before lex.rs existed) one: its text
+    /// is read again, which is the slow part, so this runs after the vectors are done and not on battery.
+    fn read_words(&self, cands: &[Candidate], bad: &HashSet<String>, verbose: bool) {
+        let todo: Vec<&Candidate> = {
+            let lex = self.lex.read().unwrap();
+            cands
+                .iter()
+                .filter(|c| !bad.contains(&c.path) && lex.stamp(&c.path) != Some((c.mtime_ms, c.size)))
+                .collect()
+        };
+        if todo.is_empty() {
+            self.lex.write().unwrap().flush(true);
+            return;
+        }
+        if !self.cfg.allow_battery && crate::power::on_battery() {
+            return;
+        }
+        let total = todo.len();
+        let mut done = 0usize;
+        for chunk in todo.chunks(BATCH) {
+            if self.stop.load(Ordering::Relaxed) || (!self.cfg.allow_battery && crate::power::on_battery()) {
+                break;
+            }
+            self.set_status(|s| {
+                s.phase = "indexing";
+                s.indexed = done;
+                s.total = total;
+            });
+            let texts = self.read_batch(chunk);
+            let mut lex = self.lex.write().unwrap();
+            for (c, text) in chunk.iter().zip(&texts) {
+                lex.set(&c.path, (c.mtime_ms, c.size), text.as_deref());
+            }
+            lex.flush(false);
+            done += chunk.len();
+            if verbose && done % 100 < BATCH {
+                eprintln!("  words {done}/{total}");
+            }
+        }
+        self.lex.write().unwrap().flush(true);
     }
 
     // --------------------------------------------------------------- items
@@ -538,6 +606,11 @@ impl Shared {
             .ok_or("empty embedding")?;
         *self.last_query.lock().unwrap() = Some((q.to_string(), v.clone()));
         let mut out: Vec<(String, &'static str, f32)> = Vec::new();
+        // A sentence typed from anywhere in a document finds it, however far in (lex.rs).
+        let words = if only.is_none() { self.lex.read().unwrap().search(q, k) } else { Vec::new() };
+        for (path, score) in &words {
+            out.push((path.clone(), "doc", *score));
+        }
         if only.is_none() {
             // A document is as relevant as its best chunk. Ask for several times `k` chunks so
             // one long document's chunks cannot crowd out every other file.
@@ -561,7 +634,7 @@ impl Shared {
                 }
                 best.sort_by(|a, b| b.1.total_cmp(&a.1));
             }
-            for (path, s) in best.into_iter().take(k) {
+            for (path, s) in best.into_iter().filter(|(p, _)| !words.iter().any(|(w, _)| w == p)).take(k) {
                 out.push((path, "doc", s));
             }
         }
@@ -582,9 +655,35 @@ impl Shared {
 use crate::extract::Passage;
 
 impl Shared {
-    /// The passage of `path` that `q` matched: the document's chunk nearest the query, cut down
-    /// to the sentences that share the query's words (or its opening, when none do).
+    /// The passage of `path` that `q` matched. When the query's own words are in the document (a
+    /// sentence copied from it), it is the chunk, anywhere in the text, that has most of them; else the
+    /// chunk whose vector is nearest the query. Cut down to the sentences that share the query's words
+    /// (or the chunk's opening, when none do).
     pub fn passage(&self, path: &str, q: &str) -> Option<Passage> {
+        let stamp = self.docs.read().unwrap().stamp(path)?;
+        let texts = self.texts_of(path, stamp)?;
+
+        // By words: the chunk with the most of the query's.
+        let wanted = crate::lex::words(q);
+        if wanted.len() >= crate::lex::MIN_QUERY_WORDS {
+            let best = texts
+                .all
+                .iter()
+                .map(|c| {
+                    let have = crate::lex::words(c);
+                    wanted.iter().filter(|w| have.contains(*w)).count()
+                })
+                .enumerate()
+                .max_by_key(|&(i, n)| (n, std::cmp::Reverse(i)));
+            if let Some((i, n)) = best {
+                if n * 10 >= wanted.len() * 6 {
+                    return extract::passage(&texts.all[i], q);
+                }
+            }
+        }
+
+        // By meaning: the embedded chunk whose vector is nearest the query. Chunks of an older
+        // version of the file are not consulted (as in `query`).
         let qv = {
             let cached = self.last_query.lock().unwrap().as_ref().filter(|(c, _)| c == q).map(|(_, v)| v.clone());
             match cached {
@@ -596,9 +695,6 @@ impl Shared {
                     .pop()?,
             }
         };
-        let stamp = self.docs.read().unwrap().stamp(path)?;
-        // The chunk whose vector is nearest the query. Chunks of an older version of the file
-        // are not consulted (as in `query`).
         let best = {
             let docs = self.docs.read().unwrap();
             (0..self.cfg.max_chunks)
@@ -613,12 +709,11 @@ impl Shared {
                 .max_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(n, _)| n)?
         };
-        let chunks = self.chunks_of(path, stamp)?;
-        extract::passage(chunks.get(best)?, q)
+        extract::passage(texts.sampled.get(best)?, q)
     }
 
-    /// The chunks a document was cut into, as when it was indexed; the last few are kept.
-    fn chunks_of(&self, path: &str, stamp: (u64, u64)) -> Option<Arc<Vec<String>>> {
+    /// A document's chunks, as when it was indexed and all of them; the last few are kept.
+    fn texts_of(&self, path: &str, stamp: (u64, u64)) -> Option<Arc<Cached>> {
         {
             let mut t = self.texts.lock().unwrap();
             if let Some(i) = t.iter().position(|(p, s, _)| p == path && *s == stamp) {
@@ -629,14 +724,17 @@ impl Shared {
             }
         }
         let text = extract::extract(Path::new(path))?;
-        let chunks = Arc::new(extract::chunk(&text, self.cfg.max_chunks));
+        let cached = Arc::new(Cached {
+            sampled: extract::chunk(&text, self.cfg.max_chunks),
+            all: extract::chunk(&text, usize::MAX),
+        });
         let mut t = self.texts.lock().unwrap();
         t.retain(|(p, _, _)| p != path);
-        t.push((path.to_string(), stamp, chunks.clone()));
+        t.push((path.to_string(), stamp, cached.clone()));
         if t.len() > 6 {
             t.remove(0);
         }
-        Some(chunks)
+        Some(cached)
     }
 }
 

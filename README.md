@@ -241,7 +241,13 @@ file actions.
   overlapping ~900-character chunks, each embedded with the file name as context and
   stored as its own vector; a document scores as its best chunk. Past 8 chunks the first 4
   are kept and the rest sampled evenly, so a long document is represented along its length
-  (`PALETTE_SEM_MAX_CHUNKS`). PDFs are parsed in a killable child process (15 s limit,
+  (`PALETTE_SEM_MAX_CHUNKS`). Every word of every document is also kept, as one small Bloom
+  filter per document (`lex.rs`, `lex-c1.plx`, about a megabyte for two thousand documents):
+  a query of three words or more that all appear in a document finds it, however far in the
+  text they are, which is what a sentence copied from page 40 needs (the chunks above
+  cover only a few percent of a long PDF). The row's passage is then the chunk that has the
+  words. Documents indexed before this are read once more in the background, after the
+  vectors are done and not on battery. PDFs are parsed in a killable child process (15 s limit,
   files up to 40 MB): lopdf first, then pdf-extract's font handling when lopdf returns
   almost nothing. Documents whose text cannot be read in time, and scans (no text layer),
   are indexed by file name. Backup copies (same name and size) and
