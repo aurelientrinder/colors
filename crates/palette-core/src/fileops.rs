@@ -47,6 +47,12 @@ fn finish(message: impl Into<String>, undo: Option<Undo>) {
     *OUTCOME.lock().unwrap() = Outcome { message: message.into(), ok: true, undo: can };
 }
 
+/// A line for the shell to show after something else was done or refused (see pcinfo.rs).
+pub fn report(message: impl Into<String>, ok: bool) {
+    *LAST.lock().unwrap() = None;
+    *OUTCOME.lock().unwrap() = Outcome { message: message.into(), ok, undo: false };
+}
+
 fn fail(message: impl Into<String>) {
     *OUTCOME.lock().unwrap() = Outcome { message: message.into(), ok: false, undo: false };
 }

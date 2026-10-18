@@ -67,7 +67,7 @@ impl Pins {
 
 /// Can this hit be pinned? Windows come and go; calculator and web rows echo the query.
 pub fn pinnable(hit: &Hit) -> bool {
-    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip)
+    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip | Kind::Proc)
         && !matches!(&hit.action, Action::Builtin(id) if id == "allapps" || id == SELECTION)
 }
 
@@ -291,7 +291,7 @@ pub fn expand_env(s: &str) -> String {
 /// One entry in a result's action list.
 #[derive(Serialize)]
 pub struct ActionRow {
-    pub id: &'static str,
+    pub id: String,
     pub title: String,
     /// Keyboard shortcut that does the same from the results list, if any.
     pub hint: &'static str,
@@ -299,8 +299,8 @@ pub struct ActionRow {
     pub copy: Option<String>,
 }
 
-fn row(id: &'static str, title: impl Into<String>, hint: &'static str) -> ActionRow {
-    ActionRow { id, title: title.into(), hint, copy: None }
+fn row(id: &str, title: impl Into<String>, hint: &'static str) -> ActionRow {
+    ActionRow { id: id.to_string(), title: title.into(), hint, copy: None }
 }
 
 /// The file behind an app row, when there is one: a Start Menu shortcut, an exe, or the program
@@ -375,6 +375,7 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
         Kind::Command => "Run",
         Kind::Calc => "Copy result",
         Kind::Clip => "Copy",
+        Kind::Proc => "Show in folder",
         Kind::Web => "Search the web",
         Kind::Toggle => "Apply",
         Kind::Plan => "Run",
@@ -383,6 +384,9 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
     v.push(row("open", open, "Enter"));
     if elevatable(hit) {
         v.push(row("admin", "Run as administrator", "Ctrl+Shift+Enter"));
+    }
+    if hit.kind == Kind::Proc {
+        v.push(row("endtask", "End task", ""));
     }
     if crate::clip::link_of(hit).is_some() {
         v.push(row("openlink", "Open link", ""));
@@ -408,6 +412,12 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
         v.push(row("rename", "Rename\u{2026}", ""));
         v.push(row("moveto", "Move to\u{2026}", ""));
         v.push(row("recycle", "Move to Recycle Bin", ""));
+    }
+    // Programs that have the file open, each to be ended (a choice made from the list, never by Enter).
+    if let (Kind::File, Some(p)) = (hit.kind, file_of(hit)) {
+        for (pid, name) in crate::pcinfo::locks_of(&p) {
+            v.push(row(&format!("endpid:{pid}"), format!("End {name} (it has this open)"), ""));
+        }
     }
     if pinnable(hit) {
         match pin {
@@ -547,6 +557,21 @@ pub fn act(hit: &Hit, id: &str, pins: &mut Pins, usage: &mut Usage) -> After {
                 After::Done
             }
             None => After::NotApplicable,
+        },
+        "endtask" if hit.kind == Kind::Proc => match crate::pcinfo::pid_of(hit) {
+            Some(pid) => {
+                crate::pcinfo::end(pid);
+                After::Done
+            }
+            None => After::NotApplicable,
+        },
+        _ if id.starts_with("endpid:") => match (file_of(hit), id["endpid:".len()..].parse::<u32>()) {
+            // Only a program that still has the file open, as the list said.
+            (Some(p), Ok(pid)) if crate::pcinfo::locks_of(&p).iter().any(|(q, _)| *q == pid) => {
+                crate::pcinfo::end(pid);
+                After::Done
+            }
+            _ => After::NotApplicable,
         },
         "openlink" => match crate::clip::link_of(hit) {
             Some(url) => {

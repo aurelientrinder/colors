@@ -153,7 +153,7 @@ fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn ago(secs: i64) -> String {
+pub fn ago(secs: i64) -> String {
     match secs {
         s if s < 45 => "just now".into(),
         s if s < 90 * 60 => format!("{} min ago", ((s + 30) / 60).max(1)),

@@ -37,6 +37,8 @@ features = [
   "Win32_System_JobObjects",
   # reading the window in front: its selected text and its commands (uia.rs)
   "Win32_UI_Accessibility",
+  # answers about the PC itself (pcinfo.rs): listening ports, programs holding a file open
+  "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_RestartManager",
   # unit, date and time-zone conversions (convert.rs)
   "Win32_System_Time", "Win32_System_SystemInformation",
 ]

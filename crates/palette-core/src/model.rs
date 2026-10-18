@@ -20,6 +20,8 @@ pub enum Kind {
     Control,
     /// Something copied lately (see clip.rs).
     Clip,
+    /// A running program, found by a question about the PC (see pcinfo.rs).
+    Proc,
 }
 
 impl Kind {
@@ -37,6 +39,7 @@ impl Kind {
             Kind::Plan => "Plan",
             Kind::Control => "Control",
             Kind::Clip => "Clipboard",
+            Kind::Proc => "Process",
         }
     }
     /// Ranking nudge so apps beat same-scoring files.
@@ -51,7 +54,7 @@ impl Kind {
             Kind::Folder => 20,
             Kind::File => 0,
             // Quick settings are scored by how well the query names them (see quick.rs).
-            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip => 0,
+            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip | Kind::Proc => 0,
         }
     }
 }

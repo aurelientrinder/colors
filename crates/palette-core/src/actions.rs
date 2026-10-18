@@ -120,6 +120,11 @@ pub fn execute(hit: &Hit, copy: &dyn Fn(&str)) -> bool {
             }
         }
         Action::Plan(steps) => crate::intent::run(steps),
+        Action::Builtin(id) if id.starts_with("proc:") => {
+            if let Ok(pid) = id["proc:".len()..].parse() {
+                crate::pcinfo::reveal(pid);
+            }
+        }
         Action::Builtin(id) if id.starts_with("quick:") => {
             crate::quick::run(&id["quick:".len()..]);
         }

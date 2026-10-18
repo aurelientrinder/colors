@@ -64,6 +64,7 @@ public sealed class HitVm : INotifyPropertyChanged
             "Window" => ("\uE8A7", "Switch to", false),
             "Control" => ("\uE768", "Run", false),
             "Clipboard" => ("\uE8C8", "Copy", false),
+            "Process" => ("\uE8A7", "Show in folder", false),
             "Web" => ("\uE8A7", "Search the web", false),
             "File" or "Folder" or "App" => ("\uE8A7", "Open file location", true),
             _ => ("\uE8A7", "Open", false),

@@ -124,9 +124,8 @@ A hub:
 - **Resume yesterday.** Keep a local log of which windows and files were in front, and when
   (`ShellHooks` and the file watcher already see both). "What was I doing Tuesday afternoon"
   lists them; "resume yesterday" opens them again where they were. Stays on the PC.
-- **Answers about the PC itself.** "port 3000" shows the process listening, with End task; "who
-  has this file open" asks the Restart Manager and offers to close it; "what's using my camera"
-  reads the consent store; "why is my fan loud" sorts the system card's processes by CPU.
+- **Answers about the PC itself, the rest.** "why is my fan loud" sorts the system card's
+  processes by CPU; "what's using the network"; "what is using this drive"; "when did I install X".
 - **Hold the Copilot key to talk.** It is already intercepted. Speech to text offline (Windows'
   recogniser, or Whisper on the NPU through the same OpenVINO setup) feeds the plan model.
 - **Shell history.** `>` searches past PowerShell commands (PSReadLine's
@@ -150,6 +149,10 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Answers about the PC itself (`pcinfo.rs`): "port 3000" shows the program listening (End task in its
+  actions), "what's using my camera / microphone" reads Windows' privacy record, and a file's actions
+  list the programs that have it open, each with End. Still to do: UDP ports, a graceful Close
+  before End, the CPU and network questions.
 - Quick actions on files (`fileops.rs`): copy, compress to ZIP, rename, move to, Recycle Bin, with
   Undo for the zip, rename and move. Still to do: a key from the results list (F2 renames), several
   files at once, extract a zip, send to / share, "copy to" beside "move to".

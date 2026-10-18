@@ -77,6 +77,7 @@ public sealed partial class MainWindow
             "Command" or "Control" => "Run",
             "Calculator" => "Copy result",
             "Clipboard" => "Copy",
+            "Process" => "Show in folder",
             "Web" => "Search the web",
             "Toggle" => "Apply",
             "Plan" => "Run",

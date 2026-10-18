@@ -119,6 +119,11 @@ pub enum Src {
 pub fn source_for(hit: &Hit) -> Option<(String, Src)> {
     match (hit.kind, &hit.action) {
         (Kind::Setting, _) => Some(("settings".into(), Src::Shell(SETTINGS_APP.into()))),
+        // A program found by a question: its own icon.
+        (Kind::Proc, Action::Builtin(_)) => {
+            let exe = crate::pcinfo::exe_of(crate::pcinfo::pid_of(hit)?)?.display().to_string();
+            Some((format!("path:{exe}"), Src::Path(exe)))
+        }
         (Kind::Folder, _) => Some(("dir".into(), Src::Attrs { name: "folder".into(), dir: true })),
         // Same keys as the app rows, so a window shares its app's cached icon.
         (Kind::Window, Action::Focus { icon, .. }) if icon.starts_with("shell:") => Some((icon.clone(), Src::Shell(icon.clone()))),
