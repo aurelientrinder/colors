@@ -64,7 +64,11 @@ public sealed partial class MainWindow
         KeyHints.Opacity = show && _settings.KeyHints ? 1 : 0;
         if (!show) return;
         KeyHints.Text = KeyHintsFor(Items[i]);
-        OpenButton.Content = _view == View.Actions ? "Run" : Items[i].IsAnswer ? "Open" : Items[i].RawKind switch
+        var row = Items[i];
+        OpenButton.Content = _view == View.Actions ? "Run"
+            : row.IsTimer ? row.TimerLabel
+            : row.Confirming ? row.ConfirmLabel
+            : row.IsAnswer ? "Open" : row.RawKind switch
         {
             "Window" => "Switch to",
             "Command" => "Run",
@@ -80,11 +84,15 @@ public sealed partial class MainWindow
     private string KeyHintsFor(HitVm row)
     {
         if (_view == View.Actions) return "Esc Back";
+        if (row.Confirming) return $"↵ {row.ConfirmLabel}  ·  Esc Cancel";
+        if (row.IsTimer) return $"↵ {row.TimerLabel}";
         var keys = new List<string>();
+        if (row.IsWindow) keys.Add("Ctrl+M Minimize  ·  Ctrl+W Close");
         if (!row.IsAnswer && PathOf(row) is var (_, isFolder))
         {
             keys.Add(isFolder ? "→ Browse" : "← Show folder");
         }
+        if (row.HasSlider) keys.Add("← → Adjust");
         if (!row.IsAnswer && row.Reveals) keys.Add("Ctrl+↵ Location");
         keys.Add("Hold Tab Actions");
         return string.Join("  ·  ", keys);

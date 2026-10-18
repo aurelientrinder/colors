@@ -391,7 +391,8 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
         v.push(row("uninstall", "Uninstall\u{2026}", ""));
     }
     if hit.kind == Kind::Window {
-        v.push(row("close", "Close window", ""));
+        v.push(row("minimize", "Minimize window", "Ctrl+M"));
+        v.push(row("close", "Close window", "Ctrl+W"));
     }
     v
 }
@@ -457,6 +458,18 @@ pub fn act(hit: &Hit, id: &str, pins: &mut Pins, usage: &mut Usage) -> After {
                 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
                 unsafe {
                     let _ = PostMessageW(Some(HWND(*hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+                After::Refresh
+            }
+            _ => After::NotApplicable,
+        },
+        // Down to the taskbar without activating anything: the palette keeps the keyboard.
+        "minimize" => match &hit.action {
+            Action::Focus { hwnd, .. } => {
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
+                unsafe {
+                    let _ = ShowWindow(HWND(*hwnd as *mut _), SW_SHOWMINNOACTIVE);
                 }
                 After::Refresh
             }

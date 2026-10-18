@@ -118,6 +118,25 @@ internal sealed class TrayIcon : IDisposable
         if (_hwnd != IntPtr.Zero) Notify(NIM_MODIFY);
     }
 
+    /// <summary>A notification from the tray icon (shown as a toast on Windows 10 and 11).</summary>
+    public void ShowBalloon(string title, string text)
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        const uint NIF_INFO = 0x10, NIIF_INFO = 1;
+        var d = new NOTIFYICONDATA
+        {
+            cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATA>(),
+            hWnd = _hwnd,
+            uID = 1,
+            uFlags = NIF_INFO,
+            szTip = "",
+            szInfo = text.Length > 250 ? text[..250] : text,
+            szInfoTitle = title.Length > 60 ? title[..60] : title,
+            dwInfoFlags = NIIF_INFO,
+        };
+        Shell_NotifyIcon(NIM_MODIFY, ref d);
+    }
+
     private void Run()
     {
         var inst = GetModuleHandle(null);

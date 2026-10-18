@@ -74,6 +74,7 @@ public sealed partial class MainWindow : Window
         Win32.DwmSetWindowAttribute(_hwnd, 33, ref round, sizeof(int));
 
         InitMotion();
+        InitControls();
         InitAnswers();
         Activated += OnActivated;
         Input.Loaded += (_, _) => HideClearButton();
@@ -175,8 +176,8 @@ public sealed partial class MainWindow : Window
         double s = Scale;
         int rows = Items.Count;
         // More rows scroll; a leading answer shows on its own with the "more results" line.
-        double need = _condensedRows > 0 ? _condensedRows * RowDip + PadDip + HintDip
-            : rows > 0 ? Math.Min(rows, MaxRows) * RowDip + PadDip : 0;
+        double need = _condensedRows > 0 ? _condensedRows * RowDip + ControlsDip(_condensedRows) + PadDip + HintDip
+            : rows > 0 ? Math.Min(rows, MaxRows) * RowDip + ControlsDip(MaxRows) + PadDip : 0;
         // While typing the list does not shrink below the instant results' rows: their count can
         // dip for a keystroke, and following it exactly makes the panel bounce. It shrinks to fit
         // once typing settles (HoldHeight). Room for the Related rows is not held: they leave when
@@ -627,6 +628,7 @@ public sealed partial class MainWindow : Window
         }
         if (_view is View.AllApps or View.Done) SetView(View.Results, SearchPlaceholder);   // typing searches everything
         _previewOn = false;   // a new search starts without a preview; Tab opens it again
+        _pvAuto = false;
         Enqueue(Input.Text);
     }
 
@@ -689,10 +691,11 @@ public sealed partial class MainWindow : Window
                 e.Handled = true;
                 break;
             case VirtualKey.Right:
-                e.Handled = TryBrowseDown(sel);   // into the selected folder (Browse.cs)
+                // A slider row's level (Controls.cs), else into the selected folder (Browse.cs).
+                e.Handled = TryNudgeSlider(sel, +1) || TryBrowseDown(sel);
                 break;
             case VirtualKey.Left:
-                e.Handled = TryBrowseUp(sel);     // to the folder the selected result is in
+                e.Handled = TryNudgeSlider(sel, -1) || TryBrowseUp(sel);   // or to the folder the result is in
                 break;
             case VirtualKey.Enter:
                 e.Handled = true;
@@ -711,8 +714,17 @@ public sealed partial class MainWindow : Window
                     Launch(sel, reveal: false);
                 }
                 break;
+            case VirtualKey.Escape when sel >= 0 && sel < n && Items[sel].Confirming:
+                Items[sel].Confirming = false;   // Esc backs out of a shut down / restart / sign out
+                UpdateOpenButton();
+                e.Handled = true;
+                break;
             case VirtualKey.Escape:
                 HidePalette(restoreFocus: true);
+                e.Handled = true;
+                break;
+            case VirtualKey.M or VirtualKey.W when Held(VirtualKey.Control) && sel >= 0 && sel < n && Items[sel].IsWindow:
+                WindowAct(Items[sel], e.Key == VirtualKey.M ? "minimize" : "close");
                 e.Handled = true;
                 break;
         }
@@ -780,6 +792,19 @@ public sealed partial class MainWindow : Window
         }
         if (_view == View.Done || index < 0 || index >= Items.Count) return;
         var vm = Items[index];
+        if (vm.IsTimer)
+        {
+            TimerPrimary();   // start, pause, resume or restart (Timer.cs)
+            return;
+        }
+        if (!reveal && vm.ConfirmVerb != null && !vm.Confirming)
+        {
+            // Shutting down, restarting or signing out asks first: Enter again (or the button) does it.
+            vm.Confirming = true;
+            UpdateOpenButton();
+            return;
+        }
+        vm.Confirming = false;
         if (vm.RawKind == "Command" && vm.Title == KeyHintsCommand && !reveal)
         {
             // The footer is the shell's: flip it here, and say so on the Done line.
@@ -802,6 +827,7 @@ public sealed partial class MainWindow : Window
             ShowDone(vm.Title);
             return;
         }
+        if (vm.Does == "autostart" && !reveal) _autostart = !_autostart;   // the engine flips it; the switch follows
         LaunchHit(_gen, engine, vm.CopyText, reveal);
     }
 
@@ -854,21 +880,30 @@ public sealed partial class MainWindow : Window
             return;
         }
         DropStaleAnswer(query);
+        Volatile.Write(ref _instantAt, Environment.TickCount64);
         SyncRows(r.Hits);
-        SelectFirst();
-        if (_restoreSelection >= 0)
+        // Back from a result's actions, or after a row's control changed it: the same row again
+        // (selected directly, so the selection card does not leave for the first row and return).
+        int keep = _restoreSelection + AnswerOffset;
+        if (_restoreSelection >= 0 && keep < Items.Count)
         {
-            // Back from a result's actions: the same row again.
-            int i = _restoreSelection + AnswerOffset;
-            if (i < Items.Count) ResultsList.SelectedIndex = i;
-            _restoreSelection = -1;
+            if (ResultsList.SelectedIndex != keep) ResultsList.SelectedIndex = keep;
+            UpdateOpenButton();
         }
+        else
+        {
+            SelectFirst();
+        }
+        _restoreSelection = -1;
         ReselectByTitle();
         UpdateCondensed();
         HoldHeight();
         Resize(recenter: false);
         UpdatePreview();
         RequestAnswer(query);
+        if (!_quietRefresh) PlayListBounce();
+        _quietRefresh = false;
+        StartAutoPreview();
 
         // The instant tier is on screen; ask for meaning-based matches in the background.
         string q = query.Trim();
@@ -912,6 +947,7 @@ public sealed partial class MainWindow : Window
             if (vm.Icon == null) FillIcon(vm);
         }
         while (Items.Count > hits.Count + off) Items.RemoveAt(Items.Count - 1);
+        UpdateMediaRows();
     }
 
     /// <summary>Appends rows for <paramref name="hits"/> (indices continue from the current list).</summary>
@@ -930,6 +966,8 @@ public sealed partial class MainWindow : Window
     private int _semVersion;
     private string _semQuery = "";
     private ulong _semGen;
+    private long _instantAt;                      // when the instant results last went on screen
+    private const int RelatedDelayMs = 700;       // least time they stay alone before meaning matches join
     private readonly AutoResetEvent _semWake = new(false);
 
     /// <summary>
@@ -950,6 +988,10 @@ public sealed partial class MainWindow : Window
             served = gen;
             var r = Native.Semantic(gen, _semQuery);
             if (r.Hits.Count == 0) continue;
+            // Let the instant rows be read before the list grows again under them.
+            long wait = RelatedDelayMs - (Environment.TickCount64 - Volatile.Read(ref _instantAt));
+            if (wait > 0) Thread.Sleep((int)wait);
+            if (version != _queryVersion) continue;      // typed on while waiting
             DispatcherQueue.TryEnqueue(() => AppendRelated(version, r));
         }
     }
