@@ -7,7 +7,7 @@ Resident, instant on a tap of the Windows key, `Alt+Space` (falls back to `Ctrl+
 ## Layout
 
 ```
-crates/palette-core      Rust engine: index, search, usage, actions, icons (+ C ABI DLL)
+crates/palette-core      Rust engine: index, search, usage, actions, icons, window reading (+ C ABI DLL)
 crates/palette-mft       elevated NTFS MFT snapshot helper
 crates/palette-semantic  semantic tier: EmbeddingGemma host + document indexer (own process)
 crates/palette-plan      the plan model on the NPU (own process; llama-server's interface)
@@ -130,6 +130,25 @@ Some settings change in place, without opening anything; the row says what Enter
 
 Open windows now also need every typed word to begin a word of their title or app, so a long
 page title no longer matches unrelated searches.
+
+## The window in front
+
+When the palette opens it reads the window you were in (UI Automation, in memory only; the tray's
+"Read the window in front" turns it off, and password managers, the desktop and password fields are
+never read):
+
+- **Selected text.** If something was selected there, Home leads with a row, "Selected in Notepad",
+  and Enter puts the text in the search field (calculate it, find files about it, search for it).
+  Nothing is read from the clipboard.
+- **The app's own commands.** Typing a name that matches a button, tab or menu of that window ("bold",
+  "resize" in Paint) adds up to three rows, "In Notepad · Ctrl+B". Enter brings the window forward and
+  presses it. Only what the window shows is found: items inside a closed drop-down are not.
+  Rows are learned by what you typed but never listed on Home.
+- **Passages.** A document found by meaning shows the sentence that matched under its row, the
+  matching words in bold ("when does my lease end"). With no word in common it shows the opening of
+  the best-matching part.
+
+See ARCHITECTURE.md for where this is heading.
 
 ## Home, All apps and actions
 

@@ -228,9 +228,12 @@ pub unsafe extern "C" fn pc_search(query: *const c_char) -> *mut c_char {
     let q = if query.is_null() { "" } else { CStr::from_ptr(query).to_str().unwrap_or("") };
     // Nothing typed: the home view (pins, most used, recent files, All apps).
     let hits = if q.trim().is_empty() {
+        // Text selected in the window behind the palette leads, if its read has finished: the
+        // palette has been opening for a few ms by now, a read takes about as long.
+        let selection = crate::uia::selection(Duration::from_millis(40)).map(|t| home::selection_row(&t, &crate::uia::app_name()));
         let pins = e.pins.lock().unwrap();
         let usage = e.usage.lock().unwrap();
-        home::home(&pins, &usage)
+        home::home(&pins, &usage, selection)
     } else {
         e.searcher.search(q)
     };
@@ -398,12 +401,50 @@ pub unsafe extern "C" fn pc_plan(gen: u64, query: *const c_char) -> *mut c_char 
     into_c(out)
 }
 
+/// The passage of document `path` that `query` matched, as `{"text","marks":[[start,len],...]}`
+/// (marks in UTF-16 units), or null. Slow for a PDF the helper has not read lately: call from a
+/// worker thread. Free with `pc_free`.
+///
+/// # Safety
+/// `path` and `query` must be valid NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn pc_passage(path: *const c_char, query: *const c_char) -> *mut c_char {
+    let Some(e) = ENGINE.get() else { return std::ptr::null_mut() };
+    if path.is_null() || query.is_null() {
+        return std::ptr::null_mut();
+    }
+    let (Ok(path), Ok(query)) = (CStr::from_ptr(path).to_str(), CStr::from_ptr(query).to_str()) else {
+        return std::ptr::null_mut();
+    };
+    match e.sem.passage(path, query.trim(), Duration::from_secs(20)) {
+        Some(p) => into_c(serde_json::to_string(&p).unwrap_or_default()),
+        None => std::ptr::null_mut(),
+    }
+}
+
 /// Footer text describing the semantic index ("Indexing documents 120 / 2000", ...).
 /// Empty if the tier is unavailable. Free with `pc_free`.
 #[no_mangle]
 pub extern "C" fn pc_semantic_status() -> *mut c_char {
     let text = ENGINE.get().map(|e| e.sem.status_text()).unwrap_or_default();
     into_c(text)
+}
+
+/// Start reading the window `hwnd`, the one that had the focus when the palette opened (0: none):
+/// the text selected in it, for Home, and its commands, for typed queries (uia.rs). Returns at once.
+#[no_mangle]
+pub extern "C" fn pc_read_window(hwnd: isize) {
+    crate::uia::begin(hwnd);
+}
+
+/// The text selected in that window on one line, waiting up to `wait_ms` for the read to finish,
+/// or null. Free with `pc_free`.
+#[no_mangle]
+pub extern "C" fn pc_selection(wait_ms: i32) -> *mut c_char {
+    match crate::uia::selection(Duration::from_millis(wait_ms.max(0) as u64)) {
+        Some(t) => into_c(t),
+        None => std::ptr::null_mut(),
+    }
 }
 
 /// Hit `index` of generation `gen`, if that generation is still the latest.
@@ -426,6 +467,10 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     if matches!(&hit.action, Action::Builtin(id) if id == home::ALL_APPS) {
         return 4;
     }
+    // Selected text: the shell puts it in the search field (`pc_selection`). Never remembered.
+    if matches!(&hit.action, Action::Builtin(id) if id == home::SELECTION) {
+        return 5;
+    }
     if reveal != 0 {
         if let Some(p) = hit.reveal_path() {
             actions::reveal(&p);
@@ -445,13 +490,19 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
             }
         }
     }
+    // A command of a window exists while that window does: what you typed to find it is learned,
+    // but Home never lists it.
     if !matches!(hit.kind, crate::model::Kind::Window | crate::model::Kind::Toggle | crate::model::Kind::Plan) {
         if let Ok(mut u) = e.usage.lock() {
             let query = match &*e.last_query.lock().unwrap() {
                 (g, q) if *g == gen => q.clone(),
                 _ => String::new(),
             };
-            u.record_for(&hit, &query);
+            if hit.kind == crate::model::Kind::Control {
+                u.record_pick(&hit, &query);
+            } else {
+                u.record_for(&hit, &query);
+            }
         }
     }
     // Clipboard is the shell's job (it reads `copy_text` from the JSON).

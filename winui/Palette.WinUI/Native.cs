@@ -23,6 +23,15 @@ public static class Native
     private static extern IntPtr pc_semantic_status();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void pc_read_window(nint hwnd);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_selection(int waitMs);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_passage([MarshalAs(UnmanagedType.LPUTF8Str)] string path, [MarshalAs(UnmanagedType.LPUTF8Str)] string query);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr pc_plan(ulong gen, [MarshalAs(UnmanagedType.LPUTF8Str)] string query);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -133,6 +142,36 @@ public static class Native
     public static Appended Plan(ulong gen, string query) =>
         Read(pc_plan(gen, query), NativeJson.Default.Appended) ?? new Appended(gen, 0, new());
 
+    /// <summary>The part of a document that answers a query; Marks are (start, length) pairs of the matching words.</summary>
+    public sealed record PassageReply(
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("marks")] List<int[]> Marks);
+
+    /// <summary>
+    /// The passage of <paramref name="path"/> that <paramref name="query"/> matched, or null. Reading a
+    /// PDF the helper has not read lately takes a moment: call off the UI thread.
+    /// </summary>
+    public static PassageReply? Passage(string path, string query) => Read(pc_passage(path, query), NativeJson.Default.PassageReply);
+
+    /// <summary>
+    /// Start reading the window that had the focus when the palette opened (IntPtr.Zero: none): its
+    /// selected text and its commands. Returns at once.
+    /// </summary>
+    public static void ReadWindow(IntPtr hwnd) => pc_read_window(hwnd);
+
+    /// <summary>
+    /// The text selected in that window, on one line, waiting up to <paramref name="waitMs"/> for the
+    /// read to finish; null when nothing is selected. Blocks while it waits: call off the UI thread
+    /// unless the wait is 0.
+    /// </summary>
+    public static string? Selection(int waitMs)
+    {
+        IntPtr p = pc_selection(waitMs);
+        if (p == IntPtr.Zero) return null;
+        try { return Marshal.PtrToStringUTF8(p); }
+        finally { pc_free(p); }
+    }
+
     public static string SemanticStatus()
     {
         IntPtr p = pc_semantic_status();
@@ -182,7 +221,7 @@ public static class Native
         }
     }
 
-    public enum LaunchResult { Nothing = 0, Hide = 1, Quit = 2, AllApps = 4 }
+    public enum LaunchResult { Nothing = 0, Hide = 1, Quit = 2, AllApps = 4, UseSelection = 5 }
 
     public static LaunchResult Launch(ulong gen, int index, bool reveal) =>
         (LaunchResult)pc_launch(gen, index, reveal ? 1 : 0);
@@ -221,6 +260,7 @@ public static class Native
 [JsonSerializable(typeof(List<Native.ActionRow>))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Native.Control))]
+[JsonSerializable(typeof(Native.PassageReply))]
 internal sealed partial class NativeJson : JsonSerializerContext
 {
 }

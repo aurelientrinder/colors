@@ -123,6 +123,9 @@ pub fn source_for(hit: &Hit) -> Option<(String, Src)> {
         // Same keys as the app rows, so a window shares its app's cached icon.
         (Kind::Window, Action::Focus { icon, .. }) if icon.starts_with("shell:") => Some((icon.clone(), Src::Shell(icon.clone()))),
         (Kind::Window, Action::Focus { icon, .. }) if !icon.is_empty() => Some((format!("path:{icon}"), Src::Path(icon.clone()))),
+        // A command of an open window wears its program's icon.
+        (Kind::Control, Action::Ui { icon, .. }) if icon.starts_with("shell:") => Some((icon.clone(), Src::Shell(icon.clone()))),
+        (Kind::Control, Action::Ui { icon, .. }) if !icon.is_empty() => Some((format!("path:{icon}"), Src::Path(icon.clone()))),
         (Kind::App, Action::Open(t)) => {
             if t.starts_with("shell:") {
                 Some((t.clone(), Src::Shell(t.clone())))

@@ -67,13 +67,27 @@ impl Pins {
 
 /// Can this hit be pinned? Windows come and go; calculator and web rows echo the query.
 pub fn pinnable(hit: &Hit) -> bool {
-    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan)
-        && !matches!(&hit.action, Action::Builtin(id) if id == "allapps")
+    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control)
+        && !matches!(&hit.action, Action::Builtin(id) if id == "allapps" || id == SELECTION)
 }
 
 // ---------------------------------------------------------------- home
 
 pub const ALL_APPS: &str = "allapps";
+/// The row offering the text selected in the window behind the palette (see uia.rs).
+pub const SELECTION: &str = "selection";
+
+/// The Home row for selected text `text`: Enter puts it in the search field.
+pub fn selection_row(text: &str, app: &str) -> Hit {
+    let shown: String = if text.chars().count() > 70 { text.chars().take(69).chain(['\u{2026}']).collect() } else { text.to_string() };
+    Hit {
+        title: format!("\u{201c}{shown}\u{201d}"),
+        subtitle: if app.is_empty() { "Selected text".into() } else { format!("Selected in {app}") },
+        kind: Kind::Command,
+        action: Action::Builtin(SELECTION.into()),
+        score: 0,
+    }
+}
 /// Rows on the home view, "All apps" included: as many as a search shows (`search::MAX_HITS`), so
 /// the panel keeps its height when typing starts.
 const HOME_ROWS: usize = crate::search::MAX_HITS;
@@ -95,8 +109,9 @@ fn all_apps_row() -> Hit {
 /// The list shown before anything is typed, nearest the search field first: pinned items, the
 /// few things you open most, files Windows saw you open recently, then "All apps", in
 /// `HOME_ROWS` rows. When one kind runs short the other fills its place.
-pub fn home(pins: &Pins, usage: &Usage) -> Vec<Hit> {
-    let room = HOME_ROWS - 1; // the last row is "All apps"
+pub fn home(pins: &Pins, usage: &Usage, selection: Option<Hit>) -> Vec<Hit> {
+    // The last row is "All apps"; selected text, when there is some, takes the first (nearest the field).
+    let room = HOME_ROWS - 1 - selection.is_some() as usize;
     let mut out: Vec<Hit> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut add = |out: &mut Vec<Hit>, list: &mut dyn Iterator<Item = Hit>, until: usize| {
@@ -116,6 +131,9 @@ pub fn home(pins: &Pins, usage: &Usage) -> Vec<Hit> {
     add(&mut out, &mut used, until);
     add(&mut out, &mut recent, room);
     add(&mut out, &mut used, room); // few recent files: more of the most used
+    if let Some(s) = selection {
+        out.insert(0, s);
+    }
     out.push(all_apps_row());
     out
 }

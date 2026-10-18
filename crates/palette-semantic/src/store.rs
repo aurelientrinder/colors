@@ -161,6 +161,11 @@ impl Store {
         self.map.get(key).map(|&i| self.meta[i])
     }
 
+    /// The stored vector for `key`.
+    pub fn vector(&self, key: &str) -> Option<&[f32]> {
+        self.map.get(key).map(|&i| &self.vecs[i * DIM..(i + 1) * DIM])
+    }
+
     pub fn upsert(&mut self, key: &str, stamp: u64, size: u64, v: &[f32]) {
         self.put(key, stamp, size, v);
         if let Some(w) = self.writer() {

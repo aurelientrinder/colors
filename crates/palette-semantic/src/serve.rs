@@ -3,8 +3,10 @@
 //! Protocol: one JSON object per line.
 //!   in : {"op":"query","id":1,"q":"...","k":6}
 //!        {"op":"items","items":[{"key":"...","title":"...","text":"..."}]}
+//!        {"op":"passage","id":2,"path":"...","q":"..."}
 //!        {"op":"ping"} | {"op":"shutdown"}
 //!   out: {"id":1,"ms":23,"hits":[{"src":"doc"|"item","key":"...","score":0.53}]}
+//!        {"id":2,"text":"...","marks":[[start,len],...]}   (no text: none found)
 
 use crate::discover::{self, Candidate};
 use crate::embed::{self, Embedder};
@@ -101,6 +103,10 @@ pub struct Shared {
     t_extract_ms: AtomicU64,
     t_embed_ms: AtomicU64,
     n_chunks: AtomicU64,
+    /// The last query and its vector: the passage asked for right after a query reuses it.
+    last_query: Mutex<Option<(String, Vec<f32>)>>,
+    /// Chunks of the documents whose passages were asked for lately (path, stamp, chunks).
+    texts: Mutex<Vec<(String, (u64, u64), Arc<Vec<String>>)>>,
 }
 
 pub fn now_secs() -> u64 {
@@ -167,6 +173,8 @@ impl Shared {
             t_extract_ms: AtomicU64::new(0),
             t_embed_ms: AtomicU64::new(0),
             n_chunks: AtomicU64::new(0),
+            last_query: Mutex::new(None),
+            texts: Mutex::new(Vec::new()),
         })
     }
 
@@ -527,6 +535,7 @@ impl Shared {
             .map_err(|e| e)?
             .pop()
             .ok_or("empty embedding")?;
+        *self.last_query.lock().unwrap() = Some((q.to_string(), v.clone()));
         let mut out: Vec<(String, &'static str, f32)> = Vec::new();
         {
             // A document is as relevant as its best chunk. Ask for several times `k` chunks so
@@ -564,6 +573,67 @@ impl Shared {
     }
 }
 
+use crate::extract::Passage;
+
+impl Shared {
+    /// The passage of `path` that `q` matched: the document's chunk nearest the query, cut down
+    /// to the sentences that share the query's words (or its opening, when none do).
+    pub fn passage(&self, path: &str, q: &str) -> Option<Passage> {
+        let qv = {
+            let cached = self.last_query.lock().unwrap().as_ref().filter(|(c, _)| c == q).map(|(_, v)| v.clone());
+            match cached {
+                Some(v) => v,
+                None => self
+                    .with_embedder(true, |e| e.embed(&[embed::query_prompt(q)], QUERY_TOKENS))
+                    .ok()?
+                    .ok()?
+                    .pop()?,
+            }
+        };
+        let stamp = self.docs.read().unwrap().stamp(path)?;
+        // The chunk whose vector is nearest the query. Chunks of an older version of the file
+        // are not consulted (as in `query`).
+        let best = {
+            let docs = self.docs.read().unwrap();
+            (0..self.cfg.max_chunks)
+                .filter_map(|n| {
+                    let key = chunk_key(path, n);
+                    if docs.stamp(&key) != Some(stamp) {
+                        return None;
+                    }
+                    let v = docs.vector(&key)?;
+                    Some((n, v.iter().zip(&qv).map(|(a, b)| a * b).sum::<f32>()))
+                })
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(n, _)| n)?
+        };
+        let chunks = self.chunks_of(path, stamp)?;
+        extract::passage(chunks.get(best)?, q)
+    }
+
+    /// The chunks a document was cut into, as when it was indexed; the last few are kept.
+    fn chunks_of(&self, path: &str, stamp: (u64, u64)) -> Option<Arc<Vec<String>>> {
+        {
+            let mut t = self.texts.lock().unwrap();
+            if let Some(i) = t.iter().position(|(p, s, _)| p == path && *s == stamp) {
+                let e = t.remove(i);
+                let c = e.2.clone();
+                t.push(e);
+                return Some(c);
+            }
+        }
+        let text = extract::extract(Path::new(path))?;
+        let chunks = Arc::new(extract::chunk(&text, self.cfg.max_chunks));
+        let mut t = self.texts.lock().unwrap();
+        t.retain(|(p, _, _)| p != path);
+        t.push((path.to_string(), stamp, chunks.clone()));
+        if t.len() > 6 {
+            t.remove(0);
+        }
+        Some(chunks)
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ItemIn {
     pub key: String,
@@ -579,6 +649,7 @@ struct Req {
     k: Option<usize>,
     items: Option<Vec<ItemIn>>,
     paths: Option<Vec<String>>,
+    path: Option<String>,
 }
 
 pub fn serve(sh: Arc<Shared>) {
@@ -653,6 +724,19 @@ pub fn serve(sh: Arc<Shared>) {
                     Err(e) => serde_json::json!({"id": id, "error": e, "hits": []}),
                 };
                 println!("{reply}");
+            }
+            "passage" => {
+                // Extracting a PDF can take seconds: not on the thread that answers queries.
+                let id = req.id.unwrap_or(0);
+                let (path, q) = (req.path.unwrap_or_default(), req.q.unwrap_or_default());
+                let sh = sh.clone();
+                std::thread::spawn(move || {
+                    let reply = match sh.passage(&path, &q) {
+                        Some(p) => serde_json::json!({"id": id, "text": p.text, "marks": p.marks}),
+                        None => serde_json::json!({"id": id}),
+                    };
+                    println!("{reply}");
+                });
             }
             "items" => {
                 if let Some(items) = req.items {

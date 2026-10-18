@@ -112,6 +112,7 @@ pub fn execute(hit: &Hit, copy: &dyn Fn(&str)) -> bool {
         }
         Action::Copy(text) => copy(text),
         Action::Focus { hwnd, .. } => crate::wins::focus(*hwnd),
+        Action::Ui { hwnd, scan, index, .. } => crate::uia::press(*hwnd, *scan, *index),
         Action::Exec { file, args } => {
             let (f, a) = (wide(file), wide(args));
             unsafe {

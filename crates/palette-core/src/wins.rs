@@ -188,6 +188,38 @@ fn file_description(exe: &str) -> Option<String> {
     }
 }
 
+/// The program a window belongs to: its name ("Paint") and what to take its icon from (as
+/// `OpenWindow::icon`). None for a window that has gone.
+pub fn app_of(hwnd: isize) -> Option<(String, String)> {
+    let h = HWND(hwnd as *mut _);
+    unsafe {
+        if hwnd == 0 || !IsWindow(Some(h)).as_bool() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        if pid == 0 || pid == GetCurrentProcessId() {
+            return None; // the palette itself
+        }
+        let exe = exe_path(pid).unwrap_or_default();
+        let frame_host = exe.to_lowercase().ends_with("\\applicationframehost.exe");
+        let icon = match app_user_model_id(h) {
+            Some(id) => format!("shell:AppsFolder\\{id}"),
+            None => exe.clone(),
+        };
+        let name = if frame_host || exe.is_empty() {
+            // A Store app's window is the frame's; its title is the app's name.
+            let len = GetWindowTextLengthW(h).max(0) as usize;
+            let mut buf = vec![0u16; len + 1];
+            let n = GetWindowTextW(h, &mut buf).max(0) as usize;
+            String::from_utf16_lossy(&buf[..n]).trim().to_string()
+        } else {
+            app_name(&exe)
+        };
+        Some((name, icon))
+    }
+}
+
 /// Bring a window to the front, restoring it if it is minimised. Works because the palette is
 /// the foreground window when this runs, which allows it to hand the foreground on.
 pub fn focus(hwnd: isize) {
