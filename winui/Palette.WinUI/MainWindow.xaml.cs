@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
 
+        StartClipboard();
         _hwnd = WindowNative.GetWindowHandle(this);
         _aw = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_hwnd));
 
@@ -100,6 +101,7 @@ public sealed partial class MainWindow : Window
                 new("Hide the taskbar search box", Settings.TaskbarSearchHidden, on => _settings.ApplyTaskbarSearch(on)),
                 new("Answers from the web (weather, stocks, facts)", () => _settings.WebAnswers, on => { _settings.WebAnswers = on; _settings.Save(); }),
                 new("Key hints under the search field", () => _settings.KeyHints, on => { _settings.KeyHints = on; _settings.Save(); UpdateOpenButton(); }),
+                new("Remember what is copied (find it with \"clip\")", () => _settings.ClipboardHistory, on => { _settings.ClipboardHistory = on; _settings.Save(); if (on) _ = ReadClipboardHistory(); else Native.ClipClear(); }),
                 new("Read the window in front (selected text, its commands)", () => _settings.ReadWindow, on => { _settings.ReadWindow = on; _settings.Save(); if (!on) Native.ReadWindow(IntPtr.Zero); }),
             });
 
@@ -473,6 +475,7 @@ public sealed partial class MainWindow : Window
         _previousForeground = fg != _hwnd ? fg : IntPtr.Zero;
         _reassertTries = 0;
         ReadWindowBehind();
+        if (DateTime.UtcNow - _clipRead > TimeSpan.FromSeconds(30)) _ = ReadClipboardHistory();
 
         SetView(View.Results, SearchPlaceholder);
         SetInputText("");

@@ -99,7 +99,7 @@ fn main() {
             let q = args.get(1).cloned().unwrap_or_default();
             let sh = Shared::new(cfg);
             let t = std::time::Instant::now();
-            match sh.query(&q, 10) {
+            match sh.query(&q, 10, None) {
                 Ok(hits) => {
                     println!("({} ms)", t.elapsed().as_millis());
                     for (key, src, score) in hits {

@@ -317,8 +317,9 @@ impl Client {
                     };
                     serde_json::json!({"key": i.key(), "title": i.name, "text": text})
                 })
+                .chain(crate::clip::items().into_iter().map(|(key, title, text)| serde_json::json!({"key": key, "title": title, "text": text})))
                 .collect();
-            (cat.items_version, items)
+            (self.wanted_version(cat.items_version), items)
         };
         if items.is_empty() {
             return;
@@ -339,28 +340,53 @@ impl Client {
         ok
     }
 
+    /// The catalog's version together with the clipboard list's: when either changes, the helper's items are refreshed.
+    fn wanted_version(&self, catalog: u64) -> u64 {
+        catalog.wrapping_add(crate::clip::version().wrapping_mul(0x1_0000_0001))
+    }
+
+    /// One query to the helper (`only`: just the items whose key starts so).
+    fn ask(&self, q: &str, only: Option<&str>, timeout: Duration) -> Option<RawReply> {
+        if self.wanted_version(self.catalog.read().unwrap().items_version) != self.items_version.load(Ordering::Relaxed) {
+            self.sync_items();
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        let msg = serde_json::json!({"op": "query", "id": id, "q": q, "k": 8, "only": only}).to_string();
+        if !self.send(&msg) {
+            self.pending.lock().unwrap().remove(&id);
+            return None;
+        }
+        let reply = rx.recv_timeout(timeout).ok();
+        if reply.is_none() {
+            self.pending.lock().unwrap().remove(&id);
+        }
+        reply
+    }
+
+    /// What was copied that `q` means, best first (see clip.rs). Blocks up to `timeout`.
+    pub fn query_clips(&self, q: &str, timeout: Duration) -> Vec<(Hit, f32)> {
+        if !self.ensure_started() {
+            return Vec::new();
+        }
+        let Some(reply) = self.ask(q, Some(crate::clip::KEY_PREFIX), timeout) else { return Vec::new() };
+        let min = thresholds().item;
+        reply
+            .hits
+            .into_iter()
+            .filter(|h| h.score >= min)
+            .filter_map(|h| crate::clip::hit_for_key(&h.key).map(|hit| (hit, h.score)))
+            .collect()
+    }
+
     /// Semantic matches for `q`, best first, already mapped to launchable hits.
     /// Blocks up to `timeout`; call from a worker thread.
     pub fn query(&self, q: &str, timeout: Duration) -> Vec<(Hit, f32)> {
         if !self.ensure_started() {
             return Vec::new();
         }
-        if self.catalog.read().unwrap().items_version != self.items_version.load(Ordering::Relaxed) {
-            self.sync_items();
-        }
-
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = channel();
-        self.pending.lock().unwrap().insert(id, tx);
-        let msg = serde_json::json!({"op": "query", "id": id, "q": q, "k": 8}).to_string();
-        if !self.send(&msg) {
-            self.pending.lock().unwrap().remove(&id);
-            return Vec::new();
-        }
-        let Ok(reply) = rx.recv_timeout(timeout) else {
-            self.pending.lock().unwrap().remove(&id);
-            return Vec::new();
-        };
+        let Some(reply) = self.ask(q, None, timeout) else { return Vec::new() };
 
         let cat = self.catalog.read().unwrap();
         let t = thresholds();

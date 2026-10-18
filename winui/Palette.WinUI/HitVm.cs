@@ -63,11 +63,13 @@ public sealed class HitVm : INotifyPropertyChanged
             "Calculator" => ("\uE8C8", "Copy result", false),
             "Window" => ("\uE8A7", "Switch to", false),
             "Control" => ("\uE768", "Run", false),
+            "Clipboard" => ("\uE8C8", "Copy", false),
             "Web" => ("\uE8A7", "Search the web", false),
             "File" or "Folder" or "App" => ("\uE8A7", "Open file location", true),
             _ => ("\uE8A7", "Open", false),
         };
         if (h.Does == "selection") (SecondGlyph, SecondLabel) = ("\uE721", "Search with it");
+        if (h.Kind == "Clipboard") Glyph = ClipGlyph(h.Subtitle);
     }
 
     /// <summary>The line left after a quick setting ran: a check, what was done, and Undo.</summary>
@@ -152,11 +154,24 @@ public sealed class HitVm : INotifyPropertyChanged
         AnswerUrl = w != null ? WebAnswers.WeatherAppUrl(w) : null;
     }
 
+    /// <summary>A copied text's glyph by what it is (the subtitle starts with that: "URL, 3 min ago").</summary>
+    private static string ClipGlyph(string subtitle) => subtitle.Split(' ', ',')[0] switch
+    {
+        "URL" => "\uE774",
+        "Email" => "\uE715",
+        "Path" => "\uE8B7",
+        "Colour" => "\uE790",
+        "Phone" => "\uE717",
+        "Number" => "\uE8EF",
+        "JSON" => "\uE943",
+        _ => "\uE8C8",
+    };
+
     private static string KindLabel(string kind, string? path) => kind switch
     {
         "File" when System.IO.Path.GetExtension(path ?? "") is { Length: > 1 } ext => ext[1..].ToUpperInvariant() + " File",
         "Setting" => "Settings",
-        "Toggle" or "Status" or "Plan" or "Control" => "",
+        "Toggle" or "Status" or "Plan" or "Control" or "Clipboard" => "",
         _ => kind,
     };
 

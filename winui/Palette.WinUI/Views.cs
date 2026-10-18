@@ -74,6 +74,7 @@ public sealed partial class MainWindow
             "Command" when row.Does == "selection" => "Search",
             "Command" or "Control" => "Run",
             "Calculator" => "Copy result",
+            "Clipboard" => "Copy",
             "Web" => "Search the web",
             "Toggle" => "Apply",
             "Plan" => "Run",

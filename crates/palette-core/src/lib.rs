@@ -16,6 +16,7 @@ pub mod scan;
 pub mod search;
 pub mod semantic;
 pub mod settings_index;
+pub mod clip;
 pub mod convert;
 pub mod uia;
 pub mod usage;

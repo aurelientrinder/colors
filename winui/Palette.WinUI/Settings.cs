@@ -24,6 +24,12 @@ internal sealed class Settings
     /// </summary>
     public bool ReadWindow { get; set; } = true;
 
+    /// <summary>
+    /// Remember what is copied (Windows' clipboard history and copies made while Palette runs), in
+    /// memory only, to be found by typing "clip" (see Clipboard.cs).
+    /// </summary>
+    public bool ClipboardHistory { get; set; } = true;
+
     /// <summary>The taskbar search mode before we hid it, put back when the option is turned off.</summary>
     public int? SavedSearchboxMode { get; set; }
 

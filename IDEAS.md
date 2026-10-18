@@ -117,9 +117,6 @@ A hub:
   touch, Enter does it and Undo puts them back.
 
 ## Everyday features
-- **Clipboard history**, searchable from the palette (`Clipboard.GetHistoryItemsAsync` gives
-  Win+V's history). Search it by meaning with the embedder; recognise what an entry holds (a
-  colour, a URL, a tracking number, a phone number) and give each its own actions.
 - **Named window layouts.** "Work" opens the editor, browser and chat in saved positions. The
   plan model already understands snapping, so "set up my morning" is a small step.
 - **Teach it in one sentence.** "When I type `inv`, open the invoices folder": user-defined
@@ -155,6 +152,11 @@ A hub:
 - **An installer with auto-update** (MSIX or winget), if anyone else is going to use it.
 
 ## Done
+- Clipboard history by meaning (`clip.rs`, `Clipboard.cs`): `clip ...` lists and finds what was copied,
+  by words and then by meaning, with the kind of each (URL, email, path, colour, phone, number, JSON).
+  Still to do: more per-kind actions (copy a colour as rgb, format JSON, call a number), paste straight
+  into the window behind, entries beyond Windows' 25 surviving a restart (opt-in, encrypted), and
+  images.
 - Conversions typed into the search field (`convert.rs`): units, dates and time zones offline,
   currency through the web answers. Still to do: more city names (any place through the geocoder),
   percentages ("15% of 80"), and "now in" for several zones at once.

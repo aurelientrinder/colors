@@ -26,6 +26,12 @@ public static class Native
     private static extern void pc_read_window(nint hwnd);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void pc_clip_add([MarshalAs(UnmanagedType.LPUTF8Str)] string text, long at);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void pc_clip_clear();
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr pc_selection(int waitMs);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -158,6 +164,12 @@ public static class Native
     /// selected text and its commands. Returns at once.
     /// </summary>
     public static void ReadWindow(IntPtr hwnd) => pc_read_window(hwnd);
+
+    /// <summary>Something was copied at that unix time; the engine keeps it in memory for "clip" searches.</summary>
+    public static void ClipAdd(string text, long unixSeconds) => pc_clip_add(text, unixSeconds);
+
+    /// <summary>Forget everything copied.</summary>
+    public static void ClipClear() => pc_clip_clear();
 
     /// <summary>
     /// The text selected in that window, on one line, waiting up to <paramref name="waitMs"/> for the

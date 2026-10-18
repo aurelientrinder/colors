@@ -52,6 +52,7 @@ works exactly as before, just without "Related" results.
 | `10 km in mi`, `72f to c`, `2 h to min` | unit conversion (length, weight, volume, time, speed, area, data, temperature), offline |
 | `days until 25 dec`, `3 weeks from today`, `2 months ago` | date arithmetic, offline |
 | `time in tokyo`, `3pm london to new york` | time zones with daylight saving, offline |
+| `clip`, `clip invoice`, `clipboard the tracking number` | what you copied lately (Windows' clipboard history plus copies made while Palette runs): words find it at once, otherwise it is searched by meaning. Enter copies it again; Hold Tab offers Open link for a URL and Remove. Kept in memory only, never on Home or among ordinary results; copies a password manager marks private are skipped; the tray menu turns it off |
 | `50 usd to eur` | currency, a card with the European Central Bank's daily rate (needs the web; "Answers from the web" in the tray menu turns it off) |
 | `> ipconfig` | run a command in cmd |
 | `Palette: Run at startup` | toggle start-at-sign-in (per-user logon task "Palette", no admin; starts right away, unlike Run-key apps that Windows delays) |

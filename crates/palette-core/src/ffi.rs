@@ -267,7 +267,12 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
         return empty();
     }
 
-    let found = e.sem.query(q, Duration::from_secs(6));
+    // "clip the tracking number": only what was copied, searched by meaning.
+    let found = match crate::clip::ask(q) {
+        Some(rest) if rest.chars().count() >= 3 => e.sem.query_clips(rest, Duration::from_secs(6)),
+        Some(_) => Vec::new(),
+        None => e.sem.query(q, Duration::from_secs(6)),
+    };
     if found.is_empty() {
         return empty();
     }
@@ -301,7 +306,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     let typed: Vec<String> = q.split_whitespace().map(&norm).filter(|w| !w.is_empty()).collect();
     let instant_is_real = last.1.first().is_some_and(|h| match h.kind {
         // A calculator result or a quick setting answers the query as typed.
-        crate::model::Kind::Calc | crate::model::Kind::Toggle | crate::model::Kind::Plan => true,
+        crate::model::Kind::Calc | crate::model::Kind::Toggle | crate::model::Kind::Plan | crate::model::Kind::Clip => true,
         crate::model::Kind::Web => false, // the fallback row says nothing about relevance
         _ => {
             let t = norm(&h.title);
@@ -492,7 +497,11 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     }
     // A command of a window exists while that window does: what you typed to find it is learned,
     // but Home never lists it.
-    if !matches!(hit.kind, crate::model::Kind::Window | crate::model::Kind::Toggle | crate::model::Kind::Plan) {
+    // What was copied is never written down.
+    if !matches!(
+        hit.kind,
+        crate::model::Kind::Window | crate::model::Kind::Toggle | crate::model::Kind::Plan | crate::model::Kind::Clip
+    ) {
         if let Ok(mut u) = e.usage.lock() {
             let query = match &*e.last_query.lock().unwrap() {
                 (g, q) if *g == gen => q.clone(),
@@ -658,4 +667,22 @@ pub unsafe extern "C" fn pc_free(p: *mut c_void) {
     if !p.is_null() {
         drop(CString::from_raw(p as *mut c_char));
     }
+}
+
+/// Tell the engine something was copied (the shell reads Windows' clipboard history and what is
+/// copied while it runs), at unix time `at`. Kept in memory only (see clip.rs).
+///
+/// # Safety
+/// `text` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_clip_add(text: *const c_char, at: i64) {
+    if !text.is_null() {
+        crate::clip::add(CStr::from_ptr(text).to_str().unwrap_or(""), at);
+    }
+}
+
+/// Forget everything copied (the shell's "remember what is copied" was turned off).
+#[no_mangle]
+pub extern "C" fn pc_clip_clear() {
+    crate::clip::clear();
 }

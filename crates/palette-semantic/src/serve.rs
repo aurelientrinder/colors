@@ -1,7 +1,8 @@
 //! Shared state, the background indexing pass and the stdin/stdout query daemon.
 //!
 //! Protocol: one JSON object per line.
-//!   in : {"op":"query","id":1,"q":"...","k":6}
+//!   in : {"op":"query","id":1,"q":"...","k":6}   (optional "only":"clip:" searches just the items whose
+//!        key starts so; without it items under "clip:" (what was copied) are left out)
 //!        {"op":"items","items":[{"key":"...","title":"...","text":"..."}]}
 //!        {"op":"passage","id":2,"path":"...","q":"..."}
 //!        {"op":"ping"} | {"op":"shutdown"}
@@ -529,7 +530,7 @@ impl Shared {
 
     // --------------------------------------------------------------- query
 
-    pub fn query(&self, q: &str, k: usize) -> Result<Vec<(String, &'static str, f32)>, String> {
+    pub fn query(&self, q: &str, k: usize, only: Option<&str>) -> Result<Vec<(String, &'static str, f32)>, String> {
         let v = self
             .with_embedder(true, |e| e.embed(&[embed::query_prompt(q)], QUERY_TOKENS))?
             .map_err(|e| e)?
@@ -537,7 +538,7 @@ impl Shared {
             .ok_or("empty embedding")?;
         *self.last_query.lock().unwrap() = Some((q.to_string(), v.clone()));
         let mut out: Vec<(String, &'static str, f32)> = Vec::new();
-        {
+        if only.is_none() {
             // A document is as relevant as its best chunk. Ask for several times `k` chunks so
             // one long document's chunks cannot crowd out every other file.
             let docs = self.docs.read().unwrap();
@@ -564,7 +565,12 @@ impl Shared {
                 out.push((path, "doc", s));
             }
         }
-        for (key, s) in self.items.read().unwrap().search(&v, k) {
+        // Copied text is only ever offered to a query that asks for it (`only`).
+        for (key, s) in self.items.read().unwrap().search(&v, k * 4) {
+            let private = key.starts_with("clip:");
+            if only.map_or(private, |p| !key.starts_with(p)) {
+                continue;
+            }
             out.push((key.to_string(), "item", s));
         }
         out.sort_by(|a, b| b.2.total_cmp(&a.2));
@@ -650,6 +656,7 @@ struct Req {
     items: Option<Vec<ItemIn>>,
     paths: Option<Vec<String>>,
     path: Option<String>,
+    only: Option<String>,
 }
 
 pub fn serve(sh: Arc<Shared>) {
@@ -715,7 +722,7 @@ pub fn serve(sh: Arc<Shared>) {
             "query" => {
                 let t0 = Instant::now();
                 let id = req.id.unwrap_or(0);
-                let reply = match sh.query(req.q.as_deref().unwrap_or(""), req.k.unwrap_or(6)) {
+                let reply = match sh.query(req.q.as_deref().unwrap_or(""), req.k.unwrap_or(6), req.only.as_deref()) {
                     Ok(hits) => serde_json::json!({
                         "id": id,
                         "ms": t0.elapsed().as_millis() as u64,

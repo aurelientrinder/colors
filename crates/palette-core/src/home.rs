@@ -67,7 +67,7 @@ impl Pins {
 
 /// Can this hit be pinned? Windows come and go; calculator and web rows echo the query.
 pub fn pinnable(hit: &Hit) -> bool {
-    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control)
+    !matches!(hit.kind, Kind::Window | Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip)
         && !matches!(&hit.action, Action::Builtin(id) if id == "allapps" || id == SELECTION)
 }
 
@@ -366,6 +366,7 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
         Kind::Window => "Switch to",
         Kind::Command => "Run",
         Kind::Calc => "Copy result",
+        Kind::Clip => "Copy",
         Kind::Web => "Search the web",
         Kind::Toggle => "Apply",
         Kind::Plan => "Run",
@@ -374,6 +375,12 @@ pub fn actions_for(hit: &Hit, pin: Option<(usize, usize)>) -> Vec<ActionRow> {
     v.push(row("open", open, "Enter"));
     if elevatable(hit) {
         v.push(row("admin", "Run as administrator", "Ctrl+Shift+Enter"));
+    }
+    if crate::clip::link_of(hit).is_some() {
+        v.push(row("openlink", "Open link", ""));
+    }
+    if hit.kind == Kind::Clip {
+        v.push(row("forget", "Remove from clipboard list", ""));
     }
     if hit.kind == Kind::File {
         v.push(row("openwith", "Open with\u{2026}", ""));
@@ -493,6 +500,19 @@ pub fn act(hit: &Hit, id: &str, pins: &mut Pins, usage: &mut Usage) -> After {
             }
             _ => After::NotApplicable,
         },
+        "openlink" => match crate::clip::link_of(hit) {
+            Some(url) => {
+                actions::shell_open(&url);
+                After::Hide
+            }
+            None => After::NotApplicable,
+        },
+        "forget" if hit.kind == Kind::Clip => {
+            if let Action::Copy(t) = &hit.action {
+                crate::clip::remove(t);
+            }
+            After::Refresh
+        }
         "pin" if pinnable(hit) => {
             pins.pin(hit);
             After::Refresh

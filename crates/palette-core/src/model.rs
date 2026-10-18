@@ -18,6 +18,8 @@ pub enum Kind {
     Plan,
     /// A command of the window in front: a ribbon button, a tab, a menu ("resize" in Paint; see uia.rs).
     Control,
+    /// Something copied lately (see clip.rs).
+    Clip,
 }
 
 impl Kind {
@@ -34,6 +36,7 @@ impl Kind {
             Kind::Toggle => "Toggle",
             Kind::Plan => "Plan",
             Kind::Control => "Control",
+            Kind::Clip => "Clipboard",
         }
     }
     /// Ranking nudge so apps beat same-scoring files.
@@ -48,7 +51,7 @@ impl Kind {
             Kind::Folder => 20,
             Kind::File => 0,
             // Quick settings are scored by how well the query names them (see quick.rs).
-            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control => 0,
+            Kind::Calc | Kind::Web | Kind::Toggle | Kind::Plan | Kind::Control | Kind::Clip => 0,
         }
     }
 }
