@@ -131,6 +131,22 @@ public sealed class HitVm : INotifyPropertyChanged
         return vm;
     }
 
+    /// <summary>The row the calendar card ("calendar", "today") opens under; it opens Google Calendar, else Windows' calendar.</summary>
+    public static HitVm ForCalendar(CalendarAnswer a, bool google)
+    {
+        var vm = new HitVm(new Native.Hit(a.Today ? "Today" : "Calendar", "Calendar", "Calendar", null, null), chip: "")
+        {
+            IsAnswer = true,
+            Answer = a,
+            AnswerUrl = google ? "https://calendar.google.com/calendar/r" : "outlookcal:",
+        };
+        vm.SubText = google ? "Calendar • Google Calendar" : "Calendar • Windows";
+        vm.Glyph = "";
+        vm.SecondGlyph = "";
+        vm.SecondLabel = "Open calendar";
+        return vm;
+    }
+
     /// <summary>
     /// The Weather app's row with its card, for when the engine did not list the app itself
     /// ("weather in Paris"): it opens the app on that place; its second button searches the web.

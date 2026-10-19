@@ -44,6 +44,12 @@ internal sealed class Settings
     /// <summary>Let the meaning index keep working on battery. Read at start.</summary>
     public bool IndexOnBattery { get; set; }
 
+    /// <summary>
+    /// Secret iCal addresses of Google calendars (Google Calendar › Settings › Integrate calendar), read by
+    /// the calendar card (see Calendar.cs). The address is the key to the calendar: it stays on this PC.
+    /// </summary>
+    public List<string> CalendarFeeds { get; set; } = new();
+
     /// <summary>The engine reads these two options from the environment when it starts (before it does).</summary>
     public void ApplyEnvironment()
     {

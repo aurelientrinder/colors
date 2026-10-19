@@ -281,6 +281,7 @@ public sealed partial class MainWindow
         StockPreview.Visibility = Visibility.Collapsed;
         SystemPreview.Visibility = Visibility.Collapsed;
         SystemStats.Stop();
+        CalendarPreview.Visibility = Visibility.Collapsed;
         FactPreview.Visibility = Visibility.Collapsed;
         AskPreview.Visibility = Visibility.Collapsed;
         ChatPreview.Visibility = Visibility.Collapsed;

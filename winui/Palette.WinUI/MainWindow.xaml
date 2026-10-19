@@ -915,6 +915,74 @@
                                 Text="Last 60 seconds" />
                         </Grid>
 
+                        <!-- "calendar": the month and a day's events; "today": today's events (CalendarWidget.cs) -->
+                        <Grid
+                            x:Name="CalendarPreview"
+                            Height="270"
+                            Padding="20,14,14,12"
+                            ColumnSpacing="20"
+                            Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="CalMonthCol" Width="224" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid x:Name="CalMonth" RowSpacing="4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        x:Name="CalMonthTitle"
+                                        VerticalAlignment="Center"
+                                        FontSize="16"
+                                        FontWeight="SemiBold" />
+                                    <Button
+                                        Grid.Column="1"
+                                        Click="OnCalPrev"
+                                        Style="{StaticResource CardTextButtonStyle}">
+                                        <FontIcon FontSize="10" Glyph="&#xE70E;" />
+                                    </Button>
+                                    <Button
+                                        Grid.Column="2"
+                                        Click="OnCalNext"
+                                        Style="{StaticResource CardTextButtonStyle}">
+                                        <FontIcon FontSize="10" Glyph="&#xE70D;" />
+                                    </Button>
+                                </Grid>
+                                <!-- brushes for the code that draws the days: they follow the theme -->
+                                <Rectangle x:Name="CalAccent" Width="0" Height="0" Fill="{ThemeResource AccentFillColorDefaultBrush}" Visibility="Collapsed" />
+                                <Rectangle x:Name="CalOnAccent" Width="0" Height="0" Fill="{ThemeResource TextOnAccentFillColorPrimaryBrush}" Visibility="Collapsed" />
+                                <Rectangle x:Name="CalSecondary" Width="0" Height="0" Fill="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed" />
+                                <Rectangle x:Name="CalTertiary" Width="0" Height="0" Fill="{ThemeResource TextFillColorTertiaryBrush}" Visibility="Collapsed" />
+                                <Grid x:Name="CalWeekdays" Grid.Row="1" />
+                                <Grid x:Name="CalDays" Grid.Row="2" />
+                            </Grid>
+                            <Grid Grid.Column="1" RowSpacing="6">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock
+                                    x:Name="CalDayTitle"
+                                    FontSize="16"
+                                    FontWeight="SemiBold"
+                                    TextTrimming="CharacterEllipsis" />
+                                <ScrollViewer
+                                    Grid.Row="1"
+                                    HorizontalScrollBarVisibility="Disabled"
+                                    VerticalScrollBarVisibility="Auto">
+                                    <StackPanel x:Name="CalEvents" Spacing="8" />
+                                </ScrollViewer>
+                            </Grid>
+                        </Grid>
+
                         <!-- a fact: what it is about, the value, a picture -->
                         <Grid
                             x:Name="FactPreview"

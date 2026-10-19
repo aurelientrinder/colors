@@ -76,6 +76,11 @@ public sealed partial class MainWindow
             ShowSystemRow(new SystemAnswer(query.Trim(), sys));   // local and instant: no lookup
             return;
         }
+        if (_view == View.Results && LeadAnswer == null && CalendarData.Detect(query) is { } cal)
+        {
+            ShowCalendarRow(cal);   // local: the events are already loaded or load as the card opens
+            return;
+        }
         if (!_settings.WebAnswers || _view != View.Results || LeadAnswer != null || WebAnswers.Detect(query) == null) return;
         if (WebAnswers.TryCached(query, out var cached))
         {
@@ -198,6 +203,11 @@ public sealed partial class MainWindow
                 RenderSystem(sys);
                 SystemPreview.Visibility = Visibility.Visible;
                 h = SystemPreview.Height;
+                break;
+            case CalendarAnswer cal:
+                CalendarPreview.Visibility = Visibility.Visible;
+                RenderCalendar(cal);
+                h = CalendarPreview.Height;
                 break;
             case WebAnswers.Fact f:
                 RenderFact(f);

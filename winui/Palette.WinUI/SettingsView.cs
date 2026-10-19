@@ -31,6 +31,9 @@ public sealed partial class MainWindow
                 () => _settings.KeyHints),
             new("webanswers", "Answers from the web", "Weather, stocks, facts and currency, fetched only for a question that asks",
                 () => _settings.WebAnswers, on => { _settings.WebAnswers = on; _settings.Save(); }),
+            new("gcal", "Add Google Calendar", _settings.CalendarFeeds.Count > 0
+                ? $"{_settings.CalendarFeeds.Count} connected. Copy another secret iCal address, then press Enter"
+                : "Copy your calendar's secret iCal address (Google Calendar › Settings › Integrate calendar), then press Enter"),
             new("clipboard", "Remember what is copied", "Find it by typing clip. Kept in memory only",
                 () => _settings.ClipboardHistory, on =>
                 {
@@ -52,6 +55,9 @@ public sealed partial class MainWindow
                 () => _settings.IndexOnBattery, on => { _settings.IndexOnBattery = on; _settings.Save(); }),
             new("reindex", "Re-index files", "Refresh the file index now"),
         };
+        if (_settings.CalendarFeeds.Count > 0)
+            rows.Insert(rows.FindIndex(r => r.Key == "gcal") + 1,
+                new("gcalremove", "Remove Google Calendars", "Forget the addresses of the calendars added"));
         _settingRows = rows.ToDictionary(r => r.Key);
         return rows;
     }
@@ -82,12 +88,14 @@ public sealed partial class MainWindow
     {
         var control = r.Get is { } get ? new Native.Control("switch", r.Key, get(), 0) : null;
         var vm = new HitVm(new Native.Hit(r.Title, r.Subtitle, "Command", null, null, Control: control, Does: r.Key), chip: "");
-        vm.Describe(r.Subtitle, control == null ? (r.Key == "hotkey" ? "Change" : "Run") : null);
+        vm.Describe(r.Subtitle, control == null ? ButtonFor(r.Key) : null);
         return vm;
     }
 
     /// <summary>The label of the row's button in the search card.</summary>
-    private static string SettingButton(HitVm row) => row.ControlKey != null ? "Switch" : row.Does == "hotkey" ? "Change" : "Run";
+    private static string SettingButton(HitVm row) => row.ControlKey != null ? "Switch" : ButtonFor(row.Does);
+
+    private static string ButtonFor(string? key) => key switch { "hotkey" => "Change", "gcal" => "Paste", _ => "Run" };
 
     /// <summary>Enter on a row of the settings list.</summary>
     private void RunSetting(int index)
@@ -103,6 +111,12 @@ public sealed partial class MainWindow
         {
             case "hotkey":
                 StartCapture(vm);
+                break;
+            case "gcal":
+                _ = AddCalendarFromClipboard(vm);
+                break;
+            case "gcalremove":
+                RemoveCalendars();
                 break;
             case "reindex":
                 Native.Reindex();
