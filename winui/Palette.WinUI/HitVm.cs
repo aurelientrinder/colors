@@ -131,10 +131,23 @@ public sealed class HitVm : INotifyPropertyChanged
         return vm;
     }
 
+    private static string CalendarTitle(CalendarAnswer a)
+    {
+        var today = DateTime.Today;
+        switch (a.Mode)
+        {
+            case CalMode.Month: return "Calendar";
+            case CalMode.Week: return a.Day == CalendarData.WeekStart(today) ? "This week" : a.Day == CalendarData.WeekStart(today).AddDays(7) ? "Next week" : "Week";
+            default:
+                return a.Day == today ? "Today" : a.Day == today.AddDays(1) ? "Tomorrow" : a.Day == today.AddDays(-1) ? "Yesterday"
+                    : a.Day.ToString("dddd d MMMM", System.Globalization.CultureInfo.CurrentCulture);
+        }
+    }
+
     /// <summary>The row the calendar card ("calendar", "today") opens under; it opens Google Calendar, else Windows' calendar.</summary>
     public static HitVm ForCalendar(CalendarAnswer a, bool google)
     {
-        var vm = new HitVm(new Native.Hit(a.Today ? "Today" : "Calendar", "Calendar", "Calendar", null, null), chip: "")
+        var vm = new HitVm(new Native.Hit(CalendarTitle(a), "Calendar", "Calendar", null, null), chip: "")
         {
             IsAnswer = true,
             Answer = a,

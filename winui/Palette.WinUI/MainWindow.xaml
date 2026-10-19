@@ -100,7 +100,7 @@
             x:Name="Stage"
             Width="500"
             Background="{ThemeResource PanelBrush}"
-            HorizontalAlignment="Left"
+            HorizontalAlignment="Center"
             VerticalAlignment="Stretch">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />

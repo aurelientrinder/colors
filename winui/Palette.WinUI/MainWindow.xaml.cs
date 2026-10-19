@@ -25,7 +25,9 @@ public sealed partial class MainWindow : Window
     // preview opened low in a long list into view. It is room for a search's rows and a file
     // preview. The window is this size whole (the shadow window repaints and copies its entire
     // bitmap on every animation frame, so a taller window makes every frame dearer).
-    private const double WidthDip = 500, SearchDip = 112, RowDip = 60, PadDip = 14,
+    // The window is WindowDip wide whole; the panel is WidthDip, or WideDip while the month card
+    // shows (the region cuts it out, centred, as it does the height).
+    private const double WidthDip = 500, WideDip = 680, WindowDip = WideDip + 24, SearchDip = 112, RowDip = 60, PadDip = 14,
         MaxBodyDip = InstantRows * RowDip + PadDip + FilePaneDip;
 
     private readonly AppWindow _aw;
@@ -204,7 +206,7 @@ public sealed partial class MainWindow : Window
             // stops that offset short of the client's right and bottom edges: add both.
             var (ox, oy, cw, ch) = Win32.ClientArea(_hwnd);
             int ncw = Math.Max(0, _aw.Size.Width - cw) + ox, nch = Math.Max(0, _aw.Size.Height - ch) + oy;
-            int w = (int)(WidthDip * s) + ncw;
+            int w = (int)(WindowDip * s) + ncw;
             int ph = (int)((SearchDip + MaxBodyDip) * s) + nch;
             // Anchored to the bottom of the work area (above the taskbar), with the panel growing upward.
             int gap = (int)(12 * s);
@@ -271,6 +273,45 @@ public sealed partial class MainWindow : Window
     private double _pvU, _pvTarget;           // preview progress (linear) and where it is heading
     private double _lastFrameMs;
     private bool _animating;
+
+    // The panel widens for the calendar card and narrows back when it is left: it eases out with a
+    // small overshoot on the way out, and settles back plainly.
+    private const double WidthMs = 280;
+    private double _panelDip = WidthDip, _wFrom = WidthDip, _wTo = WidthDip;
+    private readonly System.Diagnostics.Stopwatch _wClock = new();
+
+    private double StepPanelWidth()
+    {
+        double to = CalendarWide && _pvTarget > 0 ? WideDip : WidthDip;
+        if (to != _wTo)
+        {
+            _wFrom = _panelDip;
+            _wTo = to;
+            if (AnimationsOn && _visible)
+            {
+                _wClock.Restart();
+                EnsureFrames();
+            }
+            else
+            {
+                _wClock.Reset();
+                _panelDip = to;
+            }
+        }
+        if (_wClock.IsRunning)
+        {
+            double t = Math.Min(1, _wClock.Elapsed.TotalMilliseconds / WidthMs);
+            double u = t - 1;
+            double ease = _wTo > _wFrom ? 1 + 2.6 * u * u * u + 1.6 * u * u : 1 + u * u * u;   // back-out, then cubic-out
+            _panelDip = _wFrom + (_wTo - _wFrom) * ease;
+            if (t >= 1)
+            {
+                _wClock.Stop();
+                _panelDip = _wTo;
+            }
+        }
+        return _panelDip;
+    }
 
     private void StartPop()
     {
@@ -350,6 +391,7 @@ public sealed partial class MainWindow : Window
         }
 
         ApplyShape();
+        busy |= _wClock.IsRunning;
         busy |= StepHighlight(dt);
         if (hidden) FinishHide();
         if (!busy)
@@ -403,7 +445,9 @@ public sealed partial class MainWindow : Window
         k *= 1 - 0.03 * hide;
 
         double h = Math.Min((SearchDip + bodyDip) * s, wh);
-        double x0 = 0, cx = WidthDip / 2 * s;
+        double panelDip = Math.Min(StepPanelWidth(), w / s);   // the overshoot stays inside the window
+        if (Stage.Width != panelDip) Stage.Width = panelDip;
+        double cx = w / 2.0, x0 = cx - panelDip / 2 * s;
         // Outer edges of the panel, in window pixels. The region is cut a pixel inside them, and the
         // shadow window paints an antialiased rim over the region's stair-stepped edge.
         // The panel is anchored to the bottom of the client area and grows upward.
@@ -726,6 +770,11 @@ public sealed partial class MainWindow : Window
                 ShowHome();
                 e.Handled = true;
                 return;
+        }
+        if (_view == View.Results && CalendarKey(e.Key))
+        {
+            e.Handled = true;
+            return;
         }
         switch (e.Key)
         {

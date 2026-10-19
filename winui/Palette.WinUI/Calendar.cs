@@ -5,10 +5,15 @@ using Windows.ApplicationModel.Appointments;
 namespace Palette;
 
 /// <summary>One occurrence of an event, in local time. An all-day event ends on the midnight after its last day.</summary>
-public sealed record CalEvent(string Title, DateTime Start, DateTime End, bool AllDay, string Location);
+public sealed record CalEvent(string Title, DateTime Start, DateTime End, bool AllDay, string Location, string Notes = "");
 
-/// <summary>"calendar" (the month and a day's events) or "today" (just today's events).</summary>
-public sealed record CalendarAnswer(string Query, bool Today) : WebAnswers.Answer(Query);
+public enum CalMode { Month, Day, Week }
+
+/// <summary>
+/// "calendar" (the month and a day's events), a day ("today", "tomorrow", "friday": its events alone)
+/// or a week ("this week", "next week": a line per day). <see cref="Day"/> is the day, or the first day of the week.
+/// </summary>
+public sealed record CalendarAnswer(string Query, CalMode Mode, DateTime Day) : WebAnswers.Answer(Query);
 
 /// <summary>
 /// Where the calendar card gets its events, merged and sorted:
@@ -24,16 +29,41 @@ public static class CalendarData
 {
     public static CalendarAnswer? Detect(string query)
     {
-        string q = query.Trim().ToLowerInvariant();
-        return q switch
+        string raw = query.Trim();
+        string q = System.Text.RegularExpressions.Regex.Replace(raw.ToLowerInvariant(), @"\s+", " ");
+        var today = DateTime.Today;
+        switch (q)
         {
-            "calendar" or "my calendar" or "google calendar" or "calendar events" or "events" or "my events"
-                => new CalendarAnswer(query.Trim(), false),
-            "today" or "my day" or "today's events" or "events today" or "agenda" or "my agenda"
-                or "today's agenda" or "schedule" or "my schedule"
-                => new CalendarAnswer(query.Trim(), true),
-            _ => null,
-        };
+            case "calendar" or "my calendar" or "google calendar" or "calendar events" or "events" or "my events" or "calendrier":
+                return new CalendarAnswer(raw, CalMode.Month, today);
+            case "today" or "my day" or "today's events" or "events today" or "agenda" or "my agenda"
+                or "today's agenda" or "schedule" or "my schedule" or "aujourd'hui":
+                return new CalendarAnswer(raw, CalMode.Day, today);
+            case "tomorrow" or "tomorrow's events" or "events tomorrow" or "my tomorrow" or "demain":
+                return new CalendarAnswer(raw, CalMode.Day, today.AddDays(1));
+            case "yesterday" or "hier":
+                return new CalendarAnswer(raw, CalMode.Day, today.AddDays(-1));
+            case "this week" or "week" or "my week" or "events this week" or "cette semaine" or "semaine":
+                return new CalendarAnswer(raw, CalMode.Week, WeekStart(today));
+            case "next week" or "semaine prochaine":
+                return new CalendarAnswer(raw, CalMode.Week, WeekStart(today).AddDays(7));
+        }
+        var m = System.Text.RegularExpressions.Regex.Match(q, @"^(next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$");
+        if (m.Success)
+        {
+            var dow = Enum.Parse<DayOfWeek>(m.Groups[2].Value, ignoreCase: true);
+            int ahead = ((int)dow - (int)today.DayOfWeek + 7) % 7;
+            if (ahead == 0 && m.Groups[1].Success) ahead = 7;
+            return new CalendarAnswer(raw, CalMode.Day, today.AddDays(ahead));
+        }
+        return null;
+    }
+
+    /// <summary>The first day of the week that holds <paramref name="d"/>, by the user's region.</summary>
+    public static DateTime WeekStart(DateTime d)
+    {
+        int lead = ((int)d.DayOfWeek - (int)CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek + 7) % 7;
+        return d.Date.AddDays(-lead);
     }
 
     // ------------------------------------------------------------ loading
@@ -141,7 +171,7 @@ public static class CalendarData
                 var store = await AppointmentManager.RequestStoreAsync(AppointmentStoreAccessType.AllCalendarsReadOnly);
                 if (store == null) return null;
                 var options = new FindAppointmentsOptions { MaxCount = 1000 };
-                foreach (var p in new[] { "Subject", "Location", "StartTime", "Duration", "AllDay" }) options.FetchProperties.Add(p);
+                foreach (var p in new[] { "Subject", "Location", "StartTime", "Duration", "AllDay", "Details" }) options.FetchProperties.Add(p);
                 var found = await store.FindAppointmentsAsync(new DateTimeOffset(From), To - From, options);
                 var list = new List<CalEvent>();
                 foreach (var a in found)
@@ -149,7 +179,7 @@ public static class CalendarData
                     var start = a.StartTime.LocalDateTime;
                     var end = start + a.Duration;
                     if (a.AllDay) { start = start.Date; end = end <= start ? start.AddDays(1) : end; }
-                    list.Add(new CalEvent(string.IsNullOrWhiteSpace(a.Subject) ? "(No title)" : a.Subject.Trim(), start, end, a.AllDay, a.Location ?? ""));
+                    list.Add(new CalEvent(string.IsNullOrWhiteSpace(a.Subject) ? "(No title)" : a.Subject.Trim(), start, end, a.AllDay, a.Location ?? "", CleanNotes(a.Details ?? "", escaped: false)));
                 }
                 return list;
             }, ct);
@@ -173,18 +203,23 @@ public static class CalendarData
         return Events.Where(e => e.Start < next && (e.End > day || e.Start >= day)).ToList();
     }
 
-    public static HashSet<DateTime> Days(DateTime from, DateTime to)
+    /// <summary>The days in [from, to) that have events, each with the distinct titles of the first few.</summary>
+    public static Dictionary<DateTime, List<string>> Days(DateTime from, DateTime to)
     {
-        var set = new HashSet<DateTime>();
+        var map = new Dictionary<DateTime, List<string>>();
         foreach (var e in Events)
         {
             if (e.End <= from || e.Start >= to) continue;
             var d = e.Start.Date < from ? from.Date : e.Start.Date;
             var last = e.AllDay || e.End.TimeOfDay == TimeSpan.Zero ? e.End.Date.AddDays(-1) : e.End.Date;
             if (last < d) last = d;
-            for (; d <= last && d < to; d = d.AddDays(1)) set.Add(d);
+            for (; d <= last && d < to; d = d.AddDays(1))
+            {
+                if (!map.TryGetValue(d, out var titles)) map[d] = titles = new();
+                if (titles.Count < 3 && !titles.Contains(e.Title)) titles.Add(e.Title);
+            }
         }
-        return set;
+        return map;
     }
 
     // ------------------------------------------------------------ iCalendar
@@ -260,6 +295,19 @@ public static class CalendarData
             if (eq > 0) p.Params[parts[i][..eq]] = parts[i][(eq + 1)..].Trim('"');
         }
         return p;
+    }
+
+    /// <summary>An event's description for the details: line breaks kept, markup and booking ids dropped, short.</summary>
+    private static string CleanNotes(string v, bool escaped = true)
+    {
+        if (escaped) v = v.Replace("\\n", "\n").Replace("\\N", "\n").Replace("\\,", ",").Replace("\\;", ";").Replace("\\\\", "\\");
+        v = System.Text.RegularExpressions.Regex.Replace(v, @"<\s*br\s*/?>|</p>|</div>|</li>", "\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        v = System.Text.RegularExpressions.Regex.Replace(v, @"<[^>]+>", "");
+        v = System.Net.WebUtility.HtmlDecode(v).Replace("\r", "");
+        var lines = v.Split('\n').Select(l => l.Trim())
+            .Where(l => !l.StartsWith("Event id", StringComparison.OrdinalIgnoreCase) && !l.StartsWith("Register id", StringComparison.OrdinalIgnoreCase));
+        v = System.Text.RegularExpressions.Regex.Replace(string.Join("\n", lines), @"\n{2,}", "\n").Trim();
+        return v.Length > 500 ? v[..500] + "…" : v;
     }
 
     private static string Unescape(string v) =>
@@ -468,13 +516,14 @@ public static class CalendarData
             string title = Unescape(First(ev, "SUMMARY")).Trim();
             if (title.Length == 0) title = "(No title)";
             string place = Unescape(First(ev, "LOCATION")).Trim();
+            string notes = CleanNotes(First(ev, "DESCRIPTION"));
             string uid = First(ev, "UID");
             bool isOverride = ev.ContainsKey("RECURRENCE-ID");
 
             void Add(DateTime occ)
             {
                 var e = occ + length;
-                if (occ < to && (e > from || occ >= from)) result.Add(new CalEvent(title, occ, e, start.AllDay, place));
+                if (occ < to && (e > from || occ >= from)) result.Add(new CalEvent(title, occ, e, start.AllDay, place, notes));
             }
 
             if (!ev.TryGetValue("RRULE", out var rr) || isOverride || ReadRule(rr[0].Value, start) is not { } rule)

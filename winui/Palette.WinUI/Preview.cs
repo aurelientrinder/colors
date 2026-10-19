@@ -120,6 +120,8 @@ public sealed partial class MainWindow
         _autoPv?.Stop();
         _pvPath = null;
         _pvU = _pvTarget = 0;
+        _wClock.Reset();
+        _panelDip = _wFrom = _wTo = WidthDip;   // opens at its normal width
         foreach (var c in _pvClosing) c.vm.PreviewHeight = 0;
         _pvClosing.Clear();
         Detach();
