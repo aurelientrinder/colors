@@ -61,6 +61,48 @@ internal static class Win32
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
+    public delegate IntPtr SubclassProc(IntPtr h, uint msg, IntPtr w, IntPtr l, UIntPtr id, IntPtr data);
+
+    [DllImport("comctl32.dll")]
+    public static extern bool SetWindowSubclass(IntPtr h, SubclassProc proc, UIntPtr id, IntPtr data);
+
+    [DllImport("comctl32.dll")]
+    public static extern IntPtr DefSubclassProc(IntPtr h, uint msg, IntPtr w, IntPtr l);
+
+    [DllImport("user32.dll")]
+    public static extern int FillRect(IntPtr dc, ref RECT r, IntPtr brush);
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr GetStockObject(int i);
+
+    [DllImport("user32.dll")]
+    public static extern bool InvalidateRect(IntPtr h, IntPtr r, bool erase);
+
+    [DllImport("user32.dll")]
+    public static extern bool RedrawWindow(IntPtr h, IntPtr rect, IntPtr rgn, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PAINTSTRUCT
+    {
+        public IntPtr hdc;
+        public int fErase;
+        public RECT rcPaint;
+        public int fRestore, fIncUpdate;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] rgbReserved;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr BeginPaint(IntPtr h, out PAINTSTRUCT ps);
+
+    [DllImport("user32.dll")]
+    public static extern bool EndPaint(IntPtr h, ref PAINTSTRUCT ps);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MARGINS { public int Left, Right, Top, Bottom; }
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS m);
+
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
 
@@ -105,7 +147,7 @@ internal static class Win32
     private static extern bool GetWindowRect(IntPtr h, out RECT r);
 
     [DllImport("user32.dll")]
-    private static extern bool GetClientRect(IntPtr h, out RECT r);
+    public static extern bool GetClientRect(IntPtr h, out RECT r);
 
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr h, ref POINT p);
@@ -123,24 +165,8 @@ internal static class Win32
         return (p.X - w.Left, p.Y - w.Top, c.Right - c.Left, c.Bottom - c.Top);
     }
 
-    [DllImport("user32.dll")]
-    private static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
-
-    /// <summary>
-    /// Fade the whole window, backdrop included. DWM applies the alpha when composing, so changing
-    /// it every frame costs next to nothing. Makes the window layered on first use.
-    /// </summary>
-    public static void SetWindowAlpha(IntPtr h, byte alpha)
-    {
-        const int GWL_EXSTYLE = -20;
-        const long WS_EX_LAYERED = 0x80000;
-        long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
-        if ((ex & WS_EX_LAYERED) == 0) SetWindowLongPtr(h, GWL_EXSTYLE, new IntPtr(ex | WS_EX_LAYERED));
-        SetLayeredWindowAttributes(h, 0, alpha, 0x2 /* LWA_ALPHA */);
-    }
-
     [DllImport("gdi32.dll")]
-    public static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseW, int ellipseH);
+    public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
 
     /// <summary>The system owns the region afterwards.</summary>
     [DllImport("user32.dll")]

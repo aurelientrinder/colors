@@ -44,6 +44,7 @@ public sealed partial class MainWindow
             item.Click += OnStockRangeClick;
             StockRangeMenu.Items.Add(item);
         }
+        WarmCalendar();   // so the calendar card's first opening does not lay it out mid-animation
     }
 
     // ------------------------------------------------------------ web answers

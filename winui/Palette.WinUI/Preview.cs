@@ -78,7 +78,7 @@ public sealed partial class MainWindow
     {
         if (vm is not { RawKind: "File", Path: { } p } || vm.Answer != null) return false;
         string ext = System.IO.Path.GetExtension(p);
-        return ImageExt.Contains(ext) || TextExt.Contains(ext)
+        return ImageExt.Contains(ext) || TextExt.Contains(ext) || ModelExt.Contains(ext)
             || ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
             || ext.Equals(".docx", StringComparison.OrdinalIgnoreCase);
     }
@@ -120,6 +120,7 @@ public sealed partial class MainWindow
         _autoPv?.Stop();
         _pvPath = null;
         _pvU = _pvTarget = 0;
+        _pvBase = _pvCarry = 0;
         _wClock.Reset();
         _panelDip = _wFrom = _wTo = WidthDip;   // opens at its normal width
         foreach (var c in _pvClosing) c.vm.PreviewHeight = 0;
@@ -173,7 +174,8 @@ public sealed partial class MainWindow
     private void Attach(HitVm vm)
     {
         var old = _pvVm;
-        double h = old?.PreviewHeight ?? 0;
+        double h = old?.PreviewHeight ?? 0;      // the room its row is laid out with
+        double shown = Math.Min(_pvShownDip, h); // the part of it on screen
         Detach();
         if (AnimationsOn && _visible)
         {
@@ -185,12 +187,21 @@ public sealed partial class MainWindow
                 reopen = _pvClosing[j].u;
                 _pvClosing.RemoveAt(j);
             }
-            if (old != null && h > 0.5)
+            if (old != null && h > 0.5 && !Items.Contains(old))
+            {
+                // Its row is gone: nothing is left to close there, and the card taking its place
+                // starts with its room (StartFromListRoom), so the panel does not dip in between.
+                _pvCarry = shown;
+                old.PreviewHeight = 0;
+                _pvU = reopen;
+            }
+            else if (old != null && h > 0.5)
             {
                 // The pane moves on; the room it had closes as it unrolls in the new row, rather
                 // than both jumping.
+                // Its row keeps the room laid out, closing on screen from what was shown.
                 old.PreviewHeight = h;
-                _pvClosing.Add((old, h, 1));
+                _pvClosing.Add((old, h, EaseInOutInverse(shown / h)));
                 _pvU = reopen;
                 EnsureFrames();
             }
@@ -211,8 +222,9 @@ public sealed partial class MainWindow
             u = Math.Max(0, u - dt / PreviewMs);
             if (u == 0)
             {
-                vm.PreviewHeight = 0;
+                vm.PreviewHeight = 0;   // the room it kept while closing on screen (ListMotion.cs)
                 _pvClosing.RemoveAt(j);
+                _pvCollapsed = true;
             }
             else
             {
@@ -220,19 +232,6 @@ public sealed partial class MainWindow
             }
         }
         return _pvClosing.Count > 0;
-    }
-
-    /// <summary>Set the closing rows' heights; returns the room they still take (rows still listed).</summary>
-    private double ClosingPreviewDip()
-    {
-        double sum = 0;
-        foreach (var (vm, from, u) in _pvClosing)
-        {
-            double h = from * EaseInOut(u);
-            vm.PreviewHeight = h;
-            if (Items.Contains(vm)) sum += h;
-        }
-        return sum;
     }
 
     /// <summary>Room still taken by closing rows above row <paramref name="index"/>.</summary>
@@ -276,6 +275,7 @@ public sealed partial class MainWindow
 
     private void ClearPreview()
     {
+        StopModelView();
         _pvFull = FilePaneDip;
         FilePreview.Visibility = Visibility.Visible;
         AnswerPreview.Visibility = Visibility.Collapsed;
@@ -331,6 +331,13 @@ public sealed partial class MainWindow
         PreviewSize.Text = info.Kind == PvKind.Missing ? "Not found" : Size(info.Size);
         try
         {
+            if (ModelExt.Contains(System.IO.Path.GetExtension(path)) && info.Kind is not (PvKind.Missing or PvKind.Cloud))
+            {
+                // The viewer lays itself over the stage; the shell thumbnail is what shows meanwhile.
+                StartModelView(path);
+                await ShowThumbnail(path, v);
+                return;
+            }
             switch (info.Kind)
             {
                 case PvKind.Missing:

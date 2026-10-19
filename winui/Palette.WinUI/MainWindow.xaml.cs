@@ -23,16 +23,13 @@ public sealed partial class MainWindow : Window
     // pitch), the list 10 above and 4 below its rows (PadDip), and a 100-high search card with 6
     // around it (SearchDip). The list never grows past MaxBodyDip; it scrolls instead, to bring a
     // preview opened low in a long list into view. It is room for a search's rows and a file
-    // preview. The window is this size whole (the shadow window repaints and copies its entire
-    // bitmap on every animation frame, so a taller window makes every frame dearer).
-    // The window is WindowDip wide whole; the panel is WidthDip, or WideDip while the month card
-    // shows (the region cuts it out, centred, as it does the height).
-    private const double WidthDip = 500, WideDip = 680, WindowDip = WideDip + 24, SearchDip = 112, RowDip = 60, PadDip = 14,
+    // preview. The window is that size whole, with room around it for the panel's shadow
+    // (Chrome.cs); the panel is WidthDip wide, or WideDip while the month card shows.
+    private const double WidthDip = 500, WideDip = 680, WindowDip = WideDip, SearchDip = 112, RowDip = 60, PadDip = 14,
         MaxBodyDip = InstantRows * RowDip + PadDip + FilePaneDip;
 
     private readonly AppWindow _aw;
     private readonly IntPtr _hwnd;
-    private readonly ShadowWindow _shadow = new();
 
     public ObservableCollection<HitVm> Items { get; } = new();
 
@@ -61,7 +58,7 @@ public sealed partial class MainWindow : Window
         _hwnd = WindowNative.GetWindowHandle(this);
         _aw = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(_hwnd));
 
-        SystemBackdrop = new GlassBackdrop();
+        SystemBackdrop = new ClearBackdrop();   // see-through: the panel draws itself (Chrome.cs)
         ExtendsContentIntoTitleBar = true;
 
         var presenter = OverlappedPresenter.Create();
@@ -79,6 +76,7 @@ public sealed partial class MainWindow : Window
         InitMotion();
         InitControls();
         InitAnswers();
+        InitChrome();
         Activated += OnActivated;
         Input.Loaded += (_, _) => HideClearButton();
 
@@ -195,25 +193,26 @@ public sealed partial class MainWindow : Window
 
         if (recenter)
         {
-            // The window keeps one full size (list + preview, all rows); the region shows the
-            // visible panel. Growing a window shows unpainted black for a frame; a region just
-            // reveals more of it.
+            // The window keeps one full size (the widest panel, all rows and a preview, and the
+            // shadow's room around them); the panel is drawn in it at its current size. Growing a
+            // window shows unpainted black for a frame; drawing more of a see-through one does not.
             Win32.GetCursorPos(out var c);
             var area = DisplayArea.GetFromPoint(new PointInt32(c.X, c.Y), DisplayAreaFallback.Nearest);
             var wa = area.WorkArea;
-            // The client area (XAML) is smaller than the window by what is left of its frame, and the
-            // acrylic backdrop is laid out from the window's corner rather than the client's, so it
-            // stops that offset short of the client's right and bottom edges: add both.
+            // The client area (XAML) is smaller than the window by what is left of its frame: add it.
             var (ox, oy, cw, ch) = Win32.ClientArea(_hwnd);
             int ncw = Math.Max(0, _aw.Size.Width - cw) + ox, nch = Math.Max(0, _aw.Size.Height - ch) + oy;
-            int w = (int)(WindowDip * s) + ncw;
-            int ph = (int)((SearchDip + MaxBodyDip) * s) + nch;
-            // Anchored to the bottom of the work area (above the taskbar), with the panel growing upward.
+            int m = (int)Math.Round(ShadowDip * s);
+            int w = (int)(WindowDip * s) + 2 * m + ncw;
+            int ph = (int)((SearchDip + MaxBodyDip) * s) + 2 * m + nch;
+            // The panel is anchored to the bottom of the work area (above the taskbar) and grows
+            // upward; its shadow may fall over the taskbar, as the old shadow window's did.
             int gap = (int)(12 * s);
-            ph = Math.Min(ph, wa.Height - 2 * gap);
+            ph = Math.Min(ph, wa.Height - 2 * gap + 2 * m);
             int x = wa.X + (wa.Width - w) / 2;
-            int y = wa.Y + wa.Height - gap - ph;
+            int y = wa.Y + wa.Height - gap + m - ph;
             _aw.MoveAndResize(new RectInt32(x, y, w, ph));
+            RepaintSurface();   // a resized window's new surface is white until painted
         }
         if (!_animating) ApplyShape();
     }
@@ -274,10 +273,11 @@ public sealed partial class MainWindow : Window
     private double _lastFrameMs;
     private bool _animating;
 
-    // The panel widens for the calendar card and narrows back when it is left: it eases out with a
-    // small overshoot on the way out, and settles back plainly.
-    private const double WidthMs = 280;
-    private double _panelDip = WidthDip, _wFrom = WidthDip, _wTo = WidthDip;
+    // The panel widens for the month card and narrows back when it is left, on the same curve and
+    // clock as the card unrolling in its row, so the two read as one motion. A change of direction
+    // part-way carries on from where the width is, with the time left scaled to the distance left.
+    private const double WidthMs = PreviewMs;
+    private double _panelDip = WidthDip, _wFrom = WidthDip, _wTo = WidthDip, _wMs = WidthMs;
     private readonly System.Diagnostics.Stopwatch _wClock = new();
 
     private double StepPanelWidth()
@@ -289,6 +289,7 @@ public sealed partial class MainWindow : Window
             _wTo = to;
             if (AnimationsOn && _visible)
             {
+                _wMs = WidthMs * Math.Clamp(Math.Abs(to - _panelDip) / (WideDip - WidthDip), 0.35, 1);
                 _wClock.Restart();
                 EnsureFrames();
             }
@@ -300,10 +301,8 @@ public sealed partial class MainWindow : Window
         }
         if (_wClock.IsRunning)
         {
-            double t = Math.Min(1, _wClock.Elapsed.TotalMilliseconds / WidthMs);
-            double u = t - 1;
-            double ease = _wTo > _wFrom ? 1 + 2.6 * u * u * u + 1.6 * u * u : 1 + u * u * u;   // back-out, then cubic-out
-            _panelDip = _wFrom + (_wTo - _wFrom) * ease;
+            double t = Math.Min(1, _wClock.Elapsed.TotalMilliseconds / _wMs);
+            _panelDip = _wFrom + (_wTo - _wFrom) * EaseInOut(t);
             if (t >= 1)
             {
                 _wClock.Stop();
@@ -330,14 +329,75 @@ public sealed partial class MainWindow : Window
     private void SetPreviewOpen(bool open)
     {
         double target = open ? 1 : 0;
+        if (open && _pvU == 0) StartFromListRoom();
+        if (!open && _pvBase > 0)
+        {
+            // Closing a card that opened part-way: carry on down the plain curve from where it is.
+            double p = _pvBase + (1 - _pvBase) * EaseInOut(_pvU);
+            _pvBase = 0;
+            _pvU = EaseInOutInverse(p);
+        }
         _pvTarget = target;
         if (!AnimationsOn || !_visible)
         {
             _pvU = target;
+            _pvBase = 0;
             ApplyShape();
             return;
         }
         if (_pvU != target) EnsureFrames();
+    }
+
+    // The panel's height stays continuous when rows and a card trade places, as when "calendar"
+    // replaces a list of files with one row and its card: the list giving up room and the card
+    // taking it would otherwise run on different clocks, and the panel would dip and come back.
+    private double _pvBase;   // the share of the card already open when it began to unroll
+    private double _pvShownDip;   // how much of the card the last frame showed
+    private bool _pvCollapsed;   // a closing row's room was given back since the last frame
+    private bool _rowFxWas;   // the last frame shifted or clipped rows, or changed the panel's width
+    private double _pvCarry;  // room of a card whose row was replaced, for the card that takes its place
+
+    /// <summary>
+    /// A card begins to open: it starts with the room the list is giving up and the room of a card
+    /// whose row it replaces, as much as it can take; the list keeps any more and glides it away.
+    /// </summary>
+    private void StartFromListRoom()
+    {
+        _pvBase = 0;
+        double room = Math.Max(0, _listShownDip - _listBodyDip) + _pvCarry;
+        _pvCarry = 0;
+        if (!AnimationsOn || !_visible || _pvFull <= 0 || room <= 1) return;
+        double take = Math.Min(room, 0.95 * _pvFull);
+        _pvBase = take / _pvFull;
+        _listShownDip = _listBodyDip + (room - take);
+        EnsureFrames();
+    }
+
+    /// <summary>
+    /// The card's row left the list (a new search replaced it): its room passes to the list, which
+    /// glides from there to its own height, and the card is closed at once, not after the pause
+    /// that typing gets: there is no row to keep it for.
+    /// </summary>
+    private void HandOverOrphanedCard(double pvDip)
+    {
+        if (_pvVm == null || _pvTarget == 0 && _pvU == 0 || Items.Contains(_pvVm)) return;
+        _listShownDip += pvDip;
+        _pvU = _pvTarget = 0;
+        _pvBase = 0;
+        _pvVersion++;   // a pending ClosePreviewSoon has nothing left to do
+        if (AnimationsOn && _visible) EnsureFrames();
+        else _listShownDip = _listBodyDip;
+    }
+
+    private static double EaseInOutInverse(double p)
+    {
+        double lo = 0, hi = 1;
+        for (int i = 0; i < 30; i++)
+        {
+            double mid = (lo + hi) / 2;
+            if (EaseInOut(mid) < p) lo = mid; else hi = mid;
+        }
+        return (lo + hi) / 2;
     }
 
     private void EnsureFrames()
@@ -398,6 +458,12 @@ public sealed partial class MainWindow : Window
         {
             CompositionTarget.Rendering -= OnFrame;
             _animating = false;
+            SettleClickRegion();
+            if (_calRedraw)
+            {
+                _calRedraw = false;
+                if (CalendarOnCard) DrawCalendar();
+            }
         }
     }
 
@@ -409,31 +475,63 @@ public sealed partial class MainWindow : Window
         var (ox, oy, w, wh) = Win32.ClientArea(_hwnd);
         if (w <= 0 || wh <= 0) return;
 
-        // Preview: ease-in-out cubic on its linear progress.
+        // Preview: ease-in-out cubic on its linear progress, from the share it started with.
         double u = _pvU;
-        double p = EaseInOut(u);
+        double e = EaseInOut(u);
+        double p = _pvBase + (1 - _pvBase) * e;
         bool rows = Items.Count > 0;
-        // The pane is laid out at full height inside its row and clipped to the room opened so far,
-        // so it unrolls rather than squashing.
+        // The pane is laid out at full height inside its row from the start, and the part not yet
+        // open is clipped off and the rows below shifted up by it (ListMotion.cs), so it unrolls
+        // without the list being laid out again at each frame.
         double pvDip = rows && _pvVm != null ? _pvFull * p : 0;
-        if (_pvVm != null) _pvVm.PreviewHeight = pvDip;
-        PreviewPane.Opacity = p * p;
+        if (_pvVm != null && !Items.Contains(_pvVm))
+        {
+            HandOverOrphanedCard(pvDip);
+            pvDip = 0;
+            p = e = 0;
+        }
+        double pvLayout = _pvVm != null && Items.Contains(_pvVm) && (_pvU > 0 || _pvTarget > 0) ? _pvFull : 0;
+        bool relaid = _pvCollapsed;   // a closing row gave its room back this frame
+        _pvCollapsed = false;
+        if (_pvVm != null && _pvVm.PreviewHeight != pvLayout)
+        {
+            _pvVm.PreviewHeight = pvLayout;
+            relaid = true;
+        }
+        _pvShownDip = pvDip;
+        // A card that started part-way open fades in over its own time rather than appearing at once;
+        // while the panel widens for it, it shows as the panel uncovers it, not cut by the edge.
+        double fade = _pvBase > 0 ? e : p * p;
+        if (_wClock.IsRunning && _wTo > _wFrom) fade *= Math.Pow(Math.Clamp((_panelDip - _wFrom) / (_wTo - _wFrom), 0, 1), 2);
+        PreviewPane.Opacity = fade;
+
+        var opening = new List<(int index, double hidden)>();
+        if (pvLayout - pvDip > 0.25) opening.Add((Items.IndexOf(_pvVm!), pvLayout - pvDip));
+        double closingShown = 0, closingLayout = 0;
+        foreach (var (cvm, from, cu) in _pvClosing)
+        {
+            int j = Items.IndexOf(cvm);
+            if (j < 0) continue;
+            double shown = from * EaseInOut(cu);
+            closingShown += shown;
+            closingLayout += from;
+            if (from - shown > 0.25) opening.Add((j, from - shown));
+        }
+
         // Never taller than the window: the panel grows upward from the bottom, and the search
         // field must stay on screen.
-        double roomDip = Math.Max(0, wh / s - SearchDip);
-        double bodyDip = Math.Min(_listShownDip + pvDip + ClosingPreviewDip(), Math.Min(MaxBodyDip, roomDip));
+        double roomDip = Math.Max(0, wh / s - SearchDip - 2 * ShadowDip);
+        double cap = Math.Min(MaxBodyDip, roomDip);
+        double bodyDip = Math.Min(_listShownDip + pvDip + closingShown, cap);
         // Whole physical pixels. The height glides through fractions, and layout rounds the panel
         // and each child to pixels on its own: the search field, at the bottom, landed a pixel
         // higher or lower on alternate frames and shook after almost any interaction.
         bodyDip = Math.Round(bodyDip * s) / s;
-        Body.Height = bodyDip;
+        if (Body.Height != bodyDip) Body.Height = bodyDip;
 
-        // Pop: the whole window fades in (a window-level alpha that DWM applies for free) while the
-        // content grows from 94% on the GPU. The glass, rim and shadow
-        // keep their final shape throughout: reshaping a window every frame makes DWM recompose
-        // it, which cost a third of each frame at 90-120 Hz.
-        // The content swells a hair past full size and settles back (ease-out-back, about 1.2% over):
-        // a soft bubble pop rather than a plain zoom.
+        // Pop: the panel fades in and grows from 94%, its shadow with it, all on the GPU. It swells
+        // a hair past full size and settles back (ease-out-back, about 1.2% over): a soft bubble
+        // pop rather than a plain zoom.
         const double Overshoot = 3.0;
         double u1 = _popT - 1;
         double ease = 1 + (Overshoot + 1) * u1 * u1 * u1 + Overshoot * u1 * u1;
@@ -444,40 +542,63 @@ public sealed partial class MainWindow : Window
         alpha *= 1 - hide;
         k *= 1 - 0.03 * hide;
 
-        double h = Math.Min((SearchDip + bodyDip) * s, wh);
-        double panelDip = Math.Min(StepPanelWidth(), w / s);   // the overshoot stays inside the window
-        if (Stage.Width != panelDip) Stage.Width = panelDip;
-        double cx = w / 2.0, x0 = cx - panelDip / 2 * s;
-        // Outer edges of the panel, in window pixels. The region is cut a pixel inside them, and the
-        // shadow window paints an antialiased rim over the region's stair-stepped edge.
-        // The panel is anchored to the bottom of the client area and grows upward.
-        int rl = (int)Math.Round(x0) + ox, rr = (int)Math.Round(2 * cx - x0) + ox, rb = wh + oy;
-        int rt = rb - (int)Math.Round(h);
-        double radius = CornerDip * s;
-        if ((rl, rt, rr, rb) != _region)
+        // The panel in whole physical pixels: its width even, so that it stays centred on a whole
+        // pixel, and the stage, the panel and its rim laid out on exactly those pixels (left edge by
+        // margin, not by centring), so nothing rounds to one side or the other of a half pixel as
+        // the size glides. It sits ShadowDip above the window's bottom, room for its shadow.
+        int m = (int)Math.Round(ShadowDip * s);
+        int hPx = (int)Math.Round(Math.Min((SearchDip + bodyDip) * s, wh - 2 * m));
+        int panelPx = Math.Min(w - 2 * m, 2 * (int)Math.Round(StepPanelWidth() * s / 2));
+        int leftPx = (w - panelPx) / 2, bottomPx = wh - m, topPx = bottomPx - hPx;
+        double panelW = panelPx / s, panelH = hPx / s, left = leftPx / s, below = m / s;
+        if (Stage.Width != panelW) Stage.Width = panelW;
+        HoldListWidth();
+        var at = new Thickness(left, 0, 0, below);
+        if (Stage.Margin != at) Stage.Margin = at;
+        foreach (var f in new FrameworkElement[] { Chrome, Rim })
         {
-            _region = (rl, rt, rr, rb);
-            int i = 1, d = (int)Math.Round(2 * (radius - i));     // CreateRoundRectRgn takes the ellipse diameter
-            // CreateRoundRectRgn leaves out one pixel more on the right and bottom than its arguments say.
-            var rgn = Win32.CreateRoundRectRgn(rl + i, rt + i, rr - i + 1, rb - i + 1, d, d);
-            Win32.SetWindowRgn(_hwnd, rgn, true);
+            if (f.Width != panelW) f.Width = panelW;
+            if (f.Height != panelH) f.Height = panelH;
+            if (f.Margin != at) f.Margin = at;
         }
-        _shadow.Draw(new RectInt32(_aw.Position.X, _aw.Position.Y, _aw.Size.Width, _aw.Size.Height), rl, rt, rr, rb, radius, alpha, s,
-            Root.ActualTheme == ElementTheme.Dark);
+        // The list itself is laid out at the height it is heading to, and only clipped to what the
+        // panel shows: its rows are not laid out again while the panel's edge glides.
+        double hintDip = MoreHint.Visibility == Visibility.Visible ? HintDip : 0;
+        double layoutDip = Math.Round(Math.Min(_listBodyDip + pvLayout + closingLayout, cap) * s) / s;
+        double listH = Math.Max(0, layoutDip - hintDip - PadDip);
+        if (ResultsList.Height != listH)
+        {
+            ResultsList.Height = listH;
+            relaid = true;
+        }
+        // A row's or the list's height changed: lay them out now, so the rows' shift and clip below
+        // are worked out from the heights they have this frame, not the last.
+        if (relaid) ResultsList.UpdateLayout();
+        _listShownW = panelW - ListInsetDip;
+        ClipList(bodyDip - hintDip - PadDip, _listShownW);
+        DrawRowMotion(opening);
+        // The selection card follows the rows' shift and clip, and the panel's width.
+        bool follow = _rowFx.Count > 0 || _wClock.IsRunning;
+        if (follow || _rowFxWas) UpdateHighlight();
+        _rowFxWas = follow;
+        PlaceShadow(left, topPx / s, panelW, panelH, below);
+        _panelPx = (leftPx + ox, topPx + oy, leftPx + panelPx + ox, bottomPx + oy, m);
+        FitClickRegion(leftPx + ox - m, topPx + oy - m, leftPx + panelPx + ox + m, bottomPx + oy + m, settled: !_animating);
 
-        byte a = (byte)Math.Round(alpha * 255);
-        if (a != _windowAlpha)
-        {
-            _windowAlpha = a;
-            Win32.SetWindowAlpha(_hwnd, a);
-        }
-        RootXf.CenterX = cx / s;
-        RootXf.CenterY = (wh - h * 0.35) / s;
+        if (Root.Opacity != alpha) Root.Opacity = alpha;
+        RootXf.CenterX = left + panelW / 2;
+        RootXf.CenterY = (bottomPx - hPx * 0.35) / s;
         RootXf.ScaleX = RootXf.ScaleY = k;
     }
 
-    private (int, int, int, int) _region;     // the window region last set
-    private int _windowAlpha = -1;            // the window alpha last set
+    private (int l, int t, int r, int b, int m) _panelPx;   // the panel last drawn, window pixels, and the shadow's room
+
+    /// <summary>A motion has settled: fit the click region to the panel again.</summary>
+    private void SettleClickRegion()
+    {
+        var (l, t, r, b, m) = _panelPx;
+        if (r > l) FitClickRegion(l - m, t - m, r + m, b + m, settled: true);
+    }
 
     private IntPtr _previousForeground;   // the window that had focus before the palette opened
     private int _reassertTries;
@@ -497,7 +618,6 @@ public sealed partial class MainWindow : Window
     private void QuitApp()
     {
         _tray.Dispose();                  // remove the icon before the process disappears
-        _shadow.Dispose();
         Environment.Exit(0);
     }
 
@@ -516,6 +636,7 @@ public sealed partial class MainWindow : Window
         _reassertTries = 0;
         ReadWindowBehind();
         if (DateTime.UtcNow - _clipRead > TimeSpan.FromSeconds(30)) _ = ReadClipboardHistory();
+        PrefetchCalendar();
 
         SetView(View.Results, SearchPlaceholder);
         SetInputText("");
@@ -530,19 +651,22 @@ public sealed partial class MainWindow : Window
         _visible = true;
         StartPop();
         _aw.Show();
+        RepaintSurface();   // black (see-through) before its first frame on screen
         // The presenter can put its frame styles back on Show; a frame is what Windows draws the
         // white outline for, so take it off again every time.
         var (st, ex) = Win32.StripFrame(_hwnd);
         App.Log($"styles before strip: 0x{st:X} ex 0x{ex:X}");
         // DWM can reset these when a window is hidden and shown again: re-apply every time so
         // the popup keeps its rounded corners and never gets the square 1 px system border.
-        int round = 1, none = unchecked((int)0xFFFFFFFE);                   // 1 = DWMWCP_DONOTROUND (the region rounds)
+        int round = 1, none = unchecked((int)0xFFFFFFFE);                   // 1 = DWMWCP_DONOTROUND (the panel rounds itself)
         Win32.DwmSetWindowAttribute(_hwnd, 33, ref round, sizeof(int));     // DWMWA_WINDOW_CORNER_PREFERENCE
         Win32.DwmSetWindowAttribute(_hwnd, 34, ref none, sizeof(int));      // DWMWA_BORDER_COLOR = none
         int ncOff = 1;                                                      // DWMNCRP_DISABLED: no frame, shadow or hairline
         Win32.DwmSetWindowAttribute(_hwnd, 2, ref ncOff, sizeof(int));      // DWMWA_NCRENDERING_POLICY
+        // The whole client area is "glass" to DWM: what the panel does not draw is see-through.
+        var glass = new Win32.MARGINS { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+        Win32.DwmExtendFrameIntoClientArea(_hwnd, ref glass);
         Win32.ForceForeground(_hwnd);
-        _shadow.ShowOver(_hwnd);
         Activate();
         Input.Focus(FocusState.Programmatic);
         _hooks.RequestFlush();   // the palette has focus: replay anything typed since the trigger
@@ -584,6 +708,7 @@ public sealed partial class MainWindow : Window
         if (!_visible) return;
         CancelAsk();
         CancelChat();
+        StopModelView();
         _visible = false;
         _lastHidden = DateTime.UtcNow;
         if (AnimationsOn)
@@ -613,7 +738,6 @@ public sealed partial class MainWindow : Window
         _hideClock.Stop();
         if (_visible) return;   // reopened in the meantime
         _aw.Hide();
-        _shadow.Hide();
     }
 
     private void OnActivated(object sender, WindowActivatedEventArgs e)

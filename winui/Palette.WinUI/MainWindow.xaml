@@ -24,6 +24,11 @@
                             <GradientStop Offset="1" Color="#FFDDEAF8" />
                         </LinearGradientBrush>
                         <SolidColorBrush x:Key="RowSelectedBrush" Color="#FFFFFFFF" />
+                        <LinearGradientBrush x:Key="RimBrush" StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Offset="0" Color="#FFE2E2E2" />
+                            <GradientStop Offset="0.25" Color="#FFCECECE" />
+                            <GradientStop Offset="1" Color="#FFC4C4C4" />
+                        </LinearGradientBrush>
                         <SolidColorBrush x:Key="SearchCardBrush" Color="#FFFFFFFF" />
                         <!-- a hairline, darker along the bottom edge -->
                         <LinearGradientBrush x:Key="SearchCardStrokeBrush" StartPoint="0,0" EndPoint="0,1">
@@ -45,6 +50,11 @@
                     <ResourceDictionary x:Key="Dark">
                         <SolidColorBrush x:Key="PanelBrush" Color="#FF202124" />
                         <SolidColorBrush x:Key="RowSelectedBrush" Color="#14FFFFFF" />
+                        <LinearGradientBrush x:Key="RimBrush" StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Offset="0" Color="#FF707070" />
+                            <GradientStop Offset="0.25" Color="#FF4A4A4A" />
+                            <GradientStop Offset="1" Color="#FF404040" />
+                        </LinearGradientBrush>
                         <SolidColorBrush x:Key="SearchCardBrush" Color="#FF27323D" />
                         <LinearGradientBrush x:Key="SearchCardStrokeBrush" StartPoint="0,0" EndPoint="0,1">
                             <GradientStop Offset="0.98" Color="#0FFFFFFF" />
@@ -90,17 +100,42 @@
             </ResourceDictionary>
         </Grid.Resources>
 
-        <!-- The window is as tall as the panel can get; Stage is the whole window, and the window
-             region (MainWindow.ApplyShape) cuts the visible panel out of it, anchored to the bottom
-             and growing upward. Stage does not change height itself: the search field sits at a
-             fixed distance from the bottom, whatever the list above it is doing (a panel that
-             resized and re-aligned to the bottom every frame put the field on a different pixel
-             from one frame to the next). The first row is the empty space above the list. -->
+        <!-- The window is see-through (Chrome.cs). Behind everything, a surface that takes clicks
+             beside the panel, on its shadow: like a click anywhere outside, it closes the palette. -->
+        <Canvas
+            x:Name="ShadowHost"
+            Background="Transparent"
+            PointerPressed="OnShadowPressed" />
+
+        <!-- The panel's shadow (Chrome.cs), stretched to the panel by its middle. -->
+        <Image
+            x:Name="ShadowImage"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Bottom"
+            IsHitTestVisible="False"
+            Stretch="Fill" />
+
+        <!-- The panel itself, sized each frame to the room the list and search field take
+             (MainWindow.ApplyShape), anchored to the bottom and growing upward. -->
+        <Border
+            x:Name="Chrome"
+            Width="500"
+            Height="112"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Bottom"
+            Background="{ThemeResource PanelBrush}"
+            CornerRadius="24" />
+
+        <!-- The window is as tall as the panel can get, and Stage is that height: the panel is
+             drawn behind it at its current size. Stage does not change height itself: the search
+             field sits at a fixed distance from the bottom, whatever the list above it is doing (a
+             panel that resized and re-aligned to the bottom every frame put the field on a
+             different pixel from one frame to the next). The first row is the empty space above
+             the list. -->
         <Grid
             x:Name="Stage"
             Width="500"
-            Background="{ThemeResource PanelBrush}"
-            HorizontalAlignment="Center"
+            HorizontalAlignment="Left"
             VerticalAlignment="Stretch">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
@@ -118,6 +153,7 @@
                     x:Name="ResultsList"
                     Margin="12,10,4,4"
                     Padding="0"
+                    VerticalAlignment="Top"
                     IsItemClickEnabled="True"
                     IsTabStop="False"
                     ItemClick="OnItemClick"
@@ -181,6 +217,13 @@
                             </Border>
                         </Canvas>
                     </ListView.Header>
+                    <!-- Rows laid out a screen beyond the visible ones rather than four: when the panel
+                         widens, every row laid out is laid out again at each frame. -->
+                    <ListView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <ItemsStackPanel CacheLength="1" />
+                        </ItemsPanelTemplate>
+                    </ListView.ItemsPanel>
                     <ListView.HeaderTransitions>
                         <TransitionCollection />
                     </ListView.HeaderTransitions>
@@ -549,6 +592,7 @@
 
             <!-- search field -->
             <Grid
+                x:Name="SearchCard"
                 Grid.Row="2"
                 Height="100"
                 Margin="6"
@@ -618,6 +662,18 @@
             </Grid>
         </Grid>
 
+        <!-- The panel's edge, over everything in it: light catches the top. -->
+        <Border
+            x:Name="Rim"
+            Width="500"
+            Height="112"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Bottom"
+            BorderBrush="{ThemeResource RimBrush}"
+            BorderThickness="1"
+            CornerRadius="24"
+            IsHitTestVisible="False" />
+
         <!-- The preview pane is shared: it moves into the selected row (HitVm.PreviewContent). -->
         <Grid x:Name="PreviewParking" Visibility="Collapsed">
             <Grid
@@ -629,7 +685,7 @@
                     <Grid>
                         <!-- a file: its picture or first page, then where it is and how big -->
                         <StackPanel x:Name="FilePreview" Padding="0,8,0,4">
-                            <Grid Height="186">
+                            <Grid x:Name="PreviewStage" Height="186">
                                 <Image
                                     x:Name="PreviewImage"
                                     MaxHeight="186"

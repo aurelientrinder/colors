@@ -36,17 +36,28 @@ public sealed partial class MainWindow
         ResultsList.LayoutUpdated += (_, _) => UpdateHighlight();
     }
 
-    /// <summary>The selected row's box in header coordinates, or false when nothing shows a card.</summary>
-    private bool HighlightTarget(out Windows.Foundation.Rect r)
+    /// <summary>
+    /// The selected row's box in header coordinates as drawn this frame (with the shift and clip of
+    /// ListMotion.cs), or false when nothing shows a card. <paramref name="laidY"/> is where the row
+    /// is laid out, before any shift.
+    /// </summary>
+    private bool HighlightTarget(out Windows.Foundation.Rect r, out double laidY)
     {
         r = default;
+        laidY = 0;
         int i = ResultsList.SelectedIndex;
         if (!_visible || i < 0 || i >= Items.Count || Items[i].IsStatus) return false;
         if (ResultsList.ContainerFromIndex(i) is not ListViewItem c || c.ActualHeight <= 0) return false;
         var p = c.TransformToVisual(HlCanvas).TransformPoint(default);
-        r = new Windows.Foundation.Rect(p.X, p.Y, c.ActualWidth, c.ActualHeight);
+        laidY = p.Y;
+        _rowFx.TryGetValue(i, out var fx);
+        // No wider than the panel shows the list (it is laid out wider while the panel widens).
+        double w = Math.Min(c.ActualWidth, Math.Max(0, _listShownW - p.X));
+        r = new Windows.Foundation.Rect(p.X, p.Y + fx.shift, w, Math.Max(0, c.ActualHeight - fx.clip));
         return true;
     }
+
+    private bool HighlightTarget(out Windows.Foundation.Rect r) => HighlightTarget(out r, out _);
 
     /// <summary>Place the card for the current selection: jump, follow, or start a glide.</summary>
     private void UpdateHighlight()
@@ -108,7 +119,7 @@ public sealed partial class MainWindow
             if (HighlightTarget(out var rr)) PlaceHighlight(rr.X, rr.Y, rr.Width, rr.Height);
             return _hlPopClock.IsRunning;
         }
-        if (!HighlightTarget(out var r))
+        if (!HighlightTarget(out var r, out double laidY))
         {
             UpdateHighlight();
             return false;
@@ -117,7 +128,7 @@ public sealed partial class MainWindow
         // chasing its moving position would make the card overshoot and come back.
         double t = Math.Min(1, _hlClock.Elapsed.TotalMilliseconds / HighlightMs);
         double e = 1 - Math.Pow(1 - t, 3);
-        double ty = r.Y - ClosingAbove(ResultsList.SelectedIndex);
+        double ty = laidY - ClosingAbove(ResultsList.SelectedIndex);
         bool done = t >= 1;
         if (done) _hlTravel = false;
         PlaceHighlight(

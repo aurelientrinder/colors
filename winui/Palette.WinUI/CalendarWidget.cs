@@ -68,11 +68,42 @@ public sealed partial class MainWindow
         if (CalendarData.IsStale) _ = LoadCalendar();
     }
 
+    private bool _calRedraw;   // fresh events arrived mid-animation: drawn once it settles (OnFrame)
+
     private async Task LoadCalendar()
     {
-        try { await CalendarData.Refresh(_settings.CalendarFeeds.ToList(), force: false, CancellationToken.None); }
+        var feeds = _settings.CalendarFeeds.ToList();
+        // Fetching, parsing and merging all off the UI thread: nothing of it lands in a frame.
+        try { await Task.Run(() => CalendarData.Refresh(feeds, force: false, CancellationToken.None)); }
         catch (Exception ex) { App.Log("calendar not loaded: " + ex.Message); }
-        DispatcherQueue.TryEnqueue(() => { if (CalendarOnCard) DrawCalendar(); });
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!CalendarOnCard) return;
+            if (_animating) _calRedraw = true;
+            else DrawCalendar();
+        });
+    }
+
+    /// <summary>The palette is opening: bring the events up to date before a calendar card asks for them.</summary>
+    private void PrefetchCalendar()
+    {
+        if ((_settings.CalendarFeeds.Count > 0 || CalendarData.Sources > 0) && CalendarData.IsStale) _ = LoadCalendar();
+    }
+
+    /// <summary>Lay the card out once at start, so its first opening does not do it in the middle of the motion.</summary>
+    private void WarmCalendar()
+    {
+        try
+        {
+            BuildCalendarCells();
+            _calMode = CalMode.Month;
+            DrawCalendar();
+            CalendarPreview.Visibility = Visibility.Visible;
+            CalendarPreview.Measure(new Windows.Foundation.Size(WideDip, CalendarCardDip));
+            CalendarPreview.Arrange(new Windows.Foundation.Rect(0, 0, WideDip, CalendarCardDip));
+        }
+        catch (Exception ex) { App.Log("calendar warm-up skipped: " + ex.Message); }
+        finally { CalendarPreview.Visibility = Visibility.Collapsed; }
     }
 
     private void BuildCalendarCells()
@@ -139,7 +170,10 @@ public sealed partial class MainWindow
                 text.Text = date.Day.ToString(culture);
                 text.Opacity = date.Month == _calMonth.Month ? 1 : 0.4;
                 text.FontWeight = isToday ? FontWeights.SemiBold : FontWeights.Normal;
-                text.Foreground = selected ? CalOnAccent.Fill : isToday ? CalAccent.Fill : null;
+                // Null is no brush at all in WinUI, not the default: clear it to take the theme's text colour.
+                if (selected) text.Foreground = CalOnAccent.Fill;
+                else if (isToday) text.Foreground = CalAccent.Fill;
+                else text.ClearValue(TextBlock.ForegroundProperty);
                 ring.Background = selected ? CalAccent.Fill : null;
                 ring.BorderBrush = isToday && !selected ? CalAccent.Fill : null;
                 ring.BorderThickness = new Thickness(isToday && !selected ? 1 : 0);
