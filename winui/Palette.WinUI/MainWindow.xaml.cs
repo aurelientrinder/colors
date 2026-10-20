@@ -1011,6 +1011,9 @@ public sealed partial class MainWindow : Window
 
     private void OnItemClick(object sender, ItemClickEventArgs e)
     {
+        // The chat's card is drawn in its row: a click in it (a reasoning trace, a step, a file link) is
+        // for what was clicked, not the row, whose "launch" is sending what is typed. Enter and Send send.
+        if (_view == View.Chat) return;
         Launch(Items.IndexOf((HitVm)e.ClickedItem), reveal: false);
     }
 
