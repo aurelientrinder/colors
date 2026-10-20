@@ -115,6 +115,8 @@ public sealed partial class MainWindow
         _latestQuery = "";
         _chatViews.Clear();
         ChatMessages.Children.Clear();
+        _chatShown = false;
+        _emptyFor = null;
         Items.Clear();
         var vm = new HitVm(new Native.Hit("Chat", "On this PC · Esc to leave", "Ask", null, null), chip: "") { Answer = chat };
         Items.Add(vm);
@@ -153,21 +155,56 @@ public sealed partial class MainWindow
         RenderChat(chat);
     }
 
-    /// <summary>Enter in the chat.</summary>
-    private void SendChat(string text)
+    /// <summary>Enter in the chat (<paramref name="think"/>: as a retried question was asked).</summary>
+    private void SendChat(string text, bool? think = null)
     {
         text = text.Trim();
         if (_chat is not { } chat || text.Length == 0 || chat.Busy) return;
         SetInputText("");
         chat.Busy = true;
-        var user = new ChatMsg { Role = "user", Text = text, Sent = text, Think = Held(VirtualKey.Shift) || WantsThinking(text) };
+        var user = new ChatMsg { Role = "user", Text = text, Sent = text, Think = think ?? (Held(VirtualKey.Shift) || WantsThinking(text)) };
         var answer = new ChatMsg { Role = "assistant", Think = user.Think };
         chat.Messages.Add(user);
         chat.Messages.Add(answer);
         _glideToEnd = true;
         RenderChat(chat);
         var cts = _chatCts = new CancellationTokenSource();
+        UpdateOpenButton();
         _ = RunChat(chat, user, answer, cts.Token);
+    }
+
+    /// <summary>Esc or Stop while an answer is written: stop it where it is (what was written stays).</summary>
+    private bool StopChat()
+    {
+        if (_chat is not { Busy: true }) return false;
+        _chatCts?.Cancel();
+        return true;
+    }
+
+    /// <summary>Retry under the last answer: drop it and ask the same question again.</summary>
+    private void RetryLast()
+    {
+        if (_chat is not { Busy: false } chat || chat.Messages.Count < 2) return;
+        var answer = chat.Messages[^1];
+        var user = chat.Messages[^2];
+        if (answer.Role != "assistant" || user.Role != "user") return;
+        chat.Messages.RemoveRange(chat.Messages.Count - 2, 2);
+        // The views are drawn again from the messages left.
+        _chatViews.Clear();
+        ChatMessages.Children.Clear();
+        _chatShown = false;
+        SendChat(user.Text, user.Think);
+    }
+
+    /// <summary>Copy under an answer: its text, as plain text, on the clipboard.</summary>
+    private static void CopyAnswer(ChatMsg m)
+    {
+        string text = m.Text[Math.Min(m.ReplyStart, m.Text.Length)..].Trim();
+        if (text.Length == 0) text = m.Text.Trim();
+        text = text.Replace("**", "").Replace("__", "").Replace("`", "");
+        var data = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        data.SetText(text);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(data);
     }
 
     /// <summary>Rounds of tools one answer may take before it has to answer.</summary>
@@ -175,7 +212,7 @@ public sealed partial class MainWindow
 
     private async Task RunChat(ChatAnswer chat, ChatMsg user, ChatMsg answer, CancellationToken ct)
     {
-        bool failed = false;
+        bool failed = false, stopped = false;
         long thinkStart = 0;
         int port = 0;
         try
@@ -261,27 +298,37 @@ public sealed partial class MainWindow
         }
         catch (OperationCanceledException)
         {
-            return;
+            stopped = true;
         }
         catch (Exception ex)
         {
             App.Log("chat failed: " + ex.Message);
-            if (answer.Text.Length == 0) answer.Text = "The model stopped answering. Try again.";
+            if (answer.Text.Length == 0) answer.Text = "The model stopped answering. Retry, or ask again.";
             failed = true;
         }
         finally
         {
-            if (!ct.IsCancellationRequested)
+            stopped |= ct.IsCancellationRequested;
+            if (answer.Thinking.Length > 0 && answer.ThinkMs == 0 && thinkStart > 0) answer.ThinkMs = Environment.TickCount64 - thinkStart;
+            // A step stopped half-way says so, rather than turning for ever.
+            foreach (var c in answer.Rounds.SelectMany(r => r.Calls).Where(c => !c.Done))
             {
-                if (answer.Thinking.Length > 0 && answer.ThinkMs == 0 && thinkStart > 0) answer.ThinkMs = Environment.TickCount64 - thinkStart;
-                answer.Text = answer.Text.TrimEnd();
-                if (answer.Text.Length == 0 && answer.Blocks.Count == 0 && !failed)
-                    answer.Text = "I ran out of room before I could answer. Ask again, a little more simply.";
-                chat.Busy = false;
-                RenderChat(chat);
-                Save(chat);
-                if (!failed && port > 0) _ = AfterAnswer(chat, answer, port, user.Text);
+                c.Done = true;
+                c.Outcome = "Stopped";
             }
+            answer.Text = answer.Text.TrimEnd();
+            if (stopped)
+            {
+                if (answer.Text.Length == 0 && answer.Blocks.Count == 0) answer.Text = "Stopped.";
+                else answer.Note = "Stopped";
+            }
+            else if (answer.Text.Length == 0 && answer.Blocks.Count == 0 && !failed)
+                answer.Text = "I ran out of room before I could answer. Ask again, a little more simply.";
+            chat.Busy = false;
+            RenderChat(chat);
+            UpdateOpenButton();
+            Save(chat);
+            if (!failed && !stopped && port > 0) _ = AfterAnswer(chat, answer, port, user.Text);
         }
     }
 
@@ -474,14 +521,18 @@ public sealed partial class MainWindow
 
         if (chat.Messages.Count == 0)
         {
-            // Nothing said yet: what the model has read, in small type.
-            if (_chatViews.Count == 0 && ChatMessages.Children.Count == 0)
-                ChatMessages.Children.Add(new TextBlock { Text = chat.Hint, Opacity = 0.6, TextWrapping = TextWrapping.Wrap });
-            else if (ChatMessages.Children.Count == 1 && ChatMessages.Children[0] is TextBlock hint) hint.Text = chat.Hint;
+            // Nothing said yet: what the model has read, and a few things to ask.
+            if (_emptyFor != chat.Hint)
+            {
+                _emptyFor = chat.Hint;
+                ChatMessages.Children.Clear();
+                ChatMessages.Children.Add(EmptyChat(chat));
+            }
         }
         else if (_chatViews.Count == 0)
         {
             ChatMessages.Children.Clear();
+            _emptyFor = null;
         }
 
         var earlier = new List<object>();   // what the tools found before each message (links to files named again)
@@ -494,6 +545,7 @@ public sealed partial class MainWindow
                 _chatViews.Add((view, m));
                 ChatMessages.Children.Add(view);
             }
+            if (_chatViews[i].view is AssistantView av) av.IsLast = i == chat.Messages.Count - 1;
             UpdateMessageView(_chatViews[i].view, m, i == chat.Messages.Count - 1 && chat.Busy, earlier);
             earlier = earlier.Concat(m.Blocks).ToList();
         }
@@ -502,11 +554,11 @@ public sealed partial class MainWindow
         double width = Math.Max(200, ChatPreview.ActualWidth > 0 ? ChatPreview.ActualWidth : 560);
         ChatMessages.Measure(new Windows.Foundation.Size(width, double.PositiveInfinity));
         ChatFooter.Measure(new Windows.Foundation.Size(width, double.PositiveInfinity));
-        double h = Math.Clamp(ChatMessages.DesiredSize.Height + 12 + 6 + 10 + Math.Max(16, ChatFooter.DesiredSize.Height), 110, 400);
-        bool grew = Math.Abs(ChatPreview.Height - h) > 1;
-        ChatPreview.Height = h;
-        _pvFull = 6 + h + 12;
-        if (grew && !_animating) ApplyShape();
+        double h = Math.Clamp(ChatMessages.DesiredSize.Height + 12 + 6 + 10 + Math.Max(16, ChatFooter.DesiredSize.Height), 110, ChatMaxDip);
+        // The card eases to its new height (a line more, a step folding away) instead of jumping; the first
+        // draw of a chat takes its height at once (the card is opening).
+        SetChatHeight(h, animate: _chatShown);
+        _chatShown = true;
         if (_glideToEnd)
         {
             // A message just sent: glide down to it, from wherever the reading was. The layout has to
@@ -532,13 +584,129 @@ public sealed partial class MainWindow
                 Child = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
             };
         }
-        return new AssistantView(() => { if (_chat is { } c) RenderChat(c); }, MakeBlockView, MakeFileLink);
+        return new AssistantView(() => { if (_chat is { } c) RenderChat(c); }, MakeBlockView, MakeFileLink)
+        {
+            Copy = () => CopyAnswer(m),
+            Retry = RetryLast,
+        };
     }
 
     private static void UpdateMessageView(FrameworkElement view, ChatMsg m, bool writing, IReadOnlyList<object> earlier)
     {
         if (view is Border { Child: TextBlock user }) user.Text = m.Text;
         else if (view is AssistantView a) a.Update(m, writing, earlier);
+    }
+
+    // ------------------------------------------------------------------ the card's height, eased
+
+    /// <summary>The tallest the chat's card grows (past it, the conversation scrolls).</summary>
+    private const double ChatMaxDip = 520;
+    private double _chatHeightTarget;
+    private long _chatHeightTick;
+    private bool _chatHeightTicking, _chatShown;
+    private string? _emptyFor;
+
+    private void SetChatHeight(double h, bool animate)
+    {
+        _chatHeightTarget = h;
+        if (!animate || double.IsNaN(ChatPreview.Height) || Math.Abs(ChatPreview.Height - h) < 1)
+        {
+            if (_chatHeightTicking) StopChatHeight();
+            ApplyChatHeight(h);
+            return;
+        }
+        if (_chatHeightTicking) return;
+        _chatHeightTicking = true;
+        _chatHeightTick = Environment.TickCount64;
+        CompositionTarget.Rendering += ChatHeightFrame;
+    }
+
+    private void StopChatHeight()
+    {
+        _chatHeightTicking = false;
+        CompositionTarget.Rendering -= ChatHeightFrame;
+    }
+
+    /// <summary>
+    /// A frame of the card's glide: it covers a share of the way left that depends on the time since the
+    /// last frame (the same glide at 60 and 120 Hz), slowing as it arrives.
+    /// </summary>
+    private void ChatHeightFrame(object? sender, object e)
+    {
+        // The chat left (another card in its place): the glide is no longer its to make.
+        if (_chat == null || ChatPreview.Visibility != Visibility.Visible)
+        {
+            StopChatHeight();
+            return;
+        }
+        long now = Environment.TickCount64;
+        double dt = Math.Clamp(now - _chatHeightTick, 1, 50);
+        _chatHeightTick = now;
+        double cur = ChatPreview.Height, target = _chatHeightTarget;
+        double next = cur + (target - cur) * (1 - Math.Exp(-dt / 70.0));
+        if (Math.Abs(target - next) < 0.75 || !_visible)
+        {
+            next = target;
+            StopChatHeight();
+        }
+        ApplyChatHeight(next);
+        if (ChatScroll.VerticalOffset >= ChatScroll.ScrollableHeight - 48) ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null, true);
+    }
+
+    private void ApplyChatHeight(double h)
+    {
+        ChatPreview.Height = h;
+        _pvFull = 6 + h + 12;
+        if (!_animating) ApplyShape();
+    }
+
+    /// <summary>Page Up and Page Down in the chat: scroll the conversation most of a page, smoothly.</summary>
+    private void PageChat(bool down)
+    {
+        double page = Math.Max(60, ChatScroll.ViewportHeight * 0.85);
+        double to = Math.Clamp(ChatScroll.VerticalOffset + (down ? page : -page), 0, ChatScroll.ScrollableHeight);
+        ChatScroll.ChangeView(null, to, null, false);
+    }
+
+    /// <summary>
+    /// An empty chat: what the model has read, then a few things to ask, one click each (one about the window
+    /// in front when it read one).
+    /// </summary>
+    private FrameworkElement EmptyChat(ChatAnswer chat)
+    {
+        var panel = new StackPanel { Spacing = 10, Margin = new Thickness(0, 2, 0, 4) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = chat.Hint, TextWrapping = TextWrapping.Wrap, FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+        });
+        var asks = new List<string>();
+        if (chat.Hint.StartsWith("I've read the", StringComparison.Ordinal)) asks.Add("Summarise this window");
+        if (chat.Hint.StartsWith("I've read your selection", StringComparison.Ordinal)) asks.Add("Explain what I selected");
+        asks.AddRange(new[] { "What was I working on yesterday?", "What's the weather like?", "How is my PC doing?" });
+        var list = new StackPanel { Spacing = 6 };
+        foreach (var ask in asks.Take(4))
+        {
+            var face = new Border
+            {
+                Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
+                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 5, 12, 6),
+                Child = new TextBlock { Text = ask, FontSize = 13 },
+            };
+            var chip = new HandGrid { HorizontalAlignment = HorizontalAlignment.Left };
+            chip.Children.Add(face);
+            chip.PointerEntered += (_, _) => face.Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"];
+            chip.PointerExited += (_, _) => face.Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"];
+            chip.Tapped += (_, e) =>
+            {
+                e.Handled = true;
+                SendChat(ask);
+            };
+            list.Children.Add(chip);
+        }
+        panel.Children.Add(list);
+        return panel;
     }
 
     /// <summary>A message the model is sent: a question, or an answer with something in it.</summary>

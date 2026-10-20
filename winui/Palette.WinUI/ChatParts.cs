@@ -178,6 +178,45 @@ internal sealed class AssistantView : StackPanel
     private readonly Action _onResize;
     private int _blocksSeen;
     private bool _expanded;     // the rail opened again from its chip
+    private bool _wasWriting;   // drawn as being written last time: the rail folds away when it ends
+
+    /// <summary>The conversation's last answer: Copy and Retry show under it (under the others, Copy on hover).</summary>
+    public bool IsLast { get; set; }
+    public Action? Copy { get; init; }
+    public Action? Retry { get; init; }
+
+    private readonly StackPanel _actions = new() { Orientation = Orientation.Horizontal, Spacing = 4, Opacity = 0, Margin = new Thickness(-6, 0, 0, 0) };
+    private TextBlock? _copyLabel;
+    private FrameworkElement? _retry;
+    private bool _hover;
+
+    /// <summary>A quiet button under an answer: an icon and a word, lit under the pointer.</summary>
+    private HandGrid Action(string glyph, string word, Action act, out TextBlock label)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        row.Children.Add(new FontIcon { Glyph = glyph, FontSize = 11, Foreground = Res("TextFillColorTertiaryBrush") });
+        var text = new TextBlock { Text = word, FontSize = 11, Foreground = Res("TextFillColorSecondaryBrush") };
+        row.Children.Add(text);
+        var face = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 3, 7, 3), Child = row };
+        var b = new HandGrid();
+        b.Children.Add(face);
+        b.PointerEntered += (_, _) => face.Background = Res("SubtleFillColorSecondaryBrush");
+        b.PointerExited += (_, _) => face.Background = null;
+        b.Tapped += (_, e) =>
+        {
+            e.Handled = true;
+            act();
+        };
+        label = text;
+        return b;
+    }
+
+    private void ShowActions(bool writing, bool answered)
+    {
+        _actions.Visibility = !writing && answered ? Visibility.Visible : Visibility.Collapsed;
+        if (_retry != null) _retry.Visibility = IsLast ? Visibility.Visible : Visibility.Collapsed;
+        _actions.Opacity = IsLast || _hover ? 1 : 0;
+    }
 
     public AssistantView(Action onResize, Func<object, FrameworkElement?> makeBlock, Func<string, string, FrameworkElement> makeLink)
     {
@@ -227,6 +266,35 @@ internal sealed class AssistantView : StackPanel
         Children.Add(_body.View);
         Children.Add(_blocks);
         Children.Add(_note);
+        Children.Add(_actions);
+
+        // Copy and Retry: under the last answer always, under the others when the pointer is on them.
+        _actions.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(150) };
+        _actions.Children.Add(Action("\uE8C8", "Copy", () =>
+        {
+            Copy?.Invoke();
+            if (_copyLabel == null) return;
+            _copyLabel.Text = "Copied";
+            var t = DispatcherQueue.CreateTimer();
+            t.Interval = TimeSpan.FromSeconds(1.5);
+            t.IsRepeating = false;
+            t.Tick += (_, _) => _copyLabel.Text = "Copy";
+            t.Start();
+        }, out var copyLabel));
+        _copyLabel = copyLabel;
+        _retry = Action("\uE72C", "Retry", () => Retry?.Invoke(), out _);
+        _actions.Children.Add(_retry);
+        Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        PointerEntered += (_, _) =>
+        {
+            _hover = true;
+            if (_actions.Visibility == Visibility.Visible) _actions.Opacity = 1;
+        };
+        PointerExited += (_, _) =>
+        {
+            _hover = false;
+            if (!IsLast) _actions.Opacity = 0;
+        };
     }
 
     private static Brush Res(string key) => (Brush)Application.Current.Resources[key];
@@ -357,11 +425,27 @@ internal sealed class AssistantView : StackPanel
         }
         else
         {
-            // Done: the rail folds into its chip (and opens again from it).
+            // Done: the rail folds into its chip (and opens again from it). Just finished, it fades out
+            // as the chip fades in; drawn again later, it is simply folded.
             FillChip(m);
-            _chip.Visibility = worked ? Visibility.Visible : Visibility.Collapsed;
-            _railHost.Visibility = worked && _expanded ? Visibility.Visible : Visibility.Collapsed;
+            bool fold = _wasWriting && worked && !_expanded && _railHost.Visibility == Visibility.Visible;
+            if (fold)
+            {
+                // Marked done first, and no redraw asked from inside this one: the chip's fade-in would
+                // redraw at once, find the rail still showing (its fade-out runs on) and fold again, and
+                // again (a stack overflow when an answer ended). The card is measured after this anyway.
+                _wasWriting = false;
+                Fold.Toggle(_railHost, false, _onResize);
+                _chip.Visibility = Visibility.Collapsed;
+                Fold.Toggle(_chip, true, () => { });
+            }
+            else
+            {
+                _chip.Visibility = worked ? Visibility.Visible : Visibility.Collapsed;
+                _railHost.Visibility = worked && _expanded ? Visibility.Visible : Visibility.Collapsed;
+            }
         }
+        _wasWriting = writing;
 
         bool waiting = writing && !answering && !stepRunning && !thinkingLive;
         _tail.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed;
@@ -373,6 +457,7 @@ internal sealed class AssistantView : StackPanel
         if (answering) _body.Set(reply, writing, redraw: relink);
         _note.Text = m.Note;
         _note.Visibility = m.Note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ShowActions(writing, m.Text.Trim().Length > 0);
     }
 
     // ------------------------------------------------------------------ links to files in the text
@@ -622,6 +707,8 @@ internal sealed class RailThink
         content.Children.Add(head);
         content.Children.Add(_full.View);
         Row = AssistantView.RailRow(_node, content);
+        // One line: the sentence is trimmed at the end (…) to the room beside the chevron, never cut mid-glyph.
+        content.SizeChanged += (_, e) => _label.MaxWidth = Math.Max(40, e.NewSize.Width - 22);
     }
 
     /// <summary>The sentence the model is thinking now: the last one long enough to say something, without its markdown.</summary>

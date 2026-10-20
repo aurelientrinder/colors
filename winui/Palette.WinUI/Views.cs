@@ -69,7 +69,7 @@ public sealed partial class MainWindow
         KeyHints.Text = KeyHintsFor(Items[i]);
         var row = Items[i];
         OpenButton.Content = _view == View.Actions ? "Run"
-            : _view == View.Chat ? "Send"
+            : _view == View.Chat ? (_chat is { Busy: true } ? "Stop" : "Send")
             : _view == View.Chats ? "Open"
             : _view == View.Settings ? SettingButton(row)
             : row.IsTimer ? row.TimerLabel
@@ -95,7 +95,10 @@ public sealed partial class MainWindow
     private string KeyHintsFor(HitVm row)
     {
         if (_view == View.Actions) return "Esc Back";
-        if (_view == View.Chat) return "\u21b5 Send  \u00b7  Shift+\u21b5 Think  \u00b7  Ctrl+N New  \u00b7  Ctrl+H Earlier chats  \u00b7  Esc Leave";
+        if (_view == View.Chat)
+            return _chat is { Busy: true }
+                ? "Esc Stop  \u00b7  PgUp PgDn Scroll  \u00b7  Ctrl+N New  \u00b7  Ctrl+H Earlier chats"
+                : "\u21b5 Send  \u00b7  Shift+\u21b5 Think  \u00b7  Ctrl+N New  \u00b7  Ctrl+H Earlier chats  \u00b7  Esc Leave";
         if (_view == View.Chats) return "\u21b5 Open  \u00b7  Shift+Del Delete  \u00b7  Esc Back to the chat";
         if (row.Confirming) return $"↵ {row.ConfirmLabel}  ·  Esc Cancel";
         if (row.IsTimer) return $"↵ {row.TimerLabel}";
@@ -111,7 +114,11 @@ public sealed partial class MainWindow
         return string.Join("  ·  ", keys);
     }
 
-    private void OnOpenButtonClick(object sender, RoutedEventArgs e) => Launch(ResultsList.SelectedIndex, reveal: false);
+    private void OnOpenButtonClick(object sender, RoutedEventArgs e)
+    {
+        if (_view == View.Chat && StopChat()) return;   // the button says Stop while an answer is written
+        Launch(ResultsList.SelectedIndex, reveal: false);
+    }
 
     private void OnRowMoreClick(object sender, RoutedEventArgs e)
     {

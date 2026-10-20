@@ -895,6 +895,15 @@ public sealed partial class MainWindow : Window
                 StartChat("");
                 e.Handled = true;
                 return;
+            case VirtualKey.Escape when _view == View.Chat && StopChat():
+                // Esc while an answer is written stops it; Esc again leaves.
+                e.Handled = true;
+                return;
+            case VirtualKey.PageUp when _view == View.Chat:
+            case VirtualKey.PageDown when _view == View.Chat:
+                PageChat(down: e.Key == VirtualKey.PageDown);
+                e.Handled = true;
+                return;
             case VirtualKey.Tab when _view == View.Chat:
             case VirtualKey.Escape when _view == View.Chat:
             case VirtualKey.Back when empty && _view == View.Chat:
@@ -1049,6 +1058,8 @@ public sealed partial class MainWindow : Window
         }
         if (_view == View.Chat)
         {
+            // While an answer is written, Enter leaves the typing alone (the button, Stop, stops it).
+            if (_chat is { Busy: true }) return;
             SendChat(Input.Text);
             return;
         }
