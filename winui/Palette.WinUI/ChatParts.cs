@@ -429,7 +429,7 @@ internal sealed class AssistantView : StackPanel
         _writing = writing;
         _answering = answering;
         // Thinking (or reading documents first) before any word: the brain's node, live.
-        bool thinkingLive = writing && !answering && m.Rounds.Count == 0 && (m.Think || m.Thinking.Length > 0 || m.Hint.Length > 0);
+        bool thinkingLive = writing && !answering && m.Rounds.Count == 0 && (m.Thinking.Length > 0 || m.Hint.Length > 0);
         SyncRail(m, thinkingLive);
 
         bool lateLive = writing && m.LateThink && m.Rounds.Count > 0 && !stepRunning && !answering;

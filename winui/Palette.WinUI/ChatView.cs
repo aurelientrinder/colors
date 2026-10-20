@@ -268,26 +268,45 @@ public sealed partial class MainWindow
             }
             answer.Hint = "";
 
-            // Ask; while the model asks for tools, run them, tell it what they found, and ask again. It
-            // thinks (when the message calls for it) before its first move only: with the tools' results
-            // in hand, it answers straight away.
-            bool retried = false;
+            // Ask; while the model asks for tools, run them, tell it what they found, and ask again.
+            // A message that needs working out goes in this order, every part on screen as it comes: a
+            // sentence of what the model is about to do (with a tool call when it needs one), then its
+            // thinking (over what the tools found, if any), then the answer.
+            bool retried = false, introduced = false;
             for (int round = 0; ; round++)
             {
                 bool lastRound = round >= MaxToolRounds;
-                // Thinking: before its first move when the message asks for it; over its tools' results when
-                // the answer has to be worked out from them (a short think, LateThinkBudget).
+                bool intro = round == 0 && answer.LateThink;   // it asks to think, or needs working out
                 bool late = round > 0 && answer.LateThink;
-                string body = ChatBody(opened.System ?? "", chat, think: (user.Think && round == 0) || late,
-                    tools: lastRound ? null : opened.Tools, thinkBudget: late ? LateThinkBudget : 0);
-                var calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct, late);
-                if (calls.Count == 0 && !lastRound && !retried && Announces(answer.Text[answer.ReplyStart..]))
+                bool afterTools = answer.Rounds.Any(r => r.Calls.Count > 0);
+                string? turnNote = intro ? IntroNote : late && introduced && !afterTools ? WorkItOutNote : null;
+                string body = ChatBody(opened.System ?? "", chat, think: late, tools: lastRound ? null : opened.Tools,
+                    thinkBudget: late && afterTools ? LateThinkBudget : 0, note: turnNote, maxTokens: intro ? 120 : null);
+                var calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct, late, stopAfterSentence: intro);
+                string said = answer.Text[answer.ReplyStart..];
+                if (intro && calls.Count == 0)
                 {
-                    // It said it would look ("I'll look through your files…") and answered without looking:
-                    // that turn is dropped and asked again with a tool call required.
-                    App.Log($"chat: announced without a tool call, asking again: {answer.Text[answer.ReplyStart..]}");
+                    // No tool: its sentence of what it is about to do stays (anything after it is dropped), then
+                    // it thinks and answers in the next turn.
+                    string first = FirstSentence(said);
+                    answer.Text = answer.Text[..answer.ReplyStart];
+                    // Kept when it says what it will do ("I can calculate that for you."), not when it already
+                    // blurts a figure the thinking has not checked ("There are 71 days…": it was 61).
+                    if (first.Length is > 0 and <= 140 && !Regex.IsMatch(first, @"\d")) KeepAsStep(answer, first);
+                    answer.LateThink = true;
+                    introduced = true;
+                    RenderChat(chat);
+                    continue;
+                }
+                if (calls.Count == 0 && !lastRound && !retried && AnnouncesLookup(said))
+                {
+                    // It said it would look in the user's things ("I'll look through your files…") and answered
+                    // without looking: its sentence stays, the rest is dropped, and it is asked again with a
+                    // tool call required.
+                    App.Log($"chat: announced without a tool call, asking again: {said}");
                     retried = true;
                     answer.Text = answer.Text[..answer.ReplyStart];
+                    KeepAsStep(answer, FirstSentence(said));
                     RenderChat(chat);
                     body = ChatBody(opened.System ?? "", chat, think: false, tools: opened.Tools, requireTool: true);
                     calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct, late);
@@ -360,7 +379,7 @@ public sealed partial class MainWindow
     /// ReplyStart). Returns the tools it asked for, if any.
     /// </summary>
     private async Task<List<ToolCall>> StreamTurn(ChatAnswer chat, ChatMsg answer, int port, string body,
-        Func<long> thinkStart, Action<long> setThinkStart, CancellationToken ct, bool late = false)
+        Func<long> thinkStart, Action<long> setThinkStart, CancellationToken ct, bool late = false, bool stopAfterSentence = false)
     {
         // Thinking over the tools' results is the answer's second thought, kept apart from its first.
         long lateStart = 0;
@@ -426,12 +445,16 @@ public sealed partial class MainWindow
                     answer.ThinkMs = Math.Max(1, Environment.TickCount64 - (thinkStart() > 0 ? thinkStart() : Environment.TickCount64));
                 answer.Thinking = thoughtBefore + thinking;
             }
-            answer.Text = before + reply;
+            // An introduction shows its first sentence only: a second one is cut off and never shown.
+            answer.Text = before + (stopAfterSentence && calls.Count == 0 && Regex.IsMatch(reply, @"[.!?…]\s+\S") ? FirstSentence(reply) : reply);
             if (Environment.TickCount64 - drawn > 60)
             {
                 drawn = Environment.TickCount64;
                 RenderChat(chat);
             }
+            // An introduction is one sentence: once a second one begins, no tool call is coming, and the rest
+            // would only be dropped.
+            if (stopAfterSentence && calls.Count == 0 && Regex.IsMatch(reply, @"[.!?…]\s+\S")) break;
         }
         if (late && lateStart > 0 && !lateTimed) answer.LateThinkMs += Environment.TickCount64 - lateStart;
         return calls.Values.Where(c => c.Name.Length > 0).ToList();
@@ -461,6 +484,38 @@ public sealed partial class MainWindow
     /// they found), and the new message; the tools offered, when <paramref name="tools"/> is given.
     /// Written by hand: no reflection.
     /// </summary>
+    /// <summary>The first turn of a message that needs working out: a sentence first, the work after.</summary>
+    private const string IntroNote = "\n\nStart your reply with one short sentence, in your own words, saying what you are about to do. " +
+        "Call a tool only if the answer depends on the user's own files, documents, calendar, weather or PC; dates, arithmetic and general " +
+        "knowledge need none: then stop after that sentence, you will work it out next.";
+
+    /// <summary>The turn after that sentence: the answer itself, not the announcement again.</summary>
+    private const string WorkItOutNote = "\n\nYou have already told the user what you are about to do. Now work it out and give the " +
+        "answer itself, without announcing it again.";
+
+    /// <summary>A sentence the model said before its work, kept as the first line of the answer's timeline.</summary>
+    private static void KeepAsStep(ChatMsg answer, string sentence)
+    {
+        if (sentence.Trim().Length == 0) return;
+        answer.Rounds.Add(new ToolRound { Content = sentence.Trim() });
+        answer.Text += sentence.Trim() + "\n\n";
+        answer.ReplyStart = answer.Text.Length;
+    }
+
+    /// <summary>The first sentence of a turn (the whole of it, when it has no end yet).</summary>
+    private static string FirstSentence(string text)
+    {
+        var m = Regex.Match(text.TrimStart(), @"^.*?[.!?…](?=\s|$)", RegexOptions.Singleline);
+        return (m.Success ? m.Value : text).Trim();
+    }
+
+    /// <summary>The things the tools look in: an announcement about these is a lookup the model owes.</summary>
+    private static readonly Regex LookupWords = new(
+        @"\b(files?|documents?|folders?|photos?|pictures?|downloads?|calendar|schedule|events?|agenda|weather|forecast|battery|pc|computer|disk|memory|lease|invoices?|contracts?|manuals?|notes?|fichiers?|calendrier|météo|batterie)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool AnnouncesLookup(string turn) => Announce.IsMatch(turn) && LookupWords.IsMatch(FirstSentence(turn));
+
     /// <summary>A turn that says it is about to look something up: "I'll look through…", "Let me check…".</summary>
     private static readonly Regex Announce = new(
         @"^\s*(I'll|I will|I'm going to|I am going to|Let me|Je vais|Laisse-moi)\b[^.!?\n]{0,120}?\b(look|check|search|find|read|open|go through|scan|see|regard|cherch|vérifi|lis|consult|ouvr)",
@@ -468,8 +523,10 @@ public sealed partial class MainWindow
 
     private static bool Announces(string turn) => Announce.IsMatch(turn);
 
-    private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools, bool requireTool = false, int thinkBudget = 0)
+    private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools, bool requireTool = false, int thinkBudget = 0,
+        string? note = null, int? maxTokens = null)
     {
+        if (note != null) system += note;
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms))
         {
@@ -497,6 +554,8 @@ public sealed partial class MainWindow
                 }
                 foreach (var round in m.Rounds)
                 {
+                    // A sentence kept on the timeline without a tool call is shown, not sent: the answer says it.
+                    if (round.Calls.Count == 0) continue;
                     w.WriteStartObject();
                     w.WriteString("role", "assistant");
                     w.WriteString("content", round.Content.Trim());
@@ -534,7 +593,7 @@ public sealed partial class MainWindow
                 if (requireTool) w.WriteString("tool_choice", "required");
             }
             w.WriteBoolean("stream", true);
-            w.WriteNumber("max_tokens", think ? 2000 : 700);
+            w.WriteNumber("max_tokens", maxTokens ?? (think ? 2000 : 700));
             w.WriteNumber("temperature", 0.3);
             w.WriteNumber("top_p", 0.9);
             w.WriteBoolean("cache_prompt", true);
