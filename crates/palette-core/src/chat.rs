@@ -72,14 +72,18 @@ pub const TOOLS: &str = r#"[
 {"type":"function","function":{"name":"search_documents","description":"Read the passages of the user's own documents (PDFs, Word files, notes) that answer a question about them: their contracts, invoices, manuals, papers, notes. Cite the passages as [1], [2]: each becomes a link to its document.","parameters":{"type":"object","properties":{"question":{"type":"string","description":"The question, in the user's words."}},"required":["question"]}}},
 {"type":"function","function":{"name":"get_weather","description":"The weather now and today's high and low, shown to the user as a weather card.","parameters":{"type":"object","properties":{"place":{"type":"string","description":"A city. Leave empty for where the user is."}}}}},
 {"type":"function","function":{"name":"get_system_status","description":"How the user's PC is doing now: processor and memory load, battery, free disk space, time since it started. Shown to the user as a card.","parameters":{"type":"object","properties":{}}}},
-{"type":"function","function":{"name":"get_calendar","description":"The user's calendar events for a day or a week, shown to the user as a card.","parameters":{"type":"object","properties":{"period":{"type":"string","enum":["today","tomorrow","this_week","next_week"]},"date":{"type":"string","description":"A day as YYYY-MM-DD, instead of period."}}}}}
+{"type":"function","function":{"name":"get_calendar","description":"The user's calendar events for a day or a week, shown to the user as a card.","parameters":{"type":"object","properties":{"period":{"type":"string","enum":["today","tomorrow","this_week","next_week"]},"date":{"type":"string","description":"A day as YYYY-MM-DD, instead of period."}}}}},
+{"type":"function","function":{"name":"set_reminder","description":"Remind the user of something later: at that time a bubble pops up above their taskbar with the text. Use it whenever the user asks to be reminded. Give in_minutes for a delay (in 20 minutes, in 2 hours), or a time and a day for a moment.","parameters":{"type":"object","properties":{"text":{"type":"string","description":"What to remind them of, short, as a note to them (Call the landlord about the lease)."},"in_minutes":{"type":"integer","description":"Minutes from now."},"time":{"type":"string","description":"A time of day as HH:MM, 24-hour (18:30). Morning is 09:00, evening 19:00."},"day":{"type":"string","description":"today, tomorrow, a weekday in English (friday, next tuesday), or a date as YYYY-MM-DD for one further off."}},"required":["text"]}}},
+{"type":"function","function":{"name":"list_reminders","description":"The reminders the user has set that have not gone off yet.","parameters":{"type":"object","properties":{}}}},
+{"type":"function","function":{"name":"cancel_reminder","description":"Cancel a reminder the user set, found by what it is about.","parameters":{"type":"object","properties":{"about":{"type":"string","description":"Words from the reminder (the landlord)."}},"required":["about"]}}}
 ]"#;
 
 /// How the model is to use its tools.
 const TOOL_USE: &str = "Answer general questions and conversation from your own knowledge, and talk only about what the user asked. \
-You also have tools to look things up on the user's PC (their files, their documents, the weather, their calendar, how their PC is doing): \
-call one only when the request is about one of those, never otherwise, and never offer to look up what no tool reaches \
-(recipes, the news, the web): answer from what you know. \
+You also have tools to look things up on the user's PC (their files, their documents, the weather, their calendar, how their PC is doing) \
+and to set, list and cancel reminders: call one only when the request is about one of those, never otherwise, and never offer to look up \
+what no tool reaches (recipes, the news, the web): answer from what you know. When the user asks to be reminded of something, set the \
+reminder with the tool (never say it is set without calling it), then say in a sentence when it will pop up. \
 When you call a tool, first write one short sentence saying what you are about to do (I'll look through the files you opened \
 last week.), with no claim about what you will find, then call it in the same turn; after its results, answer from them alone. \
 When you mention a file a tool found, write its exact name with its extension (Report_Q3.docx) inside your sentence: the name becomes \

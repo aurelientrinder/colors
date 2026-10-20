@@ -81,6 +81,7 @@ public sealed partial class MainWindow : Window
         InitInputGrowth();
         InitAnswers();
         InitChrome();
+        InitReminders();
         Activated += OnActivated;
         Input.Loaded += (_, _) => HideClearButton();
 
@@ -628,6 +629,7 @@ public sealed partial class MainWindow : Window
     private void ShowPalette()
     {
         App.Log("ShowPalette");
+        BubbleAway();
         _hideClock.Stop();    // reopened while fading out
         _hideT = 0;
         Root.IsHitTestVisible = true;
@@ -741,6 +743,7 @@ public sealed partial class MainWindow : Window
         _hideClock.Stop();
         if (_visible) return;   // reopened in the meantime
         _aw.Hide();
+        CheckReminders();   // a reminder that came due while the palette was open shows now
     }
 
     private void OnActivated(object sender, WindowActivatedEventArgs e)

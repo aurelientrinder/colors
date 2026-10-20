@@ -24,6 +24,7 @@ public sealed partial class MainWindow
         EventsBlock e => EventsCard(e),
         SystemBlock y => SystemCard(y.Reading),
         MemoryBlock m => MemoryLine(m),
+        ReminderBlock { Kind: "set" or "cancelled" } r => ReminderLine(r),
         _ => null,
     };
 
@@ -292,6 +293,61 @@ public sealed partial class MainWindow
                 undo.Visibility = Visibility.Collapsed;
             };
             row.Children.Add(undo);
+            lines.Children.Add(row);
+        }
+        return lines;
+    }
+
+    // ------------------------------------------------------------------ reminders
+
+    /// <summary>
+    /// A quiet line per reminder set or cancelled: a small bell, "Reminder · tomorrow at 09:00 · Send the
+    /// lease back", and Cancel (or Undo, for one cancelled), which does it and says so. What it says is
+    /// read from the reminders as they are now: one done or cancelled since says that.
+    /// </summary>
+    private static FrameworkElement ReminderLine(ReminderBlock block)
+    {
+        var lines = new StackPanel { Spacing = 2, Margin = new Thickness(0, 2, 0, 0) };
+        foreach (var r in block.Reminders)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            row.Children.Add(new BellIcon(13, Res("TextFillColorTertiaryBrush")) { VerticalAlignment = VerticalAlignment.Center });
+            var text = new TextBlock
+            {
+                FontSize = 11, Foreground = Res("TextFillColorTertiaryBrush"), VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 380,
+            };
+            row.Children.Add(text);
+            var act = new HyperlinkButton { FontSize = 11, Padding = new Thickness(4, 0, 4, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(act);
+            void Show()
+            {
+                bool pending = ReminderStore.List().Any(x => x.Id == r.Id);
+                if (pending)
+                {
+                    text.Text = $"Reminder · {ReminderStore.Describe(r.At)} · {r.Text}";
+                    act.Content = "Cancel";
+                    act.Visibility = Visibility.Visible;
+                }
+                else if (r.At <= DateTime.Now && block.Kind == "set")
+                {
+                    text.Text = $"Reminded {ReminderStore.Describe(r.At)} · {r.Text}";
+                    act.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    text.Text = $"Cancelled · {r.Text}";
+                    act.Content = "Undo";
+                    act.Visibility = r.At > DateTime.Now ? Visibility.Visible : Visibility.Collapsed;
+                }
+            }
+            act.Click += (_, _) =>
+            {
+                if (ReminderStore.List().Any(x => x.Id == r.Id)) ReminderStore.Remove(r.Id);
+                else ReminderStore.Restore(r);
+                Show();
+            };
+            Show();
             lines.Children.Add(row);
         }
         return lines;

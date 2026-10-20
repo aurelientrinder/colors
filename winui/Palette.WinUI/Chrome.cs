@@ -64,7 +64,7 @@ public sealed partial class MainWindow
         ShadowImage.NineGrid = new Thickness(m + r);
     }
 
-    private static double RoundedRectDistance(double px, double py, double cx, double cy, double hx, double hy, double r)
+    internal static double RoundedRectDistance(double px, double py, double cx, double cy, double hx, double hy, double r)
     {
         double qx = Math.Abs(px - cx) - (hx - r), qy = Math.Abs(py - cy) - (hy - r);
         double ox = Math.Max(qx, 0), oy = Math.Max(qy, 0);
@@ -72,7 +72,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>Gaussian-like edge: 1 at and inside the edge, fading over about 2.5 blur radii.</summary>
-    private static double Falloff(double d, double blur)
+    internal static double Falloff(double d, double blur)
     {
         if (d <= 0) return 1;
         double u = d / blur;

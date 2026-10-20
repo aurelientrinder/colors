@@ -273,15 +273,21 @@ public sealed partial class MainWindow
             // sentence of what the model is about to do (with a tool call when it needs one), then its
             // thinking (over what the tools found, if any), then the answer.
             bool retried = false, introduced = false;
+            // "Remind me…": a small model says it will set the reminder and does not, unless it must call a tool.
+            bool reminder = AsksReminder(message);
             for (int round = 0; ; round++)
             {
                 bool lastRound = round >= MaxToolRounds;
-                bool intro = round == 0 && answer.LateThink;   // it asks to think, or needs working out
+                bool intro = round == 0 && answer.LateThink && !reminder;   // it asks to think, or needs working out
                 bool late = round > 0 && answer.LateThink;
                 bool afterTools = answer.Rounds.Any(r => r.Calls.Count > 0);
+                // Once its reminders are set, listed or cancelled, all that is left is to say so.
+                bool remindersDone = answer.Rounds.Count > 0 && answer.Rounds[^1].Calls.Count > 0
+                    && answer.Rounds[^1].Calls.All(c => c.Name is "set_reminder" or "list_reminders" or "cancel_reminder");
                 string? turnNote = intro ? IntroNote : late && introduced && !afterTools ? WorkItOutNote : null;
-                string body = ChatBody(opened.System ?? "", chat, think: late, tools: lastRound ? null : opened.Tools,
-                    thinkBudget: late && afterTools ? LateThinkBudget : 0, note: turnNote, maxTokens: intro ? 120 : null);
+                string body = ChatBody(opened.System ?? "", chat, think: late && !remindersDone, tools: lastRound || remindersDone ? null : opened.Tools,
+                    requireTool: reminder && round == 0, thinkBudget: late && afterTools ? LateThinkBudget : 0, note: turnNote,
+                    maxTokens: intro ? 120 : null);
                 var calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct, late, stopAfterSentence: intro);
                 string said = answer.Text[answer.ReplyStart..];
                 if (intro && calls.Count == 0)
@@ -509,9 +515,17 @@ public sealed partial class MainWindow
         return (m.Success ? m.Value : text).Trim();
     }
 
+    /// <summary>A message asking to set, see or change reminders ("remind me to…", "rappelle-moi…", "my reminders"), not one about reminders in general.</summary>
+    private static readonly Regex ReminderAsk = new(
+        @"\b(remind (me|us)|rappelle[- ](moi|nous)|n'oublie pas de me|set (me )?(a|an) reminder|add a reminder|(my|any|what|which|upcoming) reminders?|(cancel|delete|remove|move|snooze)\b.{0,40}\breminders?|mes rappels|(annule|supprime)\b.{0,30}\brappel)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool AsksReminder(string message) =>
+        ReminderAsk.IsMatch(message) && !Regex.IsMatch(message, @"^\s*(how|comment)\b", RegexOptions.IgnoreCase);
+
     /// <summary>The things the tools look in: an announcement about these is a lookup the model owes.</summary>
     private static readonly Regex LookupWords = new(
-        @"\b(files?|documents?|folders?|photos?|pictures?|downloads?|calendar|schedule|events?|agenda|weather|forecast|battery|pc|computer|disk|memory|lease|invoices?|contracts?|manuals?|notes?|fichiers?|calendrier|météo|batterie)\b",
+        @"\b(files?|documents?|folders?|photos?|pictures?|downloads?|calendar|schedule|events?|agenda|weather|forecast|battery|pc|computer|disk|memory|lease|invoices?|contracts?|manuals?|notes?|fichiers?|calendrier|météo|batterie|reminders?|rappels?)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool AnnouncesLookup(string turn) => Announce.IsMatch(turn) && LookupWords.IsMatch(FirstSentence(turn));

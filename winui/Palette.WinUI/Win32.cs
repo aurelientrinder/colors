@@ -140,6 +140,19 @@ internal static class Win32
         return (style, ex);
     }
 
+    /// <summary>
+    /// A window that clicks never activate and that stays out of Alt+Tab and the taskbar (the bubble): what
+    /// the user was typing in keeps the keyboard.
+    /// </summary>
+    public static void MakeNoActivate(IntPtr h)
+    {
+        const int GWL_EXSTYLE = -20;
+        const long WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x80, WS_EX_APPWINDOW = 0x40000;
+        long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
+        long want = (ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW;
+        if (want != ex) SetWindowLongPtr(h, GWL_EXSTYLE, new IntPtr(want));
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
 

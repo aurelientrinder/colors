@@ -172,8 +172,9 @@ across restarts.
 | `Ctrl+H` | earlier chats: titled by the model, latest first; type to filter, `Enter` opens, `Shift+Delete` deletes |
 | `Page Up` / `Page Down` | scroll the conversation |
 
-**What it can look up.** The model has tools, all of which only read, and calls them when a question is
-about your things, never for small talk or general knowledge:
+**What it can look up, and reminders.** The model has tools, which only read (except the reminders',
+which Palette alone keeps), and calls them when a question is about your things, never for small talk
+or general knowledge:
 
 | You ask | It | You see |
 |---|---|---|
@@ -182,6 +183,7 @@ about your things, never for small talk or general knowledge:
 | "what's the weather like?" | fetches the weather | a weather card |
 | "do I have anything tomorrow?" | reads your calendar (Settings › Add Google Calendar) | an event list |
 | "how's my battery?", "why is my laptop slow?" | reads the processor, memory, battery and disk | a row of gauges |
+| "remind me to call mom at 6", "remind me on Friday at 9 to pay the bill", "what reminders do I have?", "cancel the pizza reminder" | sets, lists or cancels reminders | a quiet "Reminder · today at 18:00 · Call mom" line with Cancel (Undo once cancelled) |
 
 **How it answers.** In prose, never lists. Before it looks something up it says in one sentence what it
 is about to do, so words come within about half a second; what it then does runs down a thin rail in
@@ -204,6 +206,16 @@ request of its own notes what changed, and a quiet "Remembered: …" line with U
 answer. Settings has a Chat memory switch and every fact as a row (Enter forgets it). Long
 conversations keep their thread: what scrolls out of the model's view is folded into a running summary.
 Everything (conversations in `%LOCALAPPDATA%\palette\chats`, memory in `memory.json`) stays on this PC.
+
+**The bubble.** When a reminder comes due, a small pill appears centred just above the taskbar: a
+breathing dot, what it is about and its time. It glows three times with Windows' reminder sound, then
+waits; it never takes the keyboard from what you are doing. Under the pointer it opens into a card with
+where it was set, Open in chat (the conversation it was set in), Snooze 10 min and Done; × dismisses it.
+Several due at once come one after the other. One that came due while Palette was not running shows as
+missed when it starts. The bubble steps away while the palette is open (they share that spot) and comes
+back after. Reminders are kept in `%LOCALAPPDATA%\palette\reminders.json`. "Remind me…" requires a tool
+call of the model (a small model otherwise says it set one without doing it), and it names the day as a
+word ("friday", "next tuesday") that Palette turns into a date, which it got wrong by itself.
 
 ### Asking your documents
 

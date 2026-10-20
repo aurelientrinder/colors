@@ -50,9 +50,13 @@ public sealed record SystemReading(double Cpu, double MemUsedGb, double MemTotal
 /// <summary>The PC's state, shown as a row of gauges.</summary>
 public sealed record SystemBlock(SystemReading Reading);
 
+/// <summary>Reminders a tool set ("set"), cancelled ("cancelled") or listed ("list"): a quiet line under the answer for each set or cancelled one.</summary>
+public sealed record ReminderBlock(string Kind, List<Reminder> Reminders);
+
 /// <summary>
 /// The chat's tools (offered by chat.rs TOOLS): each runs off the UI thread and gives the model a short
-/// text, and the answer a card to show. All of them only read: nothing is opened, changed or sent.
+/// text, and the answer a card to show. They only read, except the reminders' (ReminderStore), which
+/// Palette alone keeps: nothing is opened, changed or sent elsewhere.
 /// </summary>
 public sealed partial class MainWindow
 {
@@ -92,6 +96,9 @@ public sealed partial class MainWindow
                     "tomorrow" => " for tomorrow", "this_week" => " for this week", "next_week" => " for next week", _ => " for today",
                 });
             case "get_system_status": return "Checking your PC";
+            case "set_reminder": return "Setting a reminder";
+            case "list_reminders": return "Checking your reminders";
+            case "cancel_reminder": return "Cancelling a reminder";
             default: return "Looking it up";
         }
     }
@@ -104,6 +111,11 @@ public sealed partial class MainWindow
         (_, WeatherBlock w) => $"Checked the weather in {w.Weather.Place}",
         (_, EventsBlock e) => e.Events.Count == 0 ? "Nothing on the calendar" : e.Events.Count == 1 ? "Found 1 event" : $"Found {e.Events.Count} events",
         (_, SystemBlock) => "Checked your PC",
+        (_, ReminderBlock { Kind: "set" } r) => "Set for " + ReminderStore.Describe(r.Reminders[0].At),
+        (_, ReminderBlock { Kind: "cancelled" } r) => r.Reminders.Count == 1 ? "Cancelled it" : $"Cancelled {r.Reminders.Count} reminders",
+        (_, ReminderBlock { Kind: "list" } r) => r.Reminders.Count == 0 ? "No reminders set" : r.Reminders.Count == 1 ? "Found 1 reminder" : $"Found {r.Reminders.Count} reminders",
+        ("set_reminder", _) => "Not set",
+        ("cancel_reminder", _) => "Nothing cancelled",
         ("find_files", _) => "No file found",
         ("search_documents", _) => "Nothing in your documents",
         _ => result.Length > 60 ? result[..57] + "…" : result,
@@ -125,6 +137,10 @@ public sealed partial class MainWindow
         }
         string Arg(string key) =>
             args.ValueKind == JsonValueKind.Object && args.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : "";
+        int? Num(string key) =>
+            args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(key, out var v) ? null
+            : v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out double d) ? (int)Math.Round(d)
+            : v.ValueKind == JsonValueKind.String && int.TryParse(v.GetString(), out int n) ? n : null;
         try
         {
             return name switch
@@ -134,6 +150,9 @@ public sealed partial class MainWindow
                 "get_weather" => await WeatherTool(Arg("place"), ct),
                 "get_calendar" => await CalendarTool(Arg("period"), Arg("date"), ct),
                 "get_system_status" => await SystemTool(),
+                "set_reminder" => SetReminderTool(Arg("text"), Num("in_minutes"), Arg("time"), Arg("day").Length > 0 ? Arg("day") : Arg("date")),
+                "list_reminders" => ListRemindersTool(),
+                "cancel_reminder" => CancelReminderTool(Arg("about")),
                 _ => ($"There is no tool called {name}.", null, null),
             };
         }
@@ -208,6 +227,43 @@ public sealed partial class MainWindow
         if (paths.Count != docs.Names.Count)
             return (docs.Text, null, "From your documents: " + string.Join(" · ", docs.Names.Select((n, i) => $"[{i + 1}] {n}")));
         return (docs.Text, new SourcesBlock(paths.Zip(docs.Names, (p, n) => new SourceDoc(p, n)).ToList()), null);
+    }
+
+    private (string, object?, string?) SetReminderTool(string text, int? inMinutes, string time, string day)
+    {
+        if (text.Length == 0) return ("Say what to remind the user of (text).", null, null);
+        var at = ReminderStore.Resolve(inMinutes, time, day, DateTime.Now, out string why);
+        if (at == null) return ($"Not set: {why}", null, null);
+        var r = ReminderStore.Add(text, at.Value, _chat?.Id);
+        return ($"Reminder set for {ReminderStore.Describe(r.At, CultureInfo.InvariantCulture)} ({ReminderStore.Until(r.At)}): {r.Text} " +
+            "A bubble will pop up above the taskbar then.", new ReminderBlock("set", new() { r }), null);
+    }
+
+    private static (string, object?, string?) ListRemindersTool()
+    {
+        var all = ReminderStore.List();
+        if (all.Count == 0) return ("The user has no reminders set.", new ReminderBlock("list", all), null);
+        var sb = new StringBuilder($"{all.Count} reminder(s), the soonest first:\n");
+        foreach (var r in all) sb.Append($"- {r.Text}, {ReminderStore.Describe(r.At, CultureInfo.InvariantCulture)} ({ReminderStore.Until(r.At)})\n");
+        return (sb.ToString(), new ReminderBlock("list", all), null);
+    }
+
+    private static (string, object?, string?) CancelReminderTool(string about)
+    {
+        if (about.Length == 0) return ("Say which reminder to cancel (about).", null, null);
+        var found = ReminderStore.Find(about);
+        if (found.Count == 0)
+        {
+            var all = ReminderStore.List();
+            return (all.Count == 0 ? "The user has no reminders set." : "No reminder matches that. The reminders set: " +
+                string.Join("; ", all.Select(r => $"{r.Text} ({ReminderStore.Describe(r.At, CultureInfo.InvariantCulture)})")) + ".", null, null);
+        }
+        if (found.Count > 1)
+            return ("Several reminders match, so none was cancelled; ask which one: " +
+                string.Join("; ", found.Select(r => $"{r.Text} ({ReminderStore.Describe(r.At, CultureInfo.InvariantCulture)})")) + ".", null, null);
+        ReminderStore.Remove(found[0].Id);
+        return ($"Cancelled the reminder: {found[0].Text} ({ReminderStore.Describe(found[0].At, CultureInfo.InvariantCulture)}).",
+            new ReminderBlock("cancelled", found), null);
     }
 
     private static async Task<(string, object?, string?)> SystemTool()

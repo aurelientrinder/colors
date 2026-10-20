@@ -36,7 +36,8 @@ internal static class ChatStore
         List<CalEvent>? Events = null,
         SystemReading? System = null,
         List<SourceDoc>? Sources = null,
-        List<MemoryChange>? Memory = null);
+        List<MemoryChange>? Memory = null,
+        List<Reminder>? Reminders = null);
 
     public sealed record SavedMsg(
         string Role, string Text, string Sent, string Note, string Thinking, long ThinkMs, bool Think, int ReplyStart,
@@ -190,6 +191,7 @@ internal static class ChatStore
                     "system" when b.System != null => new SystemBlock(b.System),
                     "sources" when b.Sources != null => new SourcesBlock(b.Sources),
                     "memory" when b.Memory != null => new MemoryBlock(b.Memory),
+                    "reminders" when b.Reminders != null => new ReminderBlock(b.Title ?? "set", b.Reminders),
                     _ => null,
                 };
                 if (block != null) m.Blocks.Add(block);
@@ -264,6 +266,7 @@ internal static class ChatStore
         SystemBlock s => new SavedBlock("system", System: s.Reading),
         SourcesBlock s => new SavedBlock("sources", Sources: s.Docs),
         MemoryBlock m => new SavedBlock("memory", Memory: m.Changes),
+        ReminderBlock r => new SavedBlock("reminders", Title: r.Kind, Reminders: r.Reminders),
         _ => null,
     };
 }
