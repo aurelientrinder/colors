@@ -794,10 +794,15 @@ pub unsafe extern "C" fn pc_ask_warm(question: *const c_char) {
 
 /// Open a chat: start the model, read the window in front and have the model read it ahead. Returns
 /// `{"ok":true,"port":N,"system":"...","app","model","source"}` or `{"ok":false,"error":"..."}`. Takes a
-/// few seconds: call from a worker thread. Free with `pc_free`.
+/// few seconds: call from a worker thread. Free with `pc_free`. `memory` is what the model remembers
+/// about the user, written by the shell (may be empty).
+///
+/// # Safety
+/// `memory` must be null or a valid NUL-terminated string.
 #[no_mangle]
-pub extern "C" fn pc_chat_open() -> *mut c_char {
-    let out = match crate::chat::open() {
+pub unsafe extern "C" fn pc_chat_open(memory: *const c_char) -> *mut c_char {
+    let memory = if memory.is_null() { "" } else { CStr::from_ptr(memory).to_str().unwrap_or("") };
+    let out = match crate::chat::open(memory) {
         Ok(o) => serde_json::json!({"ok": true, "port": o.port, "system": o.system, "app": o.app, "model": o.model, "source": o.source, "tools": o.tools}),
         Err(e) => serde_json::json!({"ok": false, "error": e}),
     };

@@ -118,7 +118,8 @@ public sealed partial class MainWindow
         UpdateOpenButton();
         Input.Focus(FocusState.Programmatic);
 
-        chat.Opening = Task.Run(Native.ChatOpen);
+        string memory = _settings.ChatMemory ? MemoryStore.ForPrompt() : "";
+        chat.Opening = Task.Run(() => Native.ChatOpen(memory));
         _ = FinishOpening(chat);
         if (typed.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 3 || typed.EndsWith('?')) SendChat(typed);
     }
@@ -168,9 +169,11 @@ public sealed partial class MainWindow
     {
         bool failed = false;
         long thinkStart = 0;
+        int port = 0;
         try
         {
             var opened = await chat.Opening!;
+            port = opened.Port;
             if (ct.IsCancellationRequested) return;
             if (!opened.Ok)
             {
@@ -252,6 +255,7 @@ public sealed partial class MainWindow
                 chat.Busy = false;
                 RenderChat(chat);
                 if (chat == _conversation) ChatStore.Save(chat.Messages);
+                if (!failed && port > 0 && _settings.ChatMemory && MemoryNotice.MayBePersonal(user.Text)) _ = NoticeMemory(chat, answer, port, user.Text);
             }
         }
     }
@@ -323,6 +327,26 @@ public sealed partial class MainWindow
             }
         }
         return calls.Values.Where(c => c.Name.Length > 0).ToList();
+    }
+
+    /// <summary>
+    /// After an answer: note what the message said about the user (MemoryNotice), and show what was
+    /// remembered under the answer. Runs on its own; a failure only goes to the log.
+    /// </summary>
+    private async Task NoticeMemory(ChatAnswer chat, ChatMsg answer, int port, string message)
+    {
+        try
+        {
+            var changes = await MemoryNotice.Notice(port, message, CancellationToken.None);
+            if (changes.Count == 0) return;
+            answer.Blocks.Add(new MemoryBlock(changes));
+            RenderChat(chat);
+            if (chat == _conversation && !chat.Busy) ChatStore.Save(chat.Messages);
+        }
+        catch (Exception ex)
+        {
+            App.Log("memory notice failed: " + ex.Message);
+        }
     }
 
     /// <summary>

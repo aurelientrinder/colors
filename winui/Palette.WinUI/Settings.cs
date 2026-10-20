@@ -15,6 +15,9 @@ internal sealed class Settings
     /// <summary>Questions like "weather in Paris" or "MSFT stock" get an answer card from the web (see WebAnswers).</summary>
     public bool WebAnswers { get; set; } = true;
 
+    /// <summary>The chat remembers what you tell it about yourself, across conversations (MemoryStore).</summary>
+    public bool ChatMemory { get; set; } = true;
+
     /// <summary>The line of keys for the selected row, in the search card.</summary>
     public bool KeyHints { get; set; } = true;
 

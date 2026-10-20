@@ -23,6 +23,7 @@ public sealed partial class MainWindow
         WeatherBlock w => WeatherCard(w.Weather),
         EventsBlock e => EventsCard(e),
         SystemBlock y => SystemCard(y.Reading),
+        MemoryBlock m => MemoryLine(m),
         _ => null,
     };
 
@@ -259,6 +260,41 @@ public sealed partial class MainWindow
             list.Children.Add(row);
         }
         return Card(list, new Thickness(0));
+    }
+
+    // ------------------------------------------------------------------ what was remembered
+
+    /// <summary>
+    /// A quiet line per change under the answer: a small brain, "Remembered: Lives in Lyon." (or "Updated",
+    /// "Forgot"), and Undo, which takes it back and says so.
+    /// </summary>
+    private static FrameworkElement MemoryLine(MemoryBlock block)
+    {
+        var lines = new StackPanel { Spacing = 2, Margin = new Thickness(0, 2, 0, 0) };
+        foreach (var c in block.Changes)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            var brain = new BrainIcon(13) { VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(brain);
+            string verb = c.Kind switch { "updated" => "Updated", "removed" => "Forgot", _ => "Remembered" };
+            var text = new TextBlock
+            {
+                FontSize = 11, Foreground = Res("TextFillColorTertiaryBrush"), VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 380,
+                Text = $"{verb}: {c.Now.Text}" + (c.Before != null ? $" (was: {c.Before.Text})" : ""),
+            };
+            row.Children.Add(text);
+            var undo = new HyperlinkButton { Content = "Undo", FontSize = 11, Padding = new Thickness(4, 0, 4, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Center };
+            undo.Click += (_, _) =>
+            {
+                MemoryNotice.Undo(c);
+                text.Text = (c.Kind == "removed" ? "Remembered again: " : "Not remembered: ") + c.Now.Text;
+                undo.Visibility = Visibility.Collapsed;
+            };
+            row.Children.Add(undo);
+            lines.Children.Add(row);
+        }
+        return lines;
     }
 
     // ------------------------------------------------------------------ the PC

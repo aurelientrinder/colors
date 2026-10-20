@@ -34,6 +34,8 @@ public sealed partial class MainWindow
             new("gcal", "Add Google Calendar", _settings.CalendarFeeds.Count > 0
                 ? $"{_settings.CalendarFeeds.Count} connected. Copy another secret iCal address, then press Enter"
                 : "Copy your calendar's secret iCal address (Google Calendar › Settings › Integrate calendar), then press Enter"),
+            new("chatmemory", "Chat memory", "The chat remembers what you tell it about yourself, on this PC only",
+                () => _settings.ChatMemory, on => { _settings.ChatMemory = on; _settings.Save(); }),
             new("clipboard", "Remember what is copied", "Find it by typing clip. Kept in memory only",
                 () => _settings.ClipboardHistory, on =>
                 {
@@ -58,6 +60,12 @@ public sealed partial class MainWindow
         if (_settings.CalendarFeeds.Count > 0)
             rows.Insert(rows.FindIndex(r => r.Key == "gcal") + 1,
                 new("gcalremove", "Remove Google Calendars", "Forget the addresses of the calendars added"));
+        // What the chat remembers, one row each (Enter forgets it), after its switch.
+        var memories = MemoryStore.List();
+        int at = rows.FindIndex(r => r.Key == "chatmemory") + 1;
+        foreach (var m in memories)
+            rows.Insert(at++, new("mem:" + m.Id, m.Text, $"Remembered {m.Updated.ToString("d MMMM", System.Globalization.CultureInfo.CurrentCulture)} · Enter to forget"));
+        if (memories.Count > 0) rows.Insert(at, new("memclear", "Forget everything the chat remembers", $"{memories.Count} things"));
         _settingRows = rows.ToDictionary(r => r.Key);
         return rows;
     }
@@ -95,7 +103,12 @@ public sealed partial class MainWindow
     /// <summary>The label of the row's button in the search card.</summary>
     private static string SettingButton(HitVm row) => row.ControlKey != null ? "Switch" : ButtonFor(row.Does);
 
-    private static string ButtonFor(string? key) => key switch { "hotkey" => "Change", "gcal" => "Paste", _ => "Run" };
+    private static string ButtonFor(string? key) => key switch
+    {
+        "hotkey" => "Change", "gcal" => "Paste", "memclear" => "Forget",
+        _ when key?.StartsWith("mem:") == true => "Forget",
+        _ => "Run",
+    };
 
     /// <summary>Enter on a row of the settings list.</summary>
     private void RunSetting(int index)
@@ -117,6 +130,14 @@ public sealed partial class MainWindow
                 break;
             case "gcalremove":
                 RemoveCalendars();
+                break;
+            case "memclear":
+                MemoryStore.Clear();
+                ShowSettings(Input.Text);
+                break;
+            case { } k when k.StartsWith("mem:"):
+                MemoryStore.Remove(k[4..]);
+                ShowSettings(Input.Text);
                 break;
             case "reindex":
                 Native.Reindex();

@@ -38,7 +38,7 @@ public static class Native
     private static extern void pc_ask_stop();
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr pc_chat_open();
+    private static extern IntPtr pc_chat_open([MarshalAs(UnmanagedType.LPUTF8Str)] string memory);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr pc_chat_docs([MarshalAs(UnmanagedType.LPUTF8Str)] string question);
@@ -249,8 +249,9 @@ public static class Native
         [property: JsonPropertyName("paths")] List<string>? Paths = null);
 
     /// <summary>Open a chat: starts the model and reads the window in front. Takes seconds: call off the UI thread.</summary>
-    public static ChatOpened ChatOpen() =>
-        Read(pc_chat_open(), NativeJson.Default.ChatOpened) ?? new ChatOpened(false, Error: "The model did not start");
+    /// <param name="memory">What the model remembers about the user (MemoryStore.ForPrompt), or "".</param>
+    public static ChatOpened ChatOpen(string memory) =>
+        Read(pc_chat_open(memory), NativeJson.Default.ChatOpened) ?? new ChatOpened(false, Error: "The model did not start");
 
     /// <summary>Excerpts from your documents for a message that is not about the screen.</summary>
     public static ChatExcerpts ChatDocs(string question) =>

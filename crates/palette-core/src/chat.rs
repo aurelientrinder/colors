@@ -85,6 +85,10 @@ After a weather, calendar or PC tool, the user also sees what it found as a card
 repeating every number. If a tool finds nothing, say so. When the user asks about something that may be written in their own papers \
 (a lease, an invoice, a contract, a manual, notes), search their documents first instead of asking them where to look.";
 
+/// The model's long-term memory: what it remembers comes with the instructions (the shell's MemoryStore,
+/// which also notes what the user says about themselves, after each message, with a request of its own).
+const MEMORY_USE: &str = "You have a long-term memory of the user: what you remember, if anything, is listed below, and what they tell you about themselves is noted for later conversations on its own, so you need do nothing to remember it. Use it when it helps; never recite it unasked.";
+
 /// "Today is Monday 20 October 2026.", from the PC's clock.
 fn today() -> String {
     use windows::Win32::System::SystemInformation::GetLocalTime;
@@ -540,12 +544,17 @@ pub struct Opened {
 
 /// Open a chat: start the model and read the window in front at once, then have the model read the
 /// window's text ahead, so the first message is answered without waiting for it. Blocks until the model
-/// has read it (a few seconds on a long page): call from a worker thread.
-pub fn open() -> Result<Opened, String> {
+/// has read it (a few seconds on a long page): call from a worker thread. `memory` is what the model
+/// remembers about the user (the shell's MemoryStore), put before the window's text so it is read ahead too.
+pub fn open(memory: &str) -> Result<Opened, String> {
     let server = std::thread::spawn(ensure_server);
     let ctx = window(crate::uia::scan_id());
     let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
-    let (mut system, mut source, mut app) = (format!("{SYSTEM_CHAT} {TOOL_USE} {}", today()), "none", String::new());
+    let (mut system, mut source, mut app) = (format!("{SYSTEM_CHAT} {TOOL_USE} {MEMORY_USE} {}", today()), "none", String::new());
+    if !memory.trim().is_empty() {
+        system.push_str("\n\n");
+        system.push_str(memory.trim());
+    }
     if let Some(c) = &ctx {
         app = c.app.clone();
         let place = if c.title.is_empty() { c.app.clone() } else { format!("{} ({})", c.title, c.app) };
