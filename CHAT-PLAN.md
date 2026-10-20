@@ -12,7 +12,7 @@ thinking off; the conversation is lost when the palette closes; the model has no
 
 Status (2026-10-20): 1–4 done; 5 done (conversations kept in chats\, resumed with Tab, Ctrl+N files one
 away, Ctrl+H lists them with model-written titles, a running summary covers what leaves the model's view;
-the list and the summary are NOT YET TESTED ON SCREEN); 6 built but NOT YET TESTED ON SCREEN
+the list was tried on screen, the summary not yet); 6 built and tried on screen
 (MemoryStore.cs: a separate request after each personal-sounding message notes facts as + - ~ lines,
 because Gemma would not call a remember tool; "Remembered: …" lines with Undo; Settings rows); 7 to do.
 Answers are prose only (never lists) and name files as inline links. Thinking is on only for messages
