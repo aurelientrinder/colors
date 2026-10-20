@@ -20,6 +20,10 @@ public sealed class ChatMsg
     public string Sent { get; set; } = "";
     /// <summary>Small print under an answer: the files it drew on.</summary>
     public string Note { get; set; } = "";
+    /// <summary>The model's reasoning, streamed apart from the answer (empty when it did not think).</summary>
+    public string Thinking { get; set; } = "";
+    /// <summary>How long it thought, in milliseconds (set once the answer begins).</summary>
+    public long ThinkMs { get; set; }
 }
 
 /// <summary>A chat with the model that runs on this PC, shown as a card under one row.</summary>
@@ -47,6 +51,9 @@ public sealed partial class MainWindow
     private ChatAnswer? _chat;
     private CancellationTokenSource? _chatCts;
     private readonly List<(FrameworkElement view, ChatMsg msg)> _chatViews = new();
+
+    /// <summary>Does the model reason before it answers? Slower to the first word, better answers.</summary>
+    private const bool ChatThinks = true;
 
     private void CancelChat()
     {
@@ -121,6 +128,8 @@ public sealed partial class MainWindow
 
     private async Task RunChat(ChatAnswer chat, ChatMsg user, ChatMsg answer, CancellationToken ct)
     {
+        bool failed = false;
+        long thinkStart = 0;
         try
         {
             var opened = await chat.Opening!;
@@ -128,6 +137,7 @@ public sealed partial class MainWindow
             if (!opened.Ok)
             {
                 answer.Text = opened.Error ?? "The model did not start";
+                failed = true;
                 return;
             }
             // Documents, when the message is about your files: a "?" in front says so, so do words like
@@ -163,6 +173,7 @@ public sealed partial class MainWindow
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var text = new StringBuilder();
+            var thought = new StringBuilder();
             long drawn = 0;
             while (await reader.ReadLineAsync(ct) is { } line)
             {
@@ -171,9 +182,17 @@ public sealed partial class MainWindow
                 if (data == "[DONE]") break;
                 using var doc = JsonDocument.Parse(data);
                 if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
-                if (!choices[0].TryGetProperty("delta", out var delta) || !delta.TryGetProperty("content", out var part)) continue;
-                text.Append(part.GetString());
-                answer.Text = text.ToString();
+                if (!choices[0].TryGetProperty("delta", out var delta)) continue;
+                if (delta.TryGetProperty("reasoning_content", out var reason) && reason.ValueKind == JsonValueKind.String)
+                {
+                    if (thought.Length == 0) thinkStart = Environment.TickCount64;
+                    thought.Append(reason.GetString());
+                }
+                if (delta.TryGetProperty("content", out var part) && part.ValueKind == JsonValueKind.String) text.Append(part.GetString());
+                SplitThinking(thought, text, out string thinking, out string reply);
+                if (thinking.Length > 0 && answer.ThinkMs == 0 && reply.Length > 0) answer.ThinkMs = Math.Max(1, Environment.TickCount64 - (thinkStart > 0 ? thinkStart : Environment.TickCount64));
+                answer.Thinking = thinking;
+                answer.Text = reply;
                 if (Environment.TickCount64 - drawn > 60)
                 {
                     drawn = Environment.TickCount64;
@@ -189,15 +208,37 @@ public sealed partial class MainWindow
         {
             App.Log("chat failed: " + ex.Message);
             if (answer.Text.Length == 0) answer.Text = "The model stopped answering. Try again.";
+            failed = true;
         }
         finally
         {
             if (!ct.IsCancellationRequested)
             {
+                if (answer.Thinking.Length > 0 && answer.ThinkMs == 0 && thinkStart > 0) answer.ThinkMs = Environment.TickCount64 - thinkStart;
+                if (answer.Text.Length == 0 && !failed) answer.Text = "I ran out of room before I could answer. Ask again, a little more simply.";
                 chat.Busy = false;
                 RenderChat(chat);
             }
         }
+    }
+
+    /// <summary>
+    /// The reasoning and the answer so far. The server splits them (reasoning_content); a model that
+    /// writes its reasoning inside the answer in think tags is split here.
+    /// </summary>
+    private static void SplitThinking(StringBuilder thought, StringBuilder text, out string thinking, out string reply)
+    {
+        string t = text.ToString();
+        thinking = thought.ToString();
+        int open = t.IndexOf("<think>", StringComparison.Ordinal);
+        if (open >= 0)
+        {
+            int close = t.IndexOf("</think>", open, StringComparison.Ordinal);
+            string inner = close < 0 ? t[(open + 7)..] : t[(open + 7)..close];
+            thinking += inner;
+            t = (t[..open] + (close < 0 ? "" : t[(close + 8)..])).TrimStart();
+        }
+        reply = t;
     }
 
     /// <summary>The request: the system message, the conversation so far, and the new message. Written by hand: no reflection.</summary>
@@ -223,12 +264,12 @@ public sealed partial class MainWindow
             foreach (var m in turns.Skip(from)) Message(m.Role, m.Role == "user" ? m.Sent : m.Text);
             w.WriteEndArray();
             w.WriteBoolean("stream", true);
-            w.WriteNumber("max_tokens", 700);
+            w.WriteNumber("max_tokens", ChatThinks ? 2000 : 700);
             w.WriteNumber("temperature", 0.3);
             w.WriteNumber("top_p", 0.9);
             w.WriteBoolean("cache_prompt", true);
             w.WriteStartObject("chat_template_kwargs");
-            w.WriteBoolean("enable_thinking", false);
+            w.WriteBoolean("enable_thinking", ChatThinks);
             w.WriteEndObject();
             w.WriteEndObject();
         }
@@ -246,6 +287,8 @@ public sealed partial class MainWindow
         if (_pvVm?.Answer != chat || ChatPreview.Visibility != Visibility.Visible) return;
         ChatFooter.Text = chat.Footer;
         ChatMessages.Opacity = 1;
+        // Follow the model while you are at the bottom; leave the page alone once you scroll up to read.
+        bool stick = chat.Messages.Count != _chatViews.Count || ChatScroll.VerticalOffset >= ChatScroll.ScrollableHeight - 48;
 
         if (chat.Messages.Count == 0)
         {
@@ -279,10 +322,10 @@ public sealed partial class MainWindow
         ChatPreview.Height = h;
         _pvFull = 6 + h + 12;
         if (grew && !_animating) ApplyShape();
-        ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null, true);
+        if (stick) ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null, true);
     }
 
-    private static FrameworkElement MakeMessageView(ChatMsg m)
+    private FrameworkElement MakeMessageView(ChatMsg m)
     {
         if (m.Role == "user")
         {
@@ -293,45 +336,16 @@ public sealed partial class MainWindow
                 Padding = new Thickness(10, 6, 10, 6),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 MaxWidth = 400,
-                Child = new TextBlock { TextWrapping = TextWrapping.Wrap },
+                Child = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
             };
         }
-        var stack = new StackPanel { Spacing = 3 };
-        stack.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, LineHeight = 21 });
-        stack.Children.Add(new TextBlock
-        {
-            FontSize = 11,
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
-            Visibility = Visibility.Collapsed,
-        });
-        return stack;
+        return new AssistantView(() => { if (_chat is { } c) RenderChat(c); });
     }
 
     private static void UpdateMessageView(FrameworkElement view, ChatMsg m, bool writing)
     {
-        if (view is Border { Child: TextBlock user })
-        {
-            user.Text = m.Text;
-            return;
-        }
-        if (view is not StackPanel s) return;
-        var body = (TextBlock)s.Children[0];
-        var note = (TextBlock)s.Children[1];
-        string text = ChatText(m.Text);
-        body.Text = text.Length > 0 ? text : writing ? (m.Hint.Length > 0 ? m.Hint : "…") : "";
-        body.Opacity = text.Length > 0 ? 1 : 0.5;
-        note.Text = m.Note;
-        note.Visibility = m.Note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    /// <summary>The model's markdown (bold, headings, bullets) as plain text.</summary>
-    private static string ChatText(string s)
-    {
-        s = s.Replace("**", "").Replace("__", "").Replace("`", "");
-        s = Regex.Replace(s, @"^\s{0,3}#{1,6}\s*", "", RegexOptions.Multiline);
-        s = Regex.Replace(s, @"^(\s*)[*-]\s+", "$1• ", RegexOptions.Multiline);
-        return s.Trim();
+        if (view is Border { Child: TextBlock user }) user.Text = m.Text;
+        else if (view is AssistantView a) a.Update(m, writing);
     }
 
     /// <summary>Leave the chat for the home view.</summary>
@@ -341,6 +355,9 @@ public sealed partial class MainWindow
         _chat = null;
         _chatViews.Clear();
         ChatMessages.Children.Clear();
+        // The card goes at once: left to close with the row's room, it showed as an empty box that
+        // shrank under the first result.
+        ResetPreview();
         ShowHome();
     }
 }

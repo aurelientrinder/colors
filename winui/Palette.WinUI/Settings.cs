@@ -55,6 +55,13 @@ internal sealed class Settings
     {
         if (!SemanticSearch) Environment.SetEnvironmentVariable("PALETTE_SEMANTIC", "0");
         if (IndexOnBattery) Environment.SetEnvironmentVariable("PALETTE_SEM_ON_BATTERY", "1");
+        // The chat model thinks before it answers; llama-server reads its limit from these (the engine starts
+        // the server from this process, so it inherits them). A small model left to think goes on for minutes.
+        if (Environment.GetEnvironmentVariable("LLAMA_ARG_THINK_BUDGET") is null)
+        {
+            Environment.SetEnvironmentVariable("LLAMA_ARG_THINK_BUDGET", "400");
+            Environment.SetEnvironmentVariable("LLAMA_ARG_THINK_BUDGET_MESSAGE", "That is enough thinking; I will answer now.");
+        }
     }
 
     /// <summary>The taskbar search mode before we hid it, put back when the option is turned off.</summary>
