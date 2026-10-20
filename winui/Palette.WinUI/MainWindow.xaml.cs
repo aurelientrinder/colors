@@ -25,8 +25,11 @@ public sealed partial class MainWindow : Window
     // preview opened low in a long list into view. It is room for a search's rows and a file
     // preview. The window is that size whole, with room around it for the panel's shadow
     // (Chrome.cs); the panel is WidthDip wide, or WideDip while the month card shows.
-    private const double WidthDip = 500, WideDip = 680, WindowDip = WideDip, SearchDip = 112, RowDip = 60, PadDip = 14,
+    private const double WidthDip = 500, WideDip = 680, WindowDip = WideDip, SearchBaseDip = 112, RowDip = 60, PadDip = 14,
         MaxBodyDip = InstantRows * RowDip + PadDip + FilePaneDip;
+
+    /// <summary>The search card and the room around it: taller by the lines a long chat message wraps onto (ChatInput.cs).</summary>
+    private double SearchDip => SearchBaseDip + _inputExtraDip;
 
     private readonly AppWindow _aw;
     private readonly IntPtr _hwnd;
@@ -75,6 +78,7 @@ public sealed partial class MainWindow : Window
 
         InitMotion();
         InitControls();
+        InitInputGrowth();
         InitAnswers();
         InitChrome();
         Activated += OnActivated;

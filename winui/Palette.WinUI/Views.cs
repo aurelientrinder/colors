@@ -51,6 +51,7 @@ public sealed partial class MainWindow
     {
         if (v != _view) PlayListEntrance(forward: v != View.Results);
         _view = v;
+        WrapInput(v == View.Chat);
         Input.PlaceholderText = placeholder;
         UpdateCondensed();
         UpdateOpenButton();
@@ -285,7 +286,7 @@ public sealed partial class MainWindow
         "unpin" => "",
         "pinlater" => "",
         "pinearlier" => "",
-        "properties" => "",
+        "properties" => "\uE946",
         "uninstall" => "",
         "close" => "",
         _ => "",

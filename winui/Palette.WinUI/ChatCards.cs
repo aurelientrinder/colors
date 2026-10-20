@@ -41,7 +41,7 @@ public sealed partial class MainWindow
     /// <summary>A row that lights up under the pointer and does something when clicked.</summary>
     private static Grid Hoverable(Action click, Action? rightClick = null)
     {
-        var g = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 6, 8, 6) };
+        var g = new HandGrid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 6, 8, 6) };
         g.PointerEntered += (_, _) => g.Background = Res("SubtleFillColorSecondaryBrush");
         g.PointerExited += (_, _) => g.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         g.Tapped += (_, e) => { e.Handled = true; click(); };
@@ -78,7 +78,7 @@ public sealed partial class MainWindow
         label.Children.Add(name);
         label.Children.Add(dots);
 
-        var link = new StackPanel { Orientation = Orientation.Horizontal, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        var link = new HandPanel { Orientation = Orientation.Horizontal, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         link.Children.Add(frame);
         link.Children.Add(label);
         // An inline element stands on the text's baseline: let it hang below it by the text's descent, so the

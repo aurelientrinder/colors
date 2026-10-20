@@ -164,7 +164,7 @@ internal sealed class AssistantView : StackPanel
 
     private readonly Grid _railHost = new() { Visibility = Visibility.Collapsed };
     private readonly StackPanel _rail = new() { Spacing = 7 };
-    private readonly Grid _chip = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly HandGrid _chip = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly StackPanel _chipIcons = new() { Orientation = Orientation.Horizontal, Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _chipText = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private readonly FontIcon _chipChevron = new() { Glyph = "\uE70D", FontSize = 9, VerticalAlignment = VerticalAlignment.Center };
@@ -587,7 +587,7 @@ internal sealed class RailThink
     {
         FontSize = 12, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.NoWrap,
     };
-    private readonly FontIcon _chevron = new() { Glyph = "", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 0, 0), Visibility = Visibility.Collapsed };
+    private readonly FontIcon _chevron = new() { Glyph = "\uE70D", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 0, 0), Visibility = Visibility.Collapsed };
     private readonly StreamingText _full = new(11.5, 17);
     private Storyboard? _swap;
     private string _thinking = "";
@@ -601,7 +601,7 @@ internal sealed class RailThink
         _full.View.Foreground = faint;
         _full.View.Visibility = Visibility.Collapsed;
         _full.View.Margin = new Thickness(0, 2, 0, 2);
-        var head = new Grid { ColumnSpacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        var head = new HandGrid { ColumnSpacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -800,7 +800,7 @@ internal sealed class RailStep
         _label.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         _chevron.Foreground = faint;
         _detail.Foreground = faint;
-        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        var head = new HandPanel { Orientation = Orientation.Horizontal, Spacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         head.Children.Add(_label);
         head.Children.Add(_chevron);
         head.Tapped += (_, e) =>
