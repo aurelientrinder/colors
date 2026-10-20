@@ -61,8 +61,42 @@ You may be told what is on the user's screen (text read from a window, which may
 excerpts from the user's own documents (numbered [1], [2]; they may not be relevant: use them only when they help, and then cite them). \
 If you do not know or cannot tell from what you have been given, say so instead of guessing.";
 
+/// What the chat model may look up for itself, in the chat API's form. The shell runs the calls
+/// (ChatTools.cs; find_files is tools.rs) and shows what they find as cards.
+pub const TOOLS: &str = r#"[
+{"type":"function","function":{"name":"find_files","description":"Find files on the user's PC by name, by topic, or by when they were last opened or changed. Use it when the user asks for one of their files, e.g. the file they worked on last week, their CV, yesterday's photos. The files found are shown to the user as clickable cards.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Words from the file's name or about its topic. Leave empty to list files by time alone."},"period":{"type":"string","enum":["today","yesterday","this_week","last_week","this_month","last_month","any"],"description":"When the file was opened or changed."},"kind":{"type":"string","enum":["any","document","spreadsheet","presentation","image","video","audio","code","3d"]}}}}},
+{"type":"function","function":{"name":"search_documents","description":"Read the passages of the user's own documents (PDFs, Word files, notes) that answer a question about them: their contracts, invoices, manuals, papers, notes. Cite the passages as [1], [2].","parameters":{"type":"object","properties":{"question":{"type":"string","description":"The question, in the user's words."}},"required":["question"]}}},
+{"type":"function","function":{"name":"get_weather","description":"The weather now and today's high and low, shown to the user as a weather card.","parameters":{"type":"object","properties":{"place":{"type":"string","description":"A city. Leave empty for where the user is."}}}}},
+{"type":"function","function":{"name":"get_calendar","description":"The user's calendar events for a day or a week, shown to the user as a card.","parameters":{"type":"object","properties":{"period":{"type":"string","enum":["today","tomorrow","this_week","next_week"]},"date":{"type":"string","description":"A day as YYYY-MM-DD, instead of period."}}}}}
+]"#;
+
+/// How the model is to use its tools.
+const TOOL_USE: &str = "You have tools to look things up on the user's PC. Use one when the request needs it (their files, their documents, \
+the weather, their calendar), not for greetings or general knowledge. What a tool finds is shown to the user as a card under your \
+answer: never list file names, paths or every detail again, say in a sentence what you found, without mentioning the cards. If a tool finds nothing, say so. When the user asks about something that may be written in their own papers (a lease, an invoice, a contract, a manual, notes), search their documents first instead of asking them where to look.";
+
+/// "Today is Monday 20 October 2026.", from the PC's clock.
+fn today() -> String {
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+    const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const MONTHS: [&str; 12] =
+        ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    let t = unsafe { GetLocalTime() };
+    format!(
+        "Today is {} {} {} {}.",
+        DAYS[(t.wDayOfWeek as usize).min(6)],
+        t.wDay,
+        MONTHS[(t.wMonth as usize).clamp(1, 12) - 1],
+        t.wYear
+    )
+}
+
 /// Names to prefer, best first, when several models are about.
-const PREFERRED: [&str; 8] = ["qwen3.5-4b", "qwen3-4b", "gemma-3-4b", "gemma-3n", "llama-3.2-3b", "phi-4-mini", "qwen3-8b", "gemma-3-12b"];
+/// Gemma 4 E4B first: in a comparison on the chat's kinds of messages (CHAT-PLAN.md, "Model choice") it wrote the
+/// best answers and, with its MTP draft beside it, the quickest (about 25 words a second here against 19 for
+/// Qwen3.5 4B), and picked its tools three times sooner.
+const PREFERRED: [&str; 9] =
+    ["gemma-4-e4b", "qwen3.5-4b", "qwen3-4b", "gemma-3-4b", "gemma-3n", "llama-3.2-3b", "phi-4-mini", "qwen3-8b", "gemma-3-12b"];
 
 const SYSTEM: &str = "You are Palette, an assistant built into the user's PC. The user is looking at a window and asks about it. \
 Answer from the text given; it is read from the screen, so it may hold interface noise (menus, buttons) around the content. \
@@ -140,6 +174,17 @@ pub fn label(model: &Path) -> String {
     parts.join(" ")
 }
 
+/// The model's multi-token-prediction draft, when it sits beside it: `mtp-gemma-4-E4B-it.gguf` for
+/// `gemma-4-E4B-it-Q4_0.gguf`. It guesses a few words ahead and the model checks them in one step,
+/// which about doubles how fast the answer is written.
+pub fn draft_path(model: &Path) -> Option<PathBuf> {
+    let name = model.file_name()?.to_string_lossy().to_lowercase();
+    std::fs::read_dir(model.parent()?).ok()?.flatten().map(|e| e.path()).find(|p| {
+        let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        n.strip_prefix("mtp-").and_then(|rest| rest.strip_suffix(".gguf")).is_some_and(|stem| name.starts_with(stem))
+    })
+}
+
 /// Is there a runtime and a model to ask?
 pub fn available() -> bool {
     crate::paths::chat_dir().is_some() && model_path().is_some()
@@ -172,6 +217,7 @@ fn ensure_server() -> Result<(u16, String), String> {
     }
     let dir = crate::paths::chat_dir().ok_or("The chat runtime is missing (run scripts\\get-chat.ps1)")?;
     let model = model_path().ok_or("No chat model found (put a GGUF in models\\chat, or download one in LM Studio)")?;
+    let draft = draft_path(&model);
     let args = |port: u16| -> Vec<OsString> {
         let mut a: Vec<OsString> = Vec::new();
         for s in ["-m"] {
@@ -183,6 +229,12 @@ fn ensure_server() -> Result<(u16, String), String> {
             "--no-webui", "--parallel", "1",
         ] {
             a.push(s.into());
+        }
+        if let Some(d) = &draft {
+            for s in ["--spec-type", "draft-mtp", "--model-draft"] {
+                a.push(s.into());
+            }
+            a.push(d.clone().into_os_string());
         }
         a
     };
@@ -354,13 +406,21 @@ const SENTINEL: &str = "\u{2063}Q\u{2063}";
 
 /// The prompt the server makes of the conversation, with the model's own chat template.
 fn template(port: u16, system: &str, user: &str) -> Option<String> {
-    let body = serde_json::json!({
+    template_with(port, system, user, None)
+}
+
+/// `template`, with tools offered (they are written into the prompt, before the conversation).
+fn template_with(port: u16, system: &str, user: &str, tools: Option<&str>) -> Option<String> {
+    let mut body = serde_json::json!({
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "chat_template_kwargs": {"enable_thinking": false},
     });
+    if let Some(t) = tools.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok()) {
+        body["tools"] = t;
+    }
     let reply = crate::planner::http(port, "POST", "/apply-template", &body.to_string(), Duration::from_secs(10))?;
     serde_json::from_str::<serde_json::Value>(&reply).ok()?["prompt"].as_str().map(str::to_string)
 }
@@ -463,6 +523,8 @@ pub struct Opened {
     pub model: String,
     /// "selection", "window" or "none" (no window to read: a plain chat).
     pub source: &'static str,
+    /// The tools offered with every message (TOOLS).
+    pub tools: &'static str,
 }
 
 /// Open a chat: start the model and read the window in front at once, then have the model read the
@@ -472,7 +534,7 @@ pub fn open() -> Result<Opened, String> {
     let server = std::thread::spawn(ensure_server);
     let ctx = window(crate::uia::scan_id());
     let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
-    let (mut system, mut source, mut app) = (SYSTEM_CHAT.to_string(), "none", String::new());
+    let (mut system, mut source, mut app) = (format!("{SYSTEM_CHAT} {TOOL_USE} {}", today()), "none", String::new());
     if let Some(c) = &ctx {
         app = c.app.clone();
         let place = if c.title.is_empty() { c.app.clone() } else { format!("{} ({})", c.title, c.app) };
@@ -489,14 +551,14 @@ pub fn open() -> Result<Opened, String> {
         }
     }
     // The model reads the system message now and keeps it (see `warm_now`).
-    if let Some(prompt) = template(port, &system, SENTINEL) {
+    if let Some(prompt) = template_with(port, &system, SENTINEL, Some(TOOLS)) {
         if let Some(at) = prompt.find(SENTINEL) {
             let prefix = prompt[..at].trim_end_matches(' ');
             let _ = crate::planner::http(port, "POST", "/completion", &completion(prefix, false, 0), Duration::from_secs(120));
         }
     }
     touch();
-    Ok(Opened { port, system, app, model, source })
+    Ok(Opened { port, system, app, model, source, tools: TOOLS })
 }
 
 /// Excerpts of the user's documents for a chat message that is not about the screen: a block to put
@@ -644,7 +706,11 @@ mod tests {
             (PathBuf::from(r"C:\m\Qwen3.5-4B-Q4_K_S.gguf"), gb(3)),
             (PathBuf::from(r"C:\m\huge-70b.gguf"), gb(40)),
         ];
-        assert_eq!(pick(files).as_deref(), Some(Path::new(r"C:\m\Qwen3.5-4B-Q4_K_S.gguf")));
+        assert_eq!(pick(files.clone()).as_deref(), Some(Path::new(r"C:\m\Qwen3.5-4B-Q4_K_S.gguf")));
+        let mut with_gemma = files;
+        with_gemma.push((PathBuf::from(r"C:\m\gemma-4-E4B-it-Q4_0.gguf"), gb(4)));
+        with_gemma.push((PathBuf::from(r"C:\m\mtp-gemma-4-E4B-it.gguf"), 98_000_000));
+        assert_eq!(pick(with_gemma).as_deref(), Some(Path::new(r"C:\m\gemma-4-E4B-it-Q4_0.gguf")));
         assert_eq!(pick(vec![(PathBuf::from("a.gguf"), 100)]), None);
         assert_eq!(label(Path::new(r"C:\m\Qwen3.5-4B-Q4_K_S.gguf")), "Qwen3.5 4B");
         assert_eq!(label(Path::new("gemma-3-4b-it-Q4_0.gguf")), "gemma 3 4b");

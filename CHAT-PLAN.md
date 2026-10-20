@@ -32,3 +32,21 @@ thinking off; the conversation is lost when the palette closes; the model has no
    performance of long histories.
 
 Order matters: 3 needs 1; 4 needs 3; 6 needs 5; 2 can run any time after 1.
+
+## Model choice (2026-10-20)
+
+19 messages of the chat's kinds (greetings, facts, French, rewriting, sums, documents with known answers, a
+compiler error on screen), each model run as the app runs it (llama.cpp Vulkan on the Arc 140V, thinking
+only where the app turns it on, 400-token thinking budget):
+
+| model | words/s | first word, no thinking | with thinking | answers |
+|---|---|---|---|---|
+| Qwen3.5 4B Q4_K_S | ~19 | 1–3 s | 23–30 s | good |
+| Qwen3.5 4B Q4_0 | ~20 | same | same | same |
+| Qwen3.5 2B Q4_0 | ~35 | 0.5 s | 13 s | invents things (dates, a wrong rewrite) |
+| Gemma 4 E4B Q4_0 | ~12 | 1–2 s | 14–36 s | best |
+| **Gemma 4 E4B Q4_0 + MTP draft** | **~25** | **1–2 s** | **4–23 s** | **best** (chosen) |
+
+Tools: both 4B models picked the right tool for 7 of 7 messages (Gemma once the system message told it to
+search documents before asking); Gemma picks in under a second, Qwen in about three. Gemma's costs: ~17 s
+to load (Qwen 3 s) and ~4.5 GB. A thinking budget under 400 tokens got the train-time sum wrong.

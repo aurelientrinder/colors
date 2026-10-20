@@ -44,6 +44,9 @@ public static class Native
     private static extern IntPtr pc_chat_docs([MarshalAs(UnmanagedType.LPUTF8Str)] string question);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr pc_find_files([MarshalAs(UnmanagedType.LPUTF8Str)] string request);
+
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
     private static extern void pc_ask_warm([MarshalAs(UnmanagedType.LPUTF8Str)] string question);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -227,7 +230,17 @@ public static class Native
         [property: JsonPropertyName("app")] string? App = null,
         [property: JsonPropertyName("model")] string? Model = null,
         [property: JsonPropertyName("source")] string? Source = null,
-        [property: JsonPropertyName("error")] string? Error = null);
+        [property: JsonPropertyName("error")] string? Error = null,
+        [property: JsonPropertyName("tools")] string? Tools = null);
+
+    /// <summary>A file the chat's find_files tool found (tools.rs). Times are unix seconds; Opened is 0 when unknown.</summary>
+    public sealed record FileFound(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("folder")] string Folder,
+        [property: JsonPropertyName("modified")] long Modified,
+        [property: JsonPropertyName("opened")] long Opened,
+        [property: JsonPropertyName("why")] string Why);
 
     /// <summary>Excerpts of your documents for a chat message (empty text: none).</summary>
     public sealed record ChatExcerpts(
@@ -241,6 +254,10 @@ public static class Native
     /// <summary>Excerpts from your documents for a message that is not about the screen.</summary>
     public static ChatExcerpts ChatDocs(string question) =>
         Read(pc_chat_docs(question), NativeJson.Default.ChatExcerpts) ?? new ChatExcerpts("", new());
+
+    /// <summary>The chat's find_files tool: <paramref name="request"/> is its JSON (query, from, to, kind, limit). Blocks a few seconds at most.</summary>
+    public static List<FileFound> FindFiles(string request) =>
+        Read(pc_find_files(request), NativeJson.Default.ListFileFound) ?? new();
 
     /// <summary>Let go of the chat model's memory.</summary>
     public static void AskStop() => pc_ask_stop();
@@ -365,6 +382,7 @@ public static class Native
 [JsonSerializable(typeof(Native.Appended))]
 [JsonSerializable(typeof(List<Native.ActionRow>))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(List<Native.FileFound>))]
 [JsonSerializable(typeof(Native.Control))]
 [JsonSerializable(typeof(Native.FileOutcome))]
 [JsonSerializable(typeof(Native.AskReady))]

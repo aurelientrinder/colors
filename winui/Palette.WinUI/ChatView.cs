@@ -27,6 +27,12 @@ public sealed class ChatMsg
     public long ThinkMs { get; set; }
     /// <summary>Should the model think before answering (on the user's message and on the answer to it)?</summary>
     public bool Think { get; set; }
+    /// <summary>For an answer: the tools it used, round by round (sent back with the conversation).</summary>
+    public List<ToolRound> Rounds { get; } = new();
+    /// <summary>For an answer: what the tools found, shown as cards under the text (FilesBlock, WeatherBlock, EventsBlock).</summary>
+    public List<object> Blocks { get; } = new();
+    /// <summary>Where in Text the latest turn of the model begins (text before it was written with tool calls).</summary>
+    public int ReplyStart { get; set; }
 }
 
 /// <summary>A chat with the model that runs on this PC, shown as a card under one row.</summary>
@@ -50,18 +56,6 @@ public sealed partial class MainWindow
     private static readonly Regex AboutFiles = new(
         @"\b(my|in my|from my)\s+(documents?|files?|notes?|pdfs?|papers?|folders?|downloads?|contracts?|lease)\b|\b(mes|dans mes)\s+(documents?|fichiers?|notes?)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
-    /// <summary>A message about the user's own things ("my lease", "the invoice I saved"), as opposed to chat or general knowledge.</summary>
-    private static readonly Regex Personal = new(
-        @"\b(my|mine|our|mes|mon|ma|notre)\b|\b(files?|documents?|pdfs?|notes?|folders?|invoices?|contracts?|reports?|papers?|fichiers?|factures?)\b",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
-    /// <summary>
-    /// Is this message worth searching the user's documents for? Not a greeting or a short remark: the
-    /// search keeps any document holding one of the words, so "hello" brought back four unrelated files.
-    /// </summary>
-    private static bool WantsDocuments(string message) =>
-        message.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 4 && Personal.IsMatch(message);
 
     private ChatAnswer? _chat;
     private CancellationTokenSource? _chatCts;
@@ -159,6 +153,9 @@ public sealed partial class MainWindow
         _ = RunChat(chat, user, answer, cts.Token);
     }
 
+    /// <summary>Rounds of tools one answer may take before it has to answer.</summary>
+    private const int MaxToolRounds = 3;
+
     private async Task RunChat(ChatAnswer chat, ChatMsg user, ChatMsg answer, CancellationToken ct)
     {
         bool failed = false;
@@ -173,13 +170,11 @@ public sealed partial class MainWindow
                 failed = true;
                 return;
             }
-            // Documents, when the message is about your files: a "?" in front says so, so do words like
-            // "my documents", and so does a longer message about your own things in a chat with no window
-            // read. Not for greetings or follow-ups: the search takes a moment and brings back files
-            // whenever one word matches.
+            // Documents up front when the message asks for them in so many words: a "?" in front, or
+            // "my documents". Otherwise the model searches them itself when it needs to (search_documents).
             string message = user.Text;
             if (message.StartsWith('?')) message = message[1..].Trim();
-            if (message != user.Text || AboutFiles.IsMatch(message) || (opened.Source == "none" && WantsDocuments(message)))
+            if (message != user.Text || AboutFiles.IsMatch(message))
             {
                 answer.Hint = "Searching your documents…";
                 RenderChat(chat);
@@ -198,40 +193,34 @@ public sealed partial class MainWindow
             }
             answer.Hint = "";
 
-            using var req = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{opened.Port}/v1/chat/completions")
+            // Ask; while the model asks for tools, run them, tell it what they found, and ask again. It
+            // thinks (when the message calls for it) before its first move only: with the tools' results
+            // in hand, it answers straight away.
+            for (int round = 0; ; round++)
             {
-                Content = new StringContent(ChatBody(opened.System ?? "", chat, user.Think), Encoding.UTF8, "application/json"),
-            };
-            using var resp = await AskHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-            resp.EnsureSuccessStatusCode();
-            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            var text = new StringBuilder();
-            var thought = new StringBuilder();
-            long drawn = 0;
-            while (await reader.ReadLineAsync(ct) is { } line)
-            {
-                if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
-                string data = line[6..];
-                if (data == "[DONE]") break;
-                using var doc = JsonDocument.Parse(data);
-                if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
-                if (!choices[0].TryGetProperty("delta", out var delta)) continue;
-                if (delta.TryGetProperty("reasoning_content", out var reason) && reason.ValueKind == JsonValueKind.String)
+                bool lastRound = round >= MaxToolRounds;
+                string body = ChatBody(opened.System ?? "", chat, think: user.Think && round == 0, tools: lastRound ? null : opened.Tools);
+                var calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct);
+                if (calls.Count == 0 || lastRound) break;
+
+                // What the model wrote before calling stays on screen; the next turn writes after it.
+                var turn = new ToolRound { Content = answer.Text[answer.ReplyStart..] };
+                answer.Rounds.Add(turn);
+                foreach (var call in calls)
                 {
-                    if (thought.Length == 0) thinkStart = Environment.TickCount64;
-                    thought.Append(reason.GetString());
-                }
-                if (delta.TryGetProperty("content", out var part) && part.ValueKind == JsonValueKind.String) text.Append(part.GetString());
-                SplitThinking(thought, text, out string thinking, out string reply);
-                if (thinking.Length > 0 && answer.ThinkMs == 0 && reply.Length > 0) answer.ThinkMs = Math.Max(1, Environment.TickCount64 - (thinkStart > 0 ? thinkStart : Environment.TickCount64));
-                answer.Thinking = thinking;
-                answer.Text = reply;
-                if (Environment.TickCount64 - drawn > 60)
-                {
-                    drawn = Environment.TickCount64;
+                    answer.Hint = ToolHint(call.Name);
                     RenderChat(chat);
+                    var (result, block, note) = await RunTool(call.Name, call.Arguments, ct);
+                    if (ct.IsCancellationRequested) return;
+                    call.Result = result;
+                    turn.Calls.Add(call);
+                    if (block != null) answer.Blocks.Add(block);
+                    if (note != null) answer.Note = note;
                 }
+                answer.Hint = "";
+                if (answer.Text.Length > 0 && !answer.Text.EndsWith('\n')) answer.Text += "\n\n";
+                answer.ReplyStart = answer.Text.Length;
+                RenderChat(chat);
             }
         }
         catch (OperationCanceledException)
@@ -249,11 +238,82 @@ public sealed partial class MainWindow
             if (!ct.IsCancellationRequested)
             {
                 if (answer.Thinking.Length > 0 && answer.ThinkMs == 0 && thinkStart > 0) answer.ThinkMs = Environment.TickCount64 - thinkStart;
-                if (answer.Text.Length == 0 && !failed) answer.Text = "I ran out of room before I could answer. Ask again, a little more simply.";
+                answer.Text = answer.Text.TrimEnd();
+                if (answer.Text.Length == 0 && answer.Blocks.Count == 0 && !failed)
+                    answer.Text = "I ran out of room before I could answer. Ask again, a little more simply.";
                 chat.Busy = false;
                 RenderChat(chat);
             }
         }
+    }
+
+    /// <summary>
+    /// One turn of the model, streamed into <paramref name="answer"/> (its reasoning and the text after
+    /// ReplyStart). Returns the tools it asked for, if any.
+    /// </summary>
+    private async Task<List<ToolCall>> StreamTurn(ChatAnswer chat, ChatMsg answer, int port, string body,
+        Func<long> thinkStart, Action<long> setThinkStart, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{port}/v1/chat/completions")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        using var resp = await AskHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        resp.EnsureSuccessStatusCode();
+        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        string before = answer.Text[..answer.ReplyStart], thoughtBefore = answer.Thinking;
+        var text = new StringBuilder();
+        var thought = new StringBuilder();
+        var calls = new SortedDictionary<int, ToolCall>();
+        long drawn = 0;
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
+            string data = line[6..];
+            if (data == "[DONE]") break;
+            using var doc = JsonDocument.Parse(data);
+            if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
+            if (!choices[0].TryGetProperty("delta", out var delta)) continue;
+            if (delta.TryGetProperty("reasoning_content", out var reason) && reason.ValueKind == JsonValueKind.String)
+            {
+                if (thinkStart() == 0) setThinkStart(Environment.TickCount64);
+                thought.Append(reason.GetString());
+            }
+            if (delta.TryGetProperty("content", out var part) && part.ValueKind == JsonValueKind.String) text.Append(part.GetString());
+            // Tool calls come in pieces: the name first, then the arguments a few characters at a time.
+            if (delta.TryGetProperty("tool_calls", out var tcs) && tcs.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var tc in tcs.EnumerateArray())
+                {
+                    int index = tc.TryGetProperty("index", out var ix) && ix.ValueKind == JsonValueKind.Number ? ix.GetInt32() : calls.Count;
+                    if (!calls.TryGetValue(index, out var call))
+                    {
+                        string id = tc.TryGetProperty("id", out var idv) && idv.ValueKind == JsonValueKind.String ? idv.GetString()! : $"call_{answer.Rounds.Count}_{index}";
+                        string name = tc.TryGetProperty("function", out var f0) && f0.TryGetProperty("name", out var nv) && nv.ValueKind == JsonValueKind.String ? nv.GetString()! : "";
+                        calls[index] = call = new ToolCall { Id = id, Name = name };
+                    }
+                    if (tc.TryGetProperty("function", out var f) && f.TryGetProperty("arguments", out var av) && av.ValueKind == JsonValueKind.String)
+                        call.Arguments += av.GetString();
+                }
+                if (answer.Hint.Length == 0 && calls.Count > 0)
+                {
+                    answer.Hint = ToolHint(calls.Values.First().Name);
+                    RenderChat(chat);
+                }
+            }
+            SplitThinking(thought, text, out string thinking, out string reply);
+            if (thinking.Length > 0 && answer.ThinkMs == 0 && (reply.Length > 0 || calls.Count > 0))
+                answer.ThinkMs = Math.Max(1, Environment.TickCount64 - (thinkStart() > 0 ? thinkStart() : Environment.TickCount64));
+            answer.Thinking = thoughtBefore + thinking;
+            answer.Text = before + reply;
+            if (Environment.TickCount64 - drawn > 60)
+            {
+                drawn = Environment.TickCount64;
+                RenderChat(chat);
+            }
+        }
+        return calls.Values.Where(c => c.Name.Length > 0).ToList();
     }
 
     /// <summary>
@@ -275,8 +335,12 @@ public sealed partial class MainWindow
         reply = t;
     }
 
-    /// <summary>The request: the system message, the conversation so far, and the new message. Written by hand: no reflection.</summary>
-    private static string ChatBody(string system, ChatAnswer chat, bool think)
+    /// <summary>
+    /// The request: the system message, the conversation so far (with the tools each answer used and what
+    /// they found), and the new message; the tools offered, when <paramref name="tools"/> is given.
+    /// Written by hand: no reflection.
+    /// </summary>
+    private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools)
     {
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms))
@@ -291,12 +355,54 @@ public sealed partial class MainWindow
                 w.WriteEndObject();
             }
             Message("system", system);
-            // The last pair is the message being answered (its answer is empty); older turns stay as they
-            // were sent, so the model's cache of the conversation holds.
-            var turns = chat.Messages.Where(m => m.Role == "user" || m.Text.Length > 0).ToList();
+            // Older turns stay as they were sent, so the model's cache of the conversation holds; the last
+            // message is the one being answered, with the tools used for it so far.
+            var turns = chat.Messages.Where(m => m.Role == "user" || m.Text.Length > 0 || m.Rounds.Count > 0).ToList();
             int from = Math.Max(0, turns.Count - 13);   // the last six exchanges and the new message
-            foreach (var m in turns.Skip(from)) Message(m.Role, m.Role == "user" ? m.Sent : m.Text);
+            foreach (var m in turns.Skip(from))
+            {
+                if (m.Role == "user")
+                {
+                    Message("user", m.Sent);
+                    continue;
+                }
+                foreach (var round in m.Rounds)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("role", "assistant");
+                    w.WriteString("content", round.Content.Trim());
+                    w.WriteStartArray("tool_calls");
+                    foreach (var c in round.Calls)
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("id", c.Id);
+                        w.WriteString("type", "function");
+                        w.WriteStartObject("function");
+                        w.WriteString("name", c.Name);
+                        w.WriteString("arguments", c.Arguments.Length > 0 ? c.Arguments : "{}");
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                    }
+                    w.WriteEndArray();
+                    w.WriteEndObject();
+                    foreach (var c in round.Calls)
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("role", "tool");
+                        w.WriteString("tool_call_id", c.Id);
+                        w.WriteString("content", c.Result);
+                        w.WriteEndObject();
+                    }
+                }
+                string final = m.Text[Math.Min(m.ReplyStart, m.Text.Length)..].Trim();
+                if (final.Length > 0 && !ReferenceEquals(m, chat.Messages[^1])) Message("assistant", final);
+            }
             w.WriteEndArray();
+            if (tools != null)
+            {
+                w.WritePropertyName("tools");
+                w.WriteRawValue(tools);
+            }
             w.WriteBoolean("stream", true);
             w.WriteNumber("max_tokens", think ? 2000 : 700);
             w.WriteNumber("temperature", 0.3);
@@ -373,7 +479,7 @@ public sealed partial class MainWindow
                 Child = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
             };
         }
-        return new AssistantView(() => { if (_chat is { } c) RenderChat(c); });
+        return new AssistantView(() => { if (_chat is { } c) RenderChat(c); }, MakeBlockView);
     }
 
     private static void UpdateMessageView(FrameworkElement view, ChatMsg m, bool writing)

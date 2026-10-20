@@ -167,10 +167,13 @@ internal sealed class AssistantView : StackPanel
     };
     private readonly TextBlock _body = new() { TextWrapping = TextWrapping.Wrap, LineHeight = 21, IsTextSelectionEnabled = true };
     private readonly TextBlock _note = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    private readonly StackPanel _blocks = new() { Spacing = 4 };
+    private readonly Func<object, FrameworkElement> _makeBlock;
     private bool _open;
 
-    public AssistantView(Action onResize)
+    public AssistantView(Action onResize, Func<object, FrameworkElement> makeBlock)
     {
+        _makeBlock = makeBlock;
         Spacing = 3;
         var dim = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
@@ -199,6 +202,7 @@ internal sealed class AssistantView : StackPanel
         Children.Add(_think);
         Children.Add(_reasoning);
         Children.Add(_body);
+        Children.Add(_blocks);
         Children.Add(_note);
     }
 
@@ -248,6 +252,8 @@ internal sealed class AssistantView : StackPanel
             if (writing) _fresh = true;
             DrawBody();
         }
+        // What the tools found: cards under the text, each added once.
+        for (int i = _blocks.Children.Count; i < m.Blocks.Count; i++) _blocks.Children.Add(_makeBlock(m.Blocks[i]));
         _note.Text = m.Note;
         _note.Visibility = m.Note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }

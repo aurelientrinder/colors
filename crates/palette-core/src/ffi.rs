@@ -798,7 +798,7 @@ pub unsafe extern "C" fn pc_ask_warm(question: *const c_char) {
 #[no_mangle]
 pub extern "C" fn pc_chat_open() -> *mut c_char {
     let out = match crate::chat::open() {
-        Ok(o) => serde_json::json!({"ok": true, "port": o.port, "system": o.system, "app": o.app, "model": o.model, "source": o.source}),
+        Ok(o) => serde_json::json!({"ok": true, "port": o.port, "system": o.system, "app": o.app, "model": o.model, "source": o.source, "tools": o.tools}),
         Err(e) => serde_json::json!({"ok": false, "error": e}),
     };
     into_c(out.to_string())
@@ -821,6 +821,40 @@ pub unsafe extern "C" fn pc_chat_docs(question: *const c_char) -> *mut c_char {
         None => serde_json::json!({"text": "", "names": []}),
     };
     into_c(out.to_string())
+}
+
+/// The chat's `find_files` tool (tools.rs): `{"query":"...","from":unix,"to":unix,"kind":"document","limit":6}`
+/// in, `[{"path","name","folder","modified","opened","why"},...]` out. Takes up to a few seconds (the
+/// meaning search): call from a worker thread. Free with `pc_free`.
+///
+/// # Safety
+/// `request` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_find_files(request: *const c_char) -> *mut c_char {
+    let req: serde_json::Value = if request.is_null() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(CStr::from_ptr(request).to_str().unwrap_or("")).unwrap_or(serde_json::Value::Null)
+    };
+    let query = req["query"].as_str().unwrap_or("");
+    let by_name = |q: &str| match ENGINE.get() {
+        Some(e) => crate::tools::file_paths(e.searcher.search_all(q, 40)),
+        None => Vec::new(),
+    };
+    let by_topic = |q: &str| match ENGINE.get() {
+        Some(e) => crate::tools::file_paths(e.sem.query(q, Duration::from_secs(8)).into_iter().map(|(h, _)| h)),
+        None => Vec::new(),
+    };
+    let found = crate::tools::find_files(
+        query,
+        req["from"].as_i64().unwrap_or(0),
+        req["to"].as_i64().unwrap_or(0),
+        req["kind"].as_str().unwrap_or("any"),
+        req["limit"].as_u64().unwrap_or(6) as usize,
+        &by_name,
+        &by_topic,
+    );
+    into_c(serde_json::to_string(&found).unwrap_or_else(|_| "[]".into()))
 }
 
 /// Let go of the chat model (its memory is freed; the next question loads it again).
