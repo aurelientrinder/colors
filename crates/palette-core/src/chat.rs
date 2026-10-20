@@ -88,6 +88,14 @@ After a weather, calendar or PC tool, the user also sees what it found as a card
 repeating every number. If a tool finds nothing, say so. When the user asks about something that may be written in their own papers \
 (a lease, an invoice, a contract, a manual, notes), search their documents first instead of asking them where to look.";
 
+/// Answering from what the tools found. Measured on questions built to tempt it (CHAT-PLAN.md, "Grounding"):
+/// with these rules and a short think over the results, 8 of 8 right against 6 without (a yearly rent off by
+/// 290 euros, a count of days skipped or wrong).
+const GROUNDING: &str = "Ground every fact about the user's files, documents, calendar, weather and PC in what your tools returned in \
+this conversation: quote names, dates and numbers exactly as they came, never estimate or invent them, and never name a file a tool \
+did not return. If the results do not hold the answer, say plainly that you could not find it (and what you did find), instead of \
+guessing. You may reason from the results (count, compare, work out a date), saying what you based it on.";
+
 /// The model's long-term memory: what it remembers comes with the instructions (the shell's MemoryStore,
 /// which also notes what the user says about themselves, after each message, with a request of its own).
 const MEMORY_USE: &str = "You have a long-term memory of the user: what you remember, if anything, is listed below, and what they tell you about themselves is noted for later conversations on its own, so you need do nothing to remember it. Use it when it helps; never recite it unasked.";
@@ -553,7 +561,7 @@ pub fn open(memory: &str) -> Result<Opened, String> {
     let server = std::thread::spawn(ensure_server);
     let ctx = window(crate::uia::scan_id());
     let (port, model) = server.join().map_err(|_| "The chat model stopped".to_string())??;
-    let (mut system, mut source, mut app) = (format!("{SYSTEM_CHAT} {TOOL_USE} {MEMORY_USE} {}", today()), "none", String::new());
+    let (mut system, mut source, mut app) = (format!("{SYSTEM_CHAT} {TOOL_USE} {GROUNDING} {MEMORY_USE} {}", today()), "none", String::new());
     if !memory.trim().is_empty() {
         system.push_str("\n\n");
         system.push_str(memory.trim());

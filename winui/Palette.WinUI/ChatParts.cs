@@ -302,6 +302,7 @@ internal sealed class AssistantView : StackPanel
     // ------------------------------------------------------------------ the rail's rows
 
     private RailThink? _thinkRow;
+    private RailThink? _lateRow;    // the thinking over the tools' results, after the steps
     private readonly List<(ToolCall call, RailStep view)> _steps = new();
     private readonly List<(ToolRound round, StackPanel calls)> _rounds = new();
 
@@ -359,7 +360,19 @@ internal sealed class AssistantView : StackPanel
             }
         }
         foreach (var (call, view) in _steps) view.Update(call);
+
+        // Thinking over what the tools found: a node after the steps, live while it thinks.
+        bool stepRunning = m.Rounds.Any(r => r.Calls.Any(c => !c.Done));
+        bool lateLive = _writing && m.LateThink && m.Rounds.Count > 0 && !stepRunning && !_answering;
+        if (_lateRow == null && (lateLive || m.LateThinking.Length > 0))
+        {
+            _lateRow = new RailThink(_onResize);
+            _rail.Children.Add(_lateRow.Row);
+        }
+        _lateRow?.Update(m.LateThinking, m.LateThinkMs, "", lateLive);
     }
+
+    private bool _writing, _answering;
 
     /// <summary>The chip's icons and words: the tools used (and the brain, if it thought), steps and time.</summary>
     private void FillChip(ChatMsg m)
@@ -367,7 +380,7 @@ internal sealed class AssistantView : StackPanel
         var calls = m.Rounds.SelectMany(r => r.Calls).ToList();
         _chipIcons.Children.Clear();
         var glyphs = new List<string>();
-        if (m.Thinking.Length > 0) glyphs.Add("brain");
+        if (m.Thinking.Length > 0 || m.LateThinking.Length > 0) glyphs.Add("brain");
         foreach (var c in calls)
         {
             string g = RailStep.Glyph(c.Name);
@@ -381,7 +394,7 @@ internal sealed class AssistantView : StackPanel
                 : new FontIcon { Glyph = g, FontSize = 10, Foreground = Res("TextFillColorSecondaryBrush") };
             _chipIcons.Children.Add(face);
         }
-        double secs = (m.ThinkMs + calls.Sum(c => c.Ms)) / 1000.0;
+        double secs = (m.ThinkMs + m.LateThinkMs + calls.Sum(c => c.Ms)) / 1000.0;
         string time = secs >= 1 ? $"{secs:0} s" : "a moment";
         _chipText.Text = calls.Count switch
         {
@@ -413,10 +426,13 @@ internal sealed class AssistantView : StackPanel
         string reply = m.Text[Math.Min(m.ReplyStart, m.Text.Length)..];
         bool answering = reply.Trim().Length > 0;
         bool stepRunning = m.Rounds.Any(r => r.Calls.Any(c => !c.Done));
+        _writing = writing;
+        _answering = answering;
         // Thinking (or reading documents first) before any word: the brain's node, live.
         bool thinkingLive = writing && !answering && m.Rounds.Count == 0 && (m.Think || m.Thinking.Length > 0 || m.Hint.Length > 0);
         SyncRail(m, thinkingLive);
 
+        bool lateLive = writing && m.LateThink && m.Rounds.Count > 0 && !stepRunning && !answering;
         bool worked = m.Rounds.Count > 0 || m.Thinking.Length > 0 || thinkingLive;
         if (writing)
         {
@@ -447,7 +463,7 @@ internal sealed class AssistantView : StackPanel
         }
         _wasWriting = writing;
 
-        bool waiting = writing && !answering && !stepRunning && !thinkingLive;
+        bool waiting = writing && !answering && !stepRunning && !thinkingLive && !lateLive;
         _tail.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed;
         if (waiting) _tail.Start();
         else _tail.Stop();
@@ -725,16 +741,20 @@ internal sealed class RailThink
         return "";
     }
 
-    public void Update(ChatMsg m, bool live)
+    public void Update(ChatMsg m, bool live) => Update(m.Thinking, m.ThinkMs, m.Hint, live);
+
+    /// <param name="thinking">What was thought.</param><param name="ms">How long it took.</param>
+    /// <param name="hint">What the brain says before any thought ("Searching your documents").</param>
+    public void Update(string thinkingText, long ms, string hint, bool live)
     {
-        string thinking = m.Thinking.Trim();
+        string thinking = thinkingText.Trim();
         _thinking = thinking;
         _chevron.Visibility = thinking.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (live)
         {
             _live = true;
             _node.Set(true, null);
-            string line = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : Latest(thinking) is { Length: > 0 } s ? s : "Thinking";
+            string line = hint.Length > 0 ? hint.TrimEnd('…', '.') : Latest(thinking) is { Length: > 0 } s ? s : "Thinking";
             if (line != _label.Text)
             {
                 // The sentence being written grows a few words every 60 ms: it is updated in place. Only a
@@ -760,7 +780,7 @@ internal sealed class RailThink
         {
             _live = false;
             _node.Set(false, null);
-            double s = m.ThinkMs / 1000.0;
+            double s = ms / 1000.0;
             _label.Text = thinking.Length == 0 ? "Read your documents" : s < 1 ? "Thought for a moment" : $"Thought for {s:0} s";
         }
         if (_open) _full.Set(thinking, streaming: false);

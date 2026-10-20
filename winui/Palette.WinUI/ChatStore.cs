@@ -40,7 +40,7 @@ internal static class ChatStore
 
     public sealed record SavedMsg(
         string Role, string Text, string Sent, string Note, string Thinking, long ThinkMs, bool Think, int ReplyStart,
-        List<SavedRound> Rounds, List<SavedBlock> Blocks);
+        List<SavedRound> Rounds, List<SavedBlock> Blocks, string? LateThinking = null, long LateThinkMs = 0);
 
     public sealed record SavedChat(DateTime Saved, List<SavedMsg> Messages, string? Id = null, string? Title = null,
         string? Summary = null, int SummaryUpTo = 0);
@@ -172,6 +172,7 @@ internal static class ChatStore
             {
                 Role = s.Role, Text = s.Text, Sent = s.Sent, Note = s.Note, Thinking = s.Thinking, ThinkMs = s.ThinkMs,
                 Think = s.Think, ReplyStart = Math.Min(s.ReplyStart, s.Text.Length),
+                LateThinking = s.LateThinking ?? "", LateThinkMs = s.LateThinkMs,
             };
             foreach (var r in s.Rounds)
             {
@@ -209,7 +210,7 @@ internal static class ChatStore
         var snapshot = new SavedChat(DateTime.Now, messages.Skip(skip).Select(m => new SavedMsg(
             m.Role, m.Text, m.Sent, m.Note, m.Thinking, m.ThinkMs, m.Think, m.ReplyStart,
             m.Rounds.Select(r => new SavedRound(r.Content, r.Calls.Select(c => new SavedCall(c.Id, c.Name, c.Arguments, c.Result, c.Label, c.Outcome, c.Ms)).ToList())).ToList(),
-            m.Blocks.Select(Saved).Where(b => b != null).Select(b => b!).ToList())).ToList(),
+            m.Blocks.Select(Saved).Where(b => b != null).Select(b => b!).ToList(), m.LateThinking, m.LateThinkMs)).ToList(),
             chat.Id, chat.Title, chat.Summary, Math.Max(0, chat.SummaryUpTo - skip));
         string firstAsk = messages.FirstOrDefault(m => m.Role == "user")?.Text ?? "";
         string lastAsk = messages.LastOrDefault(m => m.Role == "user")?.Text ?? "";

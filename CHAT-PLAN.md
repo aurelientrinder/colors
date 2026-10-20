@@ -10,13 +10,9 @@ thinking off; the conversation is lost when the palette closes; the model has no
 
 ## Steps (each lands working and is committed on its own)
 
-Status (2026-10-20): 1–4 done; 5 done (conversations kept in chats\, resumed with Tab, Ctrl+N files one
-away, Ctrl+H lists them with model-written titles, a running summary covers what leaves the model's view;
-the list was tried on screen, the summary not yet); 6 built and tried on screen
-(MemoryStore.cs: a separate request after each personal-sounding message notes facts as + - ~ lines,
-because Gemma would not call a remember tool; "Remembered: …" lines with Undo; Settings rows); 7 to do.
-Answers are prose only (never lists) and name files as inline links. Thinking is on only for messages
-that need it (Shift+Enter forces it); answers fade in as they are written.
+Status (2026-10-20): steps 1 to 7 done and installed. Since: answers come step by step on a timeline rail
+(a sentence of intent, a line per tool, the answer), and the model answers from what its tools found, thinking
+briefly over the results when the answer must be worked out (see "Grounding").
 
 1. **Message model.** `ChatMsg` holds blocks (text, thinking, widget) instead of one string. Light
    markdown (bold, code, lists, links) in the text view. Scrolling keeps the place when you scroll up
@@ -40,6 +36,26 @@ that need it (Shift+Enter forces it); answers fade in as they are written.
    performance of long histories.
 
 Order matters: 3 needs 1; 4 needs 3; 6 needs 5; 2 can run any time after 1.
+
+## Grounding (2026-10-20)
+
+8 questions built to tempt the model into inventing (an answer missing from the documents, an empty file
+search, a duration the data does not hold) or needing a step of reasoning over a tool's result (days until
+a date, a yearly sum, "should I take an umbrella"), each scored for the facts it must give and the ones it
+must not invent:
+
+| variant | right | time for the 8 |
+|---|---|---|
+| instructions as they were | 6/8 (rent 12,010 € for 12,300; no day count) | 30 s |
+| + grounding rules | 6/8 (315 days given as 333) | 39 s |
+| + rules + thinking over the results, 120 or 200 tokens | 7/8 (the day count) | 45–47 s |
+| **+ rules + thinking over the results, 300 tokens** | **8/8** | 51 s |
+| + rules + thinking over the results, 400 tokens | 8/8 | 97 s |
+
+Chosen: the rules always (chat.rs GROUNDING), and a 300-token think after the tools only for questions whose
+answer is worked out from the results (ChatView.cs WorkingOut: how many/much/long, totals, comparisons,
+"should I", "is it enough"); plain lookups stay instant. The per-request limit is llama-server's
+`thinking_budget_tokens`.
 
 ## Model choice (2026-10-20)
 
