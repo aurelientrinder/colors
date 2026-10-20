@@ -737,15 +737,21 @@ internal sealed class RailThink
             string line = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : Latest(thinking) is { Length: > 0 } s ? s : "Thinking";
             if (line != _label.Text)
             {
+                // The sentence being written grows a few words every 60 ms: it is updated in place. Only a
+                // new sentence taking over fades in (restarting the fade at each growth made the line flicker).
+                bool grows = _label.Text.Length > 0 && line.StartsWith(_label.Text, StringComparison.Ordinal);
                 _label.Text = line;
-                // The new sentence comes up quickly in place of the old one.
-                _swap?.Stop();
-                var a = new DoubleAnimation { From = 0.25, To = 1, Duration = TimeSpan.FromMilliseconds(260), EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-                Storyboard.SetTarget(a, _label);
-                Storyboard.SetTargetProperty(a, "Opacity");
-                _swap = new Storyboard();
-                _swap.Children.Add(a);
-                _swap.Begin();
+                if (!grows)
+                {
+                    // The new sentence comes up quickly in place of the old one.
+                    _swap?.Stop();
+                    var a = new DoubleAnimation { From = 0.25, To = 1, Duration = TimeSpan.FromMilliseconds(260), EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                    Storyboard.SetTarget(a, _label);
+                    Storyboard.SetTargetProperty(a, "Opacity");
+                    _swap = new Storyboard();
+                    _swap.Children.Add(a);
+                    _swap.Begin();
+                }
             }
             if (_open) _full.Set(thinking, streaming: true);
             return;
