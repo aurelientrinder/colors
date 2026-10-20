@@ -25,6 +25,7 @@ public sealed partial class MainWindow
         SystemBlock y => SystemCard(y.Reading),
         MemoryBlock m => MemoryLine(m),
         ReminderBlock { Kind: "set" or "cancelled" } r => ReminderLine(r),
+        ActionBlock a => ActionView(a),
         _ => null,
     };
 

@@ -99,6 +99,15 @@ public sealed partial class MainWindow
             case "set_reminder": return "Setting a reminder";
             case "list_reminders": return "Checking your reminders";
             case "cancel_reminder": return "Cancelling a reminder";
+            case "open": return Arg("target") is { Length: > 0 } t ? $"Opening {t}" : "Opening it";
+            case "change_setting":
+                if (!Settable.TryGetValue(Arg("setting").ToLowerInvariant().Replace(' ', '_').Replace("-", ""), out var st)) return "Changing the setting";
+                return $"Changing {(st.label is "Wi-Fi" or "Bluetooth" ? st.label : st.label.ToLowerInvariant())}";
+            case "create_folder": return Arg("name") is { Length: > 0 } f ? $"Making the folder {f}" : "Making a folder";
+            case "move_files": return Arg("to") is { Length: > 0 } to ? $"Moving files to {to}" : "Moving files";
+            case "rename_file": return "Renaming a file";
+            case "recycle_files": return "Putting files in the Recycle Bin";
+            case "undo_last_action": return "Undoing the last thing I did";
             default: return "Looking it up";
         }
     }
@@ -114,6 +123,12 @@ public sealed partial class MainWindow
         (_, ReminderBlock { Kind: "set" } r) => "Set for " + ReminderStore.Describe(r.Reminders[0].At),
         (_, ReminderBlock { Kind: "cancelled" } r) => r.Reminders.Count == 1 ? "Cancelled it" : $"Cancelled {r.Reminders.Count} reminders",
         (_, ReminderBlock { Kind: "list" } r) => r.Reminders.Count == 0 ? "No reminders set" : r.Reminders.Count == 1 ? "Found 1 reminder" : $"Found {r.Reminders.Count} reminders",
+        (_, ActionBlock { State: "asking" or "done" or "undone" } a) => a.Kind == "undo" ? "Undone" : a.Message,
+        (_, ActionBlock { State: "denied" }) => "You declined",
+        (_, ActionBlock { State: "stopped" }) => "Stopped",
+        (_, ActionBlock { State: "failed" }) => "Couldn't do it",
+        ("open", _) => result.StartsWith("Opened") ? result.TrimEnd('.') : "Not opened",
+        ("move_files" or "rename_file" or "recycle_files" or "create_folder" or "change_setting" or "undo_last_action", _) => "Not done",
         ("set_reminder", _) => "Not set",
         ("cancel_reminder", _) => "Nothing cancelled",
         ("find_files", _) => "No file found",
@@ -153,6 +168,13 @@ public sealed partial class MainWindow
                 "set_reminder" => SetReminderTool(Arg("text"), Num("in_minutes"), Arg("time"), Arg("day").Length > 0 ? Arg("day") : Arg("date")),
                 "list_reminders" => ListRemindersTool(),
                 "cancel_reminder" => CancelReminderTool(Arg("about")),
+                "open" => await OpenTool(Arg("target")),
+                "change_setting" => await SettingTool(Arg("setting"), Arg("value").Length > 0 ? Arg("value") : Num("value")?.ToString(CultureInfo.InvariantCulture) ?? ""),
+                "create_folder" => CreateFolderTool(Arg("name"), Arg("in")),
+                "move_files" => await MoveTool(Strings(args, "files"), Arg("to"), ct),
+                "rename_file" => await RenameTool(Arg("file"), Arg("new_name"), ct),
+                "recycle_files" => await RecycleTool(Strings(args, "files"), ct),
+                "undo_last_action" => UndoTool(),
                 _ => ($"There is no tool called {name}.", null, null),
             };
         }
@@ -235,6 +257,7 @@ public sealed partial class MainWindow
         var at = ReminderStore.Resolve(inMinutes, time, day, DateTime.Now, out string why);
         if (at == null) return ($"Not set: {why}", null, null);
         var r = ReminderStore.Add(text, at.Value, _chat?.Id);
+        ActionLog.Add(new ActionRecord(ActionLog.NewId(), "reminder", $"Set a reminder: {r.Text}", DateTime.Now, _chat?.Id, ReminderId: r.Id));
         return ($"Reminder set for {ReminderStore.Describe(r.At, CultureInfo.InvariantCulture)} ({ReminderStore.Until(r.At)}): {r.Text} " +
             "A bubble will pop up above the taskbar then.", new ReminderBlock("set", new() { r }), null);
     }

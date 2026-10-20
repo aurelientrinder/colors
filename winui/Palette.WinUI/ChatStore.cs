@@ -37,7 +37,11 @@ internal static class ChatStore
         SystemReading? System = null,
         List<SourceDoc>? Sources = null,
         List<MemoryChange>? Memory = null,
-        List<Reminder>? Reminders = null);
+        List<Reminder>? Reminders = null,
+        SavedAction? Action = null);
+
+    /// <summary>An action under an answer (ChatActions.cs): one still asking when Palette closed was never done.</summary>
+    public sealed record SavedAction(string Kind, string Question, List<string> Paths, string State, string Message, ActionRecord? Record);
 
     public sealed record SavedMsg(
         string Role, string Text, string Sent, string Note, string Thinking, long ThinkMs, bool Think, int ReplyStart,
@@ -192,6 +196,12 @@ internal static class ChatStore
                     "sources" when b.Sources != null => new SourcesBlock(b.Sources),
                     "memory" when b.Memory != null => new MemoryBlock(b.Memory),
                     "reminders" when b.Reminders != null => new ReminderBlock(b.Title ?? "set", b.Reminders),
+                    "action" when b.Action is { } a => new ActionBlock
+                    {
+                        Kind = a.Kind, Question = a.Question, Paths = a.Paths, Record = a.Record,
+                        State = a.State == "asking" ? "stopped" : a.State,
+                        Message = a.State == "asking" ? "Not done: Palette closed before you answered" : a.Message,
+                    },
                     _ => null,
                 };
                 if (block != null) m.Blocks.Add(block);
@@ -267,6 +277,7 @@ internal static class ChatStore
         SourcesBlock s => new SavedBlock("sources", Sources: s.Docs),
         MemoryBlock m => new SavedBlock("memory", Memory: m.Changes),
         ReminderBlock r => new SavedBlock("reminders", Title: r.Kind, Reminders: r.Reminders),
+        ActionBlock a => new SavedBlock("action", Action: new SavedAction(a.Kind, a.Question, a.Paths.ToList(), a.State, a.Message, a.Record)),
         _ => null,
     };
 }

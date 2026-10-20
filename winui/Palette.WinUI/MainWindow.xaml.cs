@@ -1061,8 +1061,13 @@ public sealed partial class MainWindow : Window
         }
         if (_view == View.Chat)
         {
-            // While an answer is written, Enter leaves the typing alone (the button, Stop, stops it).
-            if (_chat is { Busy: true }) return;
+            // While an answer is written, Enter leaves the typing alone (the button, Stop, stops it); while
+            // it asks before acting, Enter on an empty field allows.
+            if (_chat is { Busy: true })
+            {
+                if (_pendingApproval is { } ask && Input.Text.Trim().Length == 0) ask.Decide(true);
+                return;
+            }
             SendChat(Input.Text);
             return;
         }

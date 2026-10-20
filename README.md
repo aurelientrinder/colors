@@ -172,9 +172,8 @@ across restarts.
 | `Ctrl+H` | earlier chats: titled by the model, latest first; type to filter, `Enter` opens, `Shift+Delete` deletes |
 | `Page Up` / `Page Down` | scroll the conversation |
 
-**What it can look up, and reminders.** The model has tools, which only read (except the reminders',
-which Palette alone keeps), and calls them when a question is about your things, never for small talk
-or general knowledge:
+**What it can look up and do.** The model has tools, and calls them when a message is about your
+things, never for small talk or general knowledge:
 
 | You ask | It | You see |
 |---|---|---|
@@ -184,6 +183,11 @@ or general knowledge:
 | "do I have anything tomorrow?" | reads your calendar (Settings › Add Google Calendar) | an event list |
 | "how's my battery?", "why is my laptop slow?" | reads the processor, memory, battery and disk | a row of gauges |
 | "remind me to call mom at 6", "remind me on Friday at 9 to pay the bill", "what reminders do I have?", "cancel the pizza reminder" | sets, lists or cancels reminders | a quiet "Reminder · today at 18:00 · Call mom" line with Cancel (Undo once cancelled) |
+| "open Spotify", "open my CV", "open Downloads" | opens the app, file or folder | nothing more: it opens |
+| "turn the volume down to 30", "mute", "dark mode on", "the screen is too bright" | changes the setting (volume, mute, brightness, Wi-Fi, Bluetooth, dark mode, do not disturb) | "Volume set to 30% (was 55%)" with Undo |
+| "make a folder called Taxes 2026 in Documents" | makes it | a line with Undo (it removes the folder while empty) |
+| "put these photos in a folder called Lyon trip", "rename it to beach.jpg", "delete the blurry one" | moves, renames or recycles files it found, after asking | a card with the files, Deny and Allow; then a line with Undo |
+| "undo that", "put them back" | undoes the last thing it did | a line saying what was undone |
 
 **How it answers.** In prose, never lists. Before it looks something up it says in one sentence what it
 is about to do, so words come within about half a second; what it then does runs down a thin rail in
@@ -206,6 +210,18 @@ request of its own notes what changed, and a quiet "Remembered: …" line with U
 answer. Settings has a Chat memory switch and every fact as a row (Enter forgets it). Long
 conversations keep their thread: what scrolls out of the model's view is folded into a running summary.
 Everything (conversations in `%LOCALAPPDATA%\palette\chats`, memory in `memory.json`) stays on this PC.
+
+**Acting, with care.** What it does on the PC takes one of three levels of care. Opening an app, a
+file or a folder just happens. Changing a setting and making a folder happen at once, with Undo under
+the answer (the setting goes back to what it was). Moving, renaming and recycling files ask first: a
+card under the answer names the files (as links, to check them) and waits for Allow (or `Enter`) or Deny
+(or `Esc`), and the model says it left things as they were when you decline. Nothing is overwritten (a
+name that is taken gets "(2)"), nothing is deleted for good (recycled files come back from the Recycle
+Bin on Undo), and it works only in your own folders: never a whole drive, your whole user folder,
+Windows, Program Files or app data. A question is not a request: asked "is Wi-Fi on?", it is told the
+state and changes nothing. Everything it does is logged in `%LOCALAPPDATA%\palette\actions.json`, so Undo
+works from the line, or by asking, after a restart too. Like reminders, a request to act requires a tool
+call of the model, which otherwise says it did something it did not.
 
 **The bubble.** When a reminder comes due, a small pill appears centred just above the taskbar: a
 breathing dot, what it is about and its time. It glows three times with Windows' reminder sound, then

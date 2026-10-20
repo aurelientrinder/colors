@@ -273,17 +273,20 @@ public sealed partial class MainWindow
             // sentence of what the model is about to do (with a tool call when it needs one), then its
             // thinking (over what the tools found, if any), then the answer.
             bool retried = false, introduced = false;
-            // "Remind me…": a small model says it will set the reminder and does not, unless it must call a tool.
-            bool reminder = AsksReminder(message);
+            // "Remind me…", "move these to…", "turn the volume down": a small model says it will do it and
+            // does not, unless it must call a tool.
+            bool reminder = AsksReminder(message) || AsksAction(message);
+            _mayAct = AsksToAct(message);
             for (int round = 0; ; round++)
             {
                 bool lastRound = round >= MaxToolRounds;
                 bool intro = round == 0 && answer.LateThink && !reminder;   // it asks to think, or needs working out
                 bool late = round > 0 && answer.LateThink;
                 bool afterTools = answer.Rounds.Any(r => r.Calls.Count > 0);
-                // Once its reminders are set, listed or cancelled, all that is left is to say so.
+                // Once it has done what was asked (a reminder set, files moved, a setting changed), all that is
+                // left is to say so.
                 bool remindersDone = answer.Rounds.Count > 0 && answer.Rounds[^1].Calls.Count > 0
-                    && answer.Rounds[^1].Calls.All(c => c.Name is "set_reminder" or "list_reminders" or "cancel_reminder");
+                    && answer.Rounds[^1].Calls.All(c => Doing.Contains(c.Name));
                 string? turnNote = intro ? IntroNote : late && introduced && !afterTools ? WorkItOutNote : null;
                 string body = ChatBody(opened.System ?? "", chat, think: late && !remindersDone, tools: lastRound || remindersDone ? null : opened.Tools,
                     requireTool: reminder && round == 0, thinkBudget: late && afterTools ? LateThinkBudget : 0, note: turnNote,
@@ -332,13 +335,15 @@ public sealed partial class MainWindow
                     turn.Calls.Add(call);
                     RenderChat(chat);
                     long began = Environment.TickCount64;
+                    _acting = (chat, answer);
                     var (result, block, note) = await RunTool(call.Name, call.Arguments, ct);
                     if (ct.IsCancellationRequested) return;
                     call.Ms = Environment.TickCount64 - began;
                     call.Result = result;
                     call.Outcome = ToolOutcome(call.Name, result, block);
                     call.Done = true;
-                    if (block != null) answer.Blocks.Add(block);
+                    // A card that asked first is under the answer already.
+                    if (block != null && !answer.Blocks.Contains(block)) answer.Blocks.Add(block);
                     if (note != null) answer.Note = note;
                     RenderChat(chat);
                 }
@@ -519,6 +524,18 @@ public sealed partial class MainWindow
     private static readonly Regex ReminderAsk = new(
         @"\b(remind (me|us)|rappelle[- ](moi|nous)|n'oublie pas de me|set (me )?(a|an) reminder|add a reminder|(my|any|what|which|upcoming) reminders?|(cancel|delete|remove|move|snooze)\b.{0,40}\breminders?|mes rappels|(annule|supprime)\b.{0,30}\brappel)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A message asking Palette to do something on the PC: open, move, rename, delete, make a folder, change
+    /// a setting, undo. Not a question about it ("how do I move…", "is Wi-Fi on?").
+    /// </summary>
+    private static readonly Regex ActionAsk = new(
+        @"\b(open|launch|move|rename|delete|recycle|trash|put (it|them|these|those|this|that|everything)|(create|make) (a |me a |the )?(new )?folders?|new folder|turn (it |the \w+ )?(on|off|up|down)|switch (on|off)|(wi-?fi|bluetooth|dark mode|light mode|do not disturb)\s+(on|off)|mute|unmute|volume|brightness|undo|ouvre|lance|déplace|renomme|supprime|mets (le|la|les|ça)|coupe le son|monte|baisse|annule ça|crée un dossier)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool AsksAction(string message) =>
+        ActionAsk.IsMatch(message) && !Regex.IsMatch(message,
+            @"^\s*(how|what|why|when|where|which|who|is|are|does|do i|can i|should i|comment|pourquoi|quand|est-ce)\b", RegexOptions.IgnoreCase);
 
     private static bool AsksReminder(string message) =>
         ReminderAsk.IsMatch(message) && !Regex.IsMatch(message, @"^\s*(how|comment)\b", RegexOptions.IgnoreCase);
