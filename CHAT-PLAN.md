@@ -10,6 +10,10 @@ thinking off; the conversation is lost when the palette closes; the model has no
 
 ## Steps (each lands working and is committed on its own)
 
+Status (2026-10-20): 1–4 done; 5 half done (the conversation is saved and resumed with Tab, Ctrl+N starts
+a new one; a list of earlier chats and the rolling summary remain); 6–7 to do. Thinking is on only for
+messages that need it (Shift+Enter forces it); answers fade in as they are written.
+
 1. **Message model.** `ChatMsg` holds blocks (text, thinking, widget) instead of one string. Light
    markdown (bold, code, lists, links) in the text view. Scrolling keeps the place when you scroll up
    while the model is writing.

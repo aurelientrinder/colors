@@ -707,7 +707,6 @@ public sealed partial class MainWindow : Window
         App.Log($"HidePalette from {caller} restore={restoreFocus} visible={_visible} sinceShow={(DateTime.UtcNow - _shownAt).TotalMilliseconds:F0}ms");
         if (!_visible) return;
         CancelAsk();
-        CancelChat();
         StopModelView();
         _visible = false;
         _lastHidden = DateTime.UtcNow;
@@ -866,6 +865,10 @@ public sealed partial class MainWindow : Window
                 return;
             case VirtualKey.Tab when !Held(VirtualKey.Shift) && _view == View.Results && n == 0:
                 StartChat(Input.Text);
+                e.Handled = true;
+                return;
+            case VirtualKey.N when _view == View.Chat && Held(VirtualKey.Control):
+                NewChat();
                 e.Handled = true;
                 return;
             case VirtualKey.Tab when _view == View.Chat:

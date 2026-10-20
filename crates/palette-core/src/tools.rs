@@ -4,7 +4,9 @@
 //! last opened or changed ("the file I was working on last week"). Three sources, merged:
 //! * Windows' Recent folder: a shortcut for every file the user opened, dated when it was opened;
 //! * the file index (search.rs), by name;
-//! * the meaning search of documents (semantic.rs), by topic.
+//! * the meaning search of documents (semantic.rs), by topic;
+//! * for a period ("this month's photos"), the user's own folders walked for files changed in it: a
+//!   photo from the phone or a download is never in the Recent folder.
 //!
 //! A file the user opened in the period asked about comes first, then files changed in it; a query
 //! narrows to files that match it by name or by meaning.
@@ -81,6 +83,72 @@ pub fn recently_opened(max: usize) -> Vec<(String, i64)> {
     out
 }
 
+/// The folders a person keeps their own files in: Desktop, Documents, Downloads, Pictures, Videos, Music,
+/// and OneDrive's.
+fn own_folders() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for base in ["USERPROFILE", "OneDrive"].iter().filter_map(std::env::var_os) {
+        for sub in ["Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"] {
+            let p = Path::new(&base).join(sub);
+            if p.is_dir() && !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Files under `roots` changed in `from..to` (unix seconds), newest first, at most `max`. Folders that
+/// hold tools rather than the user's own files (dot folders, node_modules, build output) are skipped,
+/// and the walk stops after `budget` entries so a huge tree cannot hold the answer up.
+fn changed_in(roots: &[std::path::PathBuf], from: i64, to: i64, max: usize, budget: usize) -> Vec<(String, i64)> {
+    const SKIP: [&str; 9] = ["node_modules", "target", "bin", "obj", "__pycache__", ".git", ".venv", "venv", "AppData"];
+    let mut found: Vec<(String, i64)> = Vec::new();
+    let mut seen = 0usize;
+    let mut stack: Vec<(std::path::PathBuf, usize)> = roots.iter().map(|r| (r.clone(), 0)).collect();
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > budget {
+                break;
+            }
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                if depth < 6 && !name.starts_with('.') && !SKIP.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
+                    stack.push((e.path(), depth + 1));
+                }
+            } else if ft.is_file() && !name.starts_with('~') && !name.starts_with('.') {
+                let t = e.metadata().ok().and_then(|m| m.modified().ok()).map(unix).unwrap_or(0);
+                if t >= from && (to == 0 || t < to) {
+                    found.push((e.path().display().to_string(), t));
+                }
+            }
+        }
+    }
+    found.sort_by(|a, b| b.1.cmp(&a.1));
+    found.truncate(max);
+    found
+}
+
+/// Words that say what kind of file is wanted rather than what it is called ("my photos", "the pdf"):
+/// left out of the query (the kind is its own argument), or no file would match "photos" by name.
+const KIND_WORDS: [&str; 30] = [
+    "file", "files", "photo", "photos", "picture", "pictures", "pic", "pics", "image", "images", "document", "documents",
+    "doc", "docs", "video", "videos", "my", "the", "a", "an", "some", "fichier", "fichiers", "mes", "les", "des", "took",
+    "taken", "recent", "latest",
+];
+
+/// `query` without the words of KIND_WORDS.
+fn strip_kind_words(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter(|w| !KIND_WORDS.contains(&w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric())))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Does `name` hold every word of `query` (case-insensitively)?
 fn name_matches(name: &str, query: &str) -> bool {
     let n = name.to_lowercase();
@@ -99,7 +167,8 @@ pub fn find_files(
     by_name: &dyn Fn(&str) -> Vec<String>,
     by_topic: &dyn Fn(&str) -> Vec<String>,
 ) -> Vec<FileFound> {
-    let query = query.trim();
+    let query = strip_kind_words(query);
+    let query = query.as_str();
     let in_period = |t: i64| t > 0 && (from == 0 || t >= from) && (to == 0 || t < to);
     let timed = from != 0 || to != 0;
 
@@ -119,6 +188,15 @@ pub fn find_files(
         let name = Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         if (query.is_empty() || name_matches(&name, query)) && (!timed || in_period(*t)) {
             add(p.clone(), *t, "opened");
+        }
+    }
+    if timed {
+        for (p, _) in changed_in(&own_folders(), from, to, 400, 60_000) {
+            let name = Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if (query.is_empty() || name_matches(&name, query)) && kind_matches(kind, &p) {
+                let t = opened_at.get(&p.to_lowercase()).copied().unwrap_or(0);
+                add(p, t, "changed");
+            }
         }
     }
     if !query.is_empty() {
@@ -192,6 +270,27 @@ mod tests {
         assert!(!kind_matches("document", r"C:\a\photo.jpg"));
         assert!(kind_matches("code", r"C:\src\main.rs"));
         assert!(kind_matches("any", r"C:\a\whatever.xyz"));
+    }
+
+    #[test]
+    fn a_walk_finds_files_changed_in_the_period() {
+        let dir = std::env::temp_dir().join(format!("palette-tools-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(dir.join("sub").join("node_modules"));
+        std::fs::write(dir.join("sub").join("photo.jpg"), b"x").unwrap();
+        std::fs::write(dir.join("sub").join("node_modules").join("skipped.js"), b"x").unwrap();
+        let now = now();
+        let found = changed_in(&[dir.clone()], now - 3600, 0, 10, 1000);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].0.ends_with("photo.jpg"));
+        assert!(changed_in(&[dir], now + 3600, 0, 10, 1000).is_empty());
+    }
+
+    #[test]
+    fn words_for_the_kind_of_file_are_not_looked_for_in_names() {
+        assert_eq!(strip_kind_words("photos"), "");
+        assert_eq!(strip_kind_words("my holiday photos"), "holiday");
+        assert_eq!(strip_kind_words("the Q3 report"), "Q3 report");
     }
 
     #[test]

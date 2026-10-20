@@ -47,17 +47,16 @@ public sealed record ChatAnswer() : WebAnswers.Answer("chat")
 
 /// <summary>
 /// Chat mode: Tab (a tap, with the search field empty or holding a question) turns the list into a
-/// conversation with the model, in the same field. The model has read the window in front (and its
-/// selection) before the first word is typed; a message that is not about the screen also gets the best
-/// passages of your documents. Enter sends, Esc or Tab leaves. Everything runs on this PC (chat.rs).
+/// conversation with the model, in the same field, picked up where it was left (Ctrl+N: a new one). The
+/// model has read the window in front (and its selection) before the first word is typed, and looks up
+/// files, documents, the weather, the calendar and the PC itself with its tools (ChatTools.cs). Enter
+/// sends, Esc or Tab leaves. Everything runs on this PC (chat.rs).
 /// </summary>
 public sealed partial class MainWindow
 {
-    private static readonly Regex AboutFiles = new(
-        @"\b(my|in my|from my)\s+(documents?|files?|notes?|pdfs?|papers?|folders?|downloads?|contracts?|lease)\b|\b(mes|dans mes)\s+(documents?|fichiers?|notes?)\b",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
     private ChatAnswer? _chat;
+    /// <summary>The conversation, kept while the chat is not on screen (and saved: ChatStore), so Tab picks it up again.</summary>
+    private ChatAnswer? _conversation;
     private CancellationTokenSource? _chatCts;
     private readonly List<(FrameworkElement view, ChatMsg msg)> _chatViews = new();
 
@@ -88,12 +87,20 @@ public sealed partial class MainWindow
         _chatCts = null;
     }
 
-    /// <summary>Tab: into the chat. A question already typed is the first message.</summary>
+    /// <summary>
+    /// Tab: into the chat, where it was left (an answer still being written goes on). A question already
+    /// typed is the next message.
+    /// </summary>
     private void StartChat(string typed)
     {
         CancelAsk();
-        CancelChat();
-        var chat = new ChatAnswer();
+        if (_conversation == null)
+        {
+            _conversation = new ChatAnswer();
+            _conversation.Messages.AddRange(ChatStore.Load());
+        }
+        var chat = _conversation;
+        chat.Hint = "Reading the window…";
         _chat = chat;
         Interlocked.Increment(ref _queryVersion);   // drop any search still on its way
         SetView(View.Chat, "Message");
@@ -132,7 +139,8 @@ public sealed partial class MainWindow
                 "window" => $"I've read the {opened.App} window. Ask me about it, or about your files.",
                 _ => "Ask me anything, or about your files.",
             };
-            chat.Footer = $"{opened.Model} · on this PC" + (opened.Source == "none" ? "" : opened.Source == "selection" ? " · reading your selection" : $" · reading the {opened.App} window");
+            chat.Footer = $"{opened.Model} · on this PC" + (opened.Source == "none" ? "" : opened.Source == "selection" ? " · reading your selection" : $" · reading the {opened.App} window")
+                + (chat.Messages.Count > 0 ? " · Ctrl+N new chat" : "");
         }
         RenderChat(chat);
     }
@@ -170,11 +178,11 @@ public sealed partial class MainWindow
                 failed = true;
                 return;
             }
-            // Documents up front when the message asks for them in so many words: a "?" in front, or
-            // "my documents". Otherwise the model searches them itself when it needs to (search_documents).
+            // Documents up front only when a "?" in front asks for them; otherwise the model searches them
+            // itself when it needs to (search_documents), and shows them as a card.
             string message = user.Text;
             if (message.StartsWith('?')) message = message[1..].Trim();
-            if (message != user.Text || AboutFiles.IsMatch(message))
+            if (message != user.Text)
             {
                 answer.Hint = "Searching your documents…";
                 RenderChat(chat);
@@ -243,6 +251,7 @@ public sealed partial class MainWindow
                     answer.Text = "I ran out of room before I could answer. Ask again, a little more simply.";
                 chat.Busy = false;
                 RenderChat(chat);
+                if (chat == _conversation) ChatStore.Save(chat.Messages);
             }
         }
     }
@@ -488,10 +497,19 @@ public sealed partial class MainWindow
         else if (view is AssistantView a) a.Update(m, writing);
     }
 
-    /// <summary>Leave the chat for the home view.</summary>
-    private void LeaveChat()
+    /// <summary>Ctrl+N: put the conversation away and start a new one.</summary>
+    private void NewChat()
     {
         CancelChat();
+        _conversation = new ChatAnswer();
+        ChatStore.Clear();
+        StartChat("");
+    }
+
+    /// <summary>Leave the chat for the home view. The conversation is kept (an answer being written goes on).</summary>
+    private void LeaveChat()
+    {
+        if (_chat is { Busy: false } c && c == _conversation) ChatStore.Save(c.Messages);
         _chat = null;
         _chatViews.Clear();
         ChatMessages.Children.Clear();

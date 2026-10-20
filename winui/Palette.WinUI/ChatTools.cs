@@ -30,6 +30,19 @@ public sealed record WeatherBlock(WebAnswers.Weather Weather);
 /// <summary>Calendar events a tool read, shown as a short list.</summary>
 public sealed record EventsBlock(string Title, List<CalEvent> Events);
 
+/// <summary>A document an answer drew on, numbered as the answer cites it.</summary>
+public sealed record SourceDoc(string Path, string Name);
+
+/// <summary>The documents behind an answer: [1] [2] chips to open them.</summary>
+public sealed record SourcesBlock(List<SourceDoc> Docs);
+
+/// <summary>The PC's state at one moment. Battery is -1 on a PC without one.</summary>
+public sealed record SystemReading(double Cpu, double MemUsedGb, double MemTotalGb, int Battery, bool Charging,
+    double DiskFreeGb, double DiskTotalGb, double UptimeHours, DateTime At);
+
+/// <summary>The PC's state, shown as a row of gauges.</summary>
+public sealed record SystemBlock(SystemReading Reading);
+
 /// <summary>
 /// The chat's tools (offered by chat.rs TOOLS): each runs off the UI thread and gives the model a short
 /// text, and the answer a card to show. All of them only read: nothing is opened, changed or sent.
@@ -43,12 +56,14 @@ public sealed partial class MainWindow
         "search_documents" => "Reading your documents…",
         "get_weather" => "Checking the weather…",
         "get_calendar" => "Reading your calendar…",
+        "get_system_status" => "Checking your PC…",
         _ => "Looking it up…",
     };
 
     /// <summary>Run a tool: the text for the model, a card (or null) and small print for under the answer (or null).</summary>
     private async Task<(string result, object? block, string? note)> RunTool(string name, string arguments, CancellationToken ct)
     {
+        App.Log($"chat tool {name} {arguments}");
         JsonElement args = default;
         try
         {
@@ -69,6 +84,7 @@ public sealed partial class MainWindow
                 "search_documents" => await SearchDocumentsTool(Arg("question")),
                 "get_weather" => await WeatherTool(Arg("place"), ct),
                 "get_calendar" => await CalendarTool(Arg("period"), Arg("date"), ct),
+                "get_system_status" => await SystemTool(),
                 _ => ($"There is no tool called {name}.", null, null),
             };
         }
@@ -139,7 +155,19 @@ public sealed partial class MainWindow
         if (question.Length == 0) return ("Give the question to search for.", null, null);
         var docs = await Task.Run(() => Native.ChatDocs(question));
         if (docs.Text.Length == 0) return ("Nothing in the user's documents matches that.", null, "Nothing in your documents matched");
-        return (docs.Text, null, "From your documents: " + string.Join(" · ", docs.Names.Select((n, i) => $"[{i + 1}] {n}")));
+        var paths = docs.Paths ?? new();
+        if (paths.Count != docs.Names.Count)
+            return (docs.Text, null, "From your documents: " + string.Join(" · ", docs.Names.Select((n, i) => $"[{i + 1}] {n}")));
+        return (docs.Text, new SourcesBlock(paths.Zip(docs.Names, (p, n) => new SourceDoc(p, n)).ToList()), null);
+    }
+
+    private static async Task<(string, object?, string?)> SystemTool()
+    {
+        var r = await Task.Run(SystemSnapshot.Read);
+        string battery = r.Battery < 0 ? "no battery" : $"battery {r.Battery}%{(r.Charging ? ", charging" : "")}";
+        string result = FormattableString.Invariant(
+            $"Processor {r.Cpu:0}% busy; memory {r.MemUsedGb:0.0} of {r.MemTotalGb:0.0} GB in use; {battery}; disk C: {r.DiskFreeGb:0} GB free of {r.DiskTotalGb:0} GB; running for {r.UptimeHours:0.#} hours.");
+        return (result, new SystemBlock(r), null);
     }
 
     private static async Task<(string, object?, string?)> WeatherTool(string place, CancellationToken ct)
@@ -175,5 +203,67 @@ public sealed partial class MainWindow
             sb.Append($"- {e.Title} ({at}{(e.Location.Length > 0 ? ", " + e.Location : "")})\n");
         }
         return (sb.ToString(), new EventsBlock(r.title, events), null);
+    }
+}
+
+/// <summary>One reading of the PC (the system tool): processor over a third of a second, memory, battery, disk C:, uptime.</summary>
+internal static class SystemSnapshot
+{
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool GetSystemTimes(out long idle, out long kernel, out long user);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MEMORYSTATUSEX
+    {
+        public uint dwLength, dwMemoryLoad;
+        public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct SYSTEM_POWER_STATUS
+    {
+        public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag;
+        public uint BatteryLifeTime, BatteryFullLifeTime;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS s);
+
+    public static SystemReading Read()
+    {
+        double cpu = 0;
+        if (GetSystemTimes(out long i0, out long k0, out long u0))
+        {
+            Thread.Sleep(330);
+            if (GetSystemTimes(out long i1, out long k1, out long u1) && k1 + u1 > k0 + u0)
+                cpu = Math.Clamp(100.0 * (1 - (double)(i1 - i0) / (k1 + u1 - k0 - u0)), 0, 100);
+        }
+        const double GB = 1024.0 * 1024 * 1024;
+        var m = new MEMORYSTATUSEX { dwLength = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MEMORYSTATUSEX>() };
+        double used = 0, total = 0;
+        if (GlobalMemoryStatusEx(ref m))
+        {
+            used = (m.ullTotalPhys - m.ullAvailPhys) / GB;
+            total = m.ullTotalPhys / GB;
+        }
+        int battery = -1;
+        bool charging = false;
+        if (GetSystemPowerStatus(out var ps) && (ps.BatteryFlag & 128) == 0 && ps.BatteryLifePercent <= 100)
+        {
+            battery = ps.BatteryLifePercent;
+            charging = ps.ACLineStatus == 1;
+        }
+        double free = 0, size = 0;
+        try
+        {
+            var c = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\");
+            free = c.AvailableFreeSpace / GB;
+            size = c.TotalSize / GB;
+        }
+        catch (IOException) { }
+        return new SystemReading(cpu, used, total, battery, charging, free, size, Environment.TickCount64 / 3_600_000.0, DateTime.Now);
     }
 }

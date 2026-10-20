@@ -245,7 +245,8 @@ public static class Native
     /// <summary>Excerpts of your documents for a chat message (empty text: none).</summary>
     public sealed record ChatExcerpts(
         [property: JsonPropertyName("text")] string Text,
-        [property: JsonPropertyName("names")] List<string> Names);
+        [property: JsonPropertyName("names")] List<string> Names,
+        [property: JsonPropertyName("paths")] List<string>? Paths = null);
 
     /// <summary>Open a chat: starts the model and reads the window in front. Takes seconds: call off the UI thread.</summary>
     public static ChatOpened ChatOpen() =>

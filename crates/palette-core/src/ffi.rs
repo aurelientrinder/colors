@@ -817,8 +817,8 @@ pub unsafe extern "C" fn pc_chat_docs(question: *const c_char) -> *mut c_char {
         None => Vec::new(),
     };
     let out = match crate::chat::message_documents(q.trim(), &documents) {
-        Some((text, names)) => serde_json::json!({"text": text, "names": names}),
-        None => serde_json::json!({"text": "", "names": []}),
+        Some((text, names)) => serde_json::json!({"text": text, "names": names, "paths": crate::chat::sources()}),
+        None => serde_json::json!({"text": "", "names": [], "paths": []}),
     };
     into_c(out.to_string())
 }

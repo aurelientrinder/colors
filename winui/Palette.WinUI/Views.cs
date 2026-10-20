@@ -93,7 +93,7 @@ public sealed partial class MainWindow
     private string KeyHintsFor(HitVm row)
     {
         if (_view == View.Actions) return "Esc Back";
-        if (_view == View.Chat) return "\u21b5 Send  \u00b7  Tab or Esc Leave";
+        if (_view == View.Chat) return "\u21b5 Send  \u00b7  Shift+\u21b5 Think  \u00b7  Ctrl+N New chat  \u00b7  Tab or Esc Leave";
         if (row.Confirming) return $"↵ {row.ConfirmLabel}  ·  Esc Cancel";
         if (row.IsTimer) return $"↵ {row.TimerLabel}";
         var keys = new List<string>();
