@@ -12,6 +12,11 @@ public sealed class ToolCall
     public string Arguments { get; set; } = "";
     /// <summary>What the model is told the tool found.</summary>
     public string Result { get; set; } = "";
+    /// <summary>What it is doing, for its line in the answer ("Looking through your files from last week").</summary>
+    public string Label { get; set; } = "";
+    /// <summary>What came of it, once done ("Found 6 files").</summary>
+    public string Outcome { get; set; } = "";
+    public bool Done { get; set; }
 }
 
 /// <summary>One round of tools within an answer: what the model wrote with the calls, and the calls.</summary>
@@ -49,15 +54,57 @@ public sealed record SystemBlock(SystemReading Reading);
 /// </summary>
 public sealed partial class MainWindow
 {
-    /// <summary>What the brain says while a tool runs.</summary>
-    private static string ToolHint(string name) => name switch
+    /// <summary>What a tool is doing, from what the model asked of it: "Looking through your files from last week".</summary>
+    private static string ToolLabel(string name, string arguments)
     {
-        "find_files" => "Looking for your files…",
-        "search_documents" => "Reading your documents…",
-        "get_weather" => "Checking the weather…",
-        "get_calendar" => "Reading your calendar…",
-        "get_system_status" => "Checking your PC…",
-        _ => "Looking it up…",
+        string Arg(string key)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(arguments.Length > 0 ? arguments : "{}");
+                return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+                    ? v.GetString()!.Trim() : "";
+            }
+            catch (JsonException) { return ""; }
+        }
+        string When(string period) => period switch
+        {
+            "today" => " from today", "yesterday" => " from yesterday", "this_week" => " from this week", "last_week" => " from last week",
+            "this_month" => " from this month", "last_month" => " from last month", _ => "",
+        };
+        switch (name)
+        {
+            case "find_files":
+                string q = Arg("query"), kind = Arg("kind");
+                string what = kind switch
+                {
+                    "image" => "your pictures", "video" => "your videos", "document" => "your documents", "spreadsheet" => "your spreadsheets",
+                    "presentation" => "your presentations", "code" => "your code", "audio" => "your music", "3d" => "your 3D models", _ => "your files",
+                };
+                return $"Looking through {what}{When(Arg("period"))}" + (q.Length > 0 ? $" for “{q}”" : "");
+            case "search_documents": return "Reading your documents";
+            case "get_weather": return Arg("place") is { Length: > 0 } place ? $"Checking the weather in {place}" : "Checking the weather";
+            case "get_calendar":
+                return "Reading your calendar" + (Arg("date") is { Length: > 0 } d ? $" for {d}" : Arg("period") switch
+                {
+                    "tomorrow" => " for tomorrow", "this_week" => " for this week", "next_week" => " for next week", _ => " for today",
+                });
+            case "get_system_status": return "Checking your PC";
+            default: return "Looking it up";
+        }
+    }
+
+    /// <summary>What came of a tool, for its line once done: "Found 6 files", "Nothing on the calendar".</summary>
+    private static string ToolOutcome(string name, string result, object? block) => (name, block) switch
+    {
+        (_, FilesBlock f) => f.Files.Count == 1 ? "Found 1 file" : $"Found {f.Files.Count} files",
+        (_, SourcesBlock s) => s.Docs.Count == 1 ? "Read 1 document" : $"Read {s.Docs.Count} documents",
+        (_, WeatherBlock w) => $"Checked the weather in {w.Weather.Place}",
+        (_, EventsBlock e) => e.Events.Count == 0 ? "Nothing on the calendar" : e.Events.Count == 1 ? "Found 1 event" : $"Found {e.Events.Count} events",
+        (_, SystemBlock) => "Checked your PC",
+        ("find_files", _) => "No file found",
+        ("search_documents", _) => "Nothing in your documents",
+        _ => result.Length > 60 ? result[..57] + "…" : result,
     };
 
     /// <summary>Run a tool: the text for the model, a card (or null) and small print for under the answer (or null).</summary>

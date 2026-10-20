@@ -220,23 +220,26 @@ public sealed partial class MainWindow
                 if (calls.Count == 0 || lastRound) break;
 
                 // What the model wrote before calling stays on screen; the next turn writes after it.
+                // What the model wrote with the calls stays above them; each call is a line that runs, then
+                // says what came of it; the model's next words come after.
                 var turn = new ToolRound { Content = answer.Text[answer.ReplyStart..] };
                 answer.Rounds.Add(turn);
+                if (answer.Text.Length > 0 && !answer.Text.EndsWith('\n')) answer.Text += "\n\n";
+                answer.ReplyStart = answer.Text.Length;
                 foreach (var call in calls)
                 {
-                    answer.Hint = ToolHint(call.Name);
+                    call.Label = ToolLabel(call.Name, call.Arguments);
+                    turn.Calls.Add(call);
                     RenderChat(chat);
                     var (result, block, note) = await RunTool(call.Name, call.Arguments, ct);
                     if (ct.IsCancellationRequested) return;
                     call.Result = result;
-                    turn.Calls.Add(call);
+                    call.Outcome = ToolOutcome(call.Name, result, block);
+                    call.Done = true;
                     if (block != null) answer.Blocks.Add(block);
                     if (note != null) answer.Note = note;
+                    RenderChat(chat);
                 }
-                answer.Hint = "";
-                if (answer.Text.Length > 0 && !answer.Text.EndsWith('\n')) answer.Text += "\n\n";
-                answer.ReplyStart = answer.Text.Length;
-                RenderChat(chat);
             }
         }
         catch (OperationCanceledException)
@@ -313,11 +316,6 @@ public sealed partial class MainWindow
                     }
                     if (tc.TryGetProperty("function", out var f) && f.TryGetProperty("arguments", out var av) && av.ValueKind == JsonValueKind.String)
                         call.Arguments += av.GetString();
-                }
-                if (answer.Hint.Length == 0 && calls.Count > 0)
-                {
-                    answer.Hint = ToolHint(calls.Values.First().Name);
-                    RenderChat(chat);
                 }
             }
             SplitThinking(thought, text, out string thinking, out string reply);

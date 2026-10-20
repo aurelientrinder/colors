@@ -78,7 +78,10 @@ pub const TOOLS: &str = r#"[
 /// How the model is to use its tools.
 const TOOL_USE: &str = "Answer general questions and conversation from your own knowledge, and talk only about what the user asked. \
 You also have tools to look things up on the user's PC (their files, their documents, the weather, their calendar, how their PC is doing): \
-call one only when the request is about one of those, never otherwise. \
+call one only when the request is about one of those, never otherwise, and never offer to look up what no tool reaches \
+(recipes, the news, the web): answer from what you know. \
+When you call a tool, first write one short sentence saying what you are about to do (I'll look through the files you opened \
+last week.), with no claim about what you will find, then call it in the same turn; after its results, answer from them alone. \
 When you mention a file a tool found, write its exact name with its extension (Report_Q3.docx) inside your sentence: the name becomes \
 a link the user clicks to open it (they know: do not tell them). Mention only the files that answer the question, never paths, and never one per line. \
 After a weather, calendar or PC tool, the user also sees what it found as a card: say in a sentence what matters to their question, without \

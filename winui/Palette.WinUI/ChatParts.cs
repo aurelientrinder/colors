@@ -176,8 +176,11 @@ internal sealed class AssistantView : StackPanel
     private int _blocksSeen;
     private bool _open;
 
+    private readonly Action _onResize;
+
     public AssistantView(Action onResize, Func<object, FrameworkElement?> makeBlock, Func<string, string, FrameworkElement> makeLink)
     {
+        _onResize = onResize;
         _makeBlock = makeBlock;
         _makeLink = makeLink;
         Spacing = 3;
@@ -208,16 +211,79 @@ internal sealed class AssistantView : StackPanel
 
         Children.Add(_think);
         Children.Add(_reasoning);
+        Children.Add(_timeline);
+        Children.Add(_tail);
         Children.Add(_body);
         Children.Add(_blocks);
         Children.Add(_note);
     }
 
+    // ------------------------------------------------------------------ the timeline: text, steps, text…
+
+    /// <summary>What the model wrote and did before its last turn: each round's text, then a line per tool it used.</summary>
+    private readonly StackPanel _timeline = new() { Spacing = 4 };
+    /// <summary>Dots while the model goes on after its tools, before its next words.</summary>
+    private readonly WaitingDots _tail = new() { Visibility = Visibility.Collapsed, Margin = new Thickness(2, 2, 0, 2), HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly List<(ToolCall call, ToolStep view)> _steps = new();
+    private readonly List<(ToolRound round, StackPanel calls)> _rounds = new();
+
+    /// <summary>Draw the rounds of tools not drawn yet, and bring the steps up to date (running, then done).</summary>
+    private void SyncTimeline(ChatMsg m)
+    {
+        for (int i = _rounds.Count; i < m.Rounds.Count; i++)
+        {
+            var round = m.Rounds[i];
+            if (round.Content.Trim().Length > 0)
+            {
+                var text = new RichTextBlock { TextWrapping = TextWrapping.Wrap, LineHeight = 22, IsTextSelectionEnabled = true };
+                var para = new Paragraph();
+                text.Blocks.Add(para);
+                ChatMarkdown.Fill(para.Inlines, text.FontSize, round.Content.Trim(), _links, (l, shown, k) => LinkInline(l, shown, 1000 * (i + 1) + k));
+                _timeline.Children.Add(text);
+            }
+            var calls = new StackPanel { Spacing = 2, Margin = new Thickness(0, 1, 0, 1) };
+            _timeline.Children.Add(calls);
+            _rounds.Add((round, calls));
+            // The text of the turn that called these is now above them: the next words start afresh.
+            _text = "";
+            _drawn = 0;
+            _marks.Clear();
+        }
+        foreach (var (round, calls) in _rounds)
+        {
+            foreach (var call in round.Calls)
+            {
+                if (_steps.Any(s => ReferenceEquals(s.call, call))) continue;
+                var view = new ToolStep(call, _onResize);
+                calls.Children.Add(view);
+                _steps.Add((call, view));
+            }
+        }
+        foreach (var (call, view) in _steps) view.Update(call);
+    }
+
     public void Update(ChatMsg m, bool writing)
     {
-        bool answering = m.Text.Length > 0;
-        bool thinkingNow = writing && !answering;
+        // What the tools found: files and documents become links in the text; the rest, cards under it.
+        bool relink = false;
+        for (; _blocksSeen < m.Blocks.Count; _blocksSeen++)
+        {
+            if (_makeBlock(m.Blocks[_blocksSeen]) is { } card) _blocks.Children.Add(card);
+            relink = true;
+        }
+        if (relink) _links = ChatMarkdown.LinksOf(m.Blocks);
+        SyncTimeline(m);
+
+        string reply = m.Text[Math.Min(m.ReplyStart, m.Text.Length)..];
+        bool stepRunning = m.Rounds.Any(r => r.Calls.Any(c => !c.Done));
+        bool answering = reply.Trim().Length > 0;
+        bool thinkingNow = writing && m.Text.Trim().Length == 0 && m.Rounds.Count == 0;
         bool hasThoughts = m.Thinking.Length > 0;
+        // After its tools, the model's next words take a moment: dots meanwhile.
+        bool waiting = writing && m.Rounds.Count > 0 && !stepRunning && !answering;
+        _tail.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed;
+        if (waiting) _tail.Start();
+        else _tail.Stop();
 
         // The thinking line: animated while the model has not begun to answer, then a summary.
         _think.Visibility = thinkingNow || hasThoughts ? Visibility.Visible : Visibility.Collapsed;
@@ -252,20 +318,11 @@ internal sealed class AssistantView : StackPanel
             _reasoning.Visibility = Visibility.Collapsed;
         }
 
-        // What the tools found: files and documents become links in the text; the rest, cards under it.
-        bool relink = false;
-        for (; _blocksSeen < m.Blocks.Count; _blocksSeen++)
-        {
-            if (_makeBlock(m.Blocks[_blocksSeen]) is { } card) _blocks.Children.Add(card);
-            relink = true;
-        }
-        if (relink) _links = ChatMarkdown.LinksOf(m.Blocks);
-
         _body.Visibility = answering ? Visibility.Visible : Visibility.Collapsed;
-        if (answering && (m.Text != _text || relink))
+        if (answering && (reply != _text || relink))
         {
-            if (writing && m.Text != _text) _fresh = true;
-            _text = m.Text;
+            if (writing && reply != _text) _fresh = true;
+            _text = reply;
             DrawBody();
         }
         _note.Text = m.Note;
@@ -434,6 +491,84 @@ internal sealed class AssistantView : StackPanel
         else if (like.ReadLocalValue(TextElement.ForegroundProperty) != DependencyProperty.UnsetValue)
             r.Foreground = like.Foreground;
         return r;
+    }
+}
+
+/// <summary>
+/// One thing the model did, as a quiet line in its answer: while it runs, the brain at work and what it is
+/// doing ("Looking through your files from last week"); once done, the tool's icon and what came of it
+/// ("Found 6 files"). A tap opens what was asked and what was found.
+/// </summary>
+internal sealed class ToolStep : StackPanel
+{
+    private readonly BrainIcon _brain = new(13) { VerticalAlignment = VerticalAlignment.Center };
+    private readonly FontIcon _icon = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+    private readonly TextBlock _label = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+    private readonly WaitingDots _dots = new();
+    private readonly FontIcon _chevron = new() { Glyph = "", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+    private readonly TextBlock _detail = new()
+    {
+        FontSize = 11, TextWrapping = TextWrapping.Wrap, MaxLines = 12, TextTrimming = TextTrimming.CharacterEllipsis,
+        Margin = new Thickness(21, 2, 0, 2), Visibility = Visibility.Collapsed,
+    };
+    private bool _done, _open;
+
+    public ToolStep(ToolCall call, Action onResize)
+    {
+        Spacing = 0;
+        var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+        _label.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+        _icon.Foreground = faint;
+        _chevron.Foreground = faint;
+        _detail.Foreground = faint;
+        _icon.Glyph = call.Name switch
+        {
+            "find_files" => "",          // folder
+            "search_documents" => "",    // document
+            "get_weather" => "",         // cloud
+            "get_calendar" => "",        // calendar
+            "get_system_status" => "",   // PC
+            _ => "",
+        };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        row.Children.Add(_brain);
+        row.Children.Add(_icon);
+        row.Children.Add(_label);
+        row.Children.Add(_dots);
+        row.Children.Add(_chevron);
+        row.Tapped += (_, _) =>
+        {
+            if (!_done || _detail.Text.Length == 0) return;
+            _open = !_open;
+            _detail.Visibility = _open ? Visibility.Visible : Visibility.Collapsed;
+            _chevron.Glyph = _open ? "" : "";
+            onResize();
+        };
+        Children.Add(row);
+        Children.Add(_detail);
+        _brain.Start();
+        _dots.Start();
+    }
+
+    public void Update(ToolCall call)
+    {
+        if (!call.Done)
+        {
+            _label.Text = call.Label.Length > 0 ? call.Label : "Looking it up";
+            return;
+        }
+        if (_done) return;
+        _done = true;
+        _brain.Stop();
+        _brain.Visibility = Visibility.Collapsed;
+        _dots.Stop();
+        _dots.Visibility = Visibility.Collapsed;
+        _icon.Visibility = Visibility.Visible;
+        _label.Text = call.Outcome.Length > 0 ? call.Outcome : call.Label;
+        _label.Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+        string asked = call.Arguments is { Length: > 2 } a && a != "{}" ? $"Asked: {a}\n" : "";
+        _detail.Text = (asked + call.Result).Trim();
+        _chevron.Visibility = _detail.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 }
 
