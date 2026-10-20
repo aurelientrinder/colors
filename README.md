@@ -161,13 +161,49 @@ France") stay web answers.
 
 A tap on `Tab` turns the list into a conversation with the model, in the same field (a question already
 typed becomes the first message). The model has read the window in front before you type, so the first
-reply starts at once. Your messages sit on the right, its answers on the left; the footer says what it
-has read. Enter sends, `Tab` or `Esc` leaves (a held `Tab` still opens a result's actions).
+reply starts at once. It picks up where you left off: the conversation is kept between openings and
+across restarts.
 
-- About the window: just ask ("and who decides?"); follow-ups keep the whole conversation.
-- About your files: start the message with `?`, or say "my documents" / "mes fichiers"; the answer
-  cites them [1] [2] and the card names the files. With no window to read, every message looks in your
-  files first.
+| Key | In the chat |
+|---|---|
+| `Enter` | send (`Shift+Enter`: send and have it think first) |
+| `Esc` | stop the answer being written; again, leave the chat (`Tab` leaves too) |
+| `Ctrl+N` | put this conversation away and start a new one |
+| `Ctrl+H` | earlier chats: titled by the model, latest first; type to filter, `Enter` opens, `Shift+Delete` deletes |
+| `Page Up` / `Page Down` | scroll the conversation |
+
+**What it can look up.** The model has tools, all of which only read, and calls them when a question is
+about your things, never for small talk or general knowledge:
+
+| You ask | It | You see |
+|---|---|---|
+| "what's that file I was working on last week?", "the photos I took this month" | finds files by name, topic, or when they were opened or changed (the Recent folder, the file index, the meaning index, and your own folders for a period) | the files named in its sentence as links, with their icon or a tiny thumbnail: click opens, right-click shows it in its folder |
+| "when does my lease end?" | reads the best passages of your documents | the documents cited as [1] [2], each a link to its file |
+| "what's the weather like?" | fetches the weather | a weather card |
+| "do I have anything tomorrow?" | reads your calendar (Settings › Add Google Calendar) | an event list |
+| "how's my battery?", "why is my laptop slow?" | reads the processor, memory, battery and disk | a row of gauges |
+
+**How it answers.** In prose, never lists. Before it looks something up it says in one sentence what it
+is about to do, so words come within about half a second; what it then does runs down a thin rail in
+the margin, one line per step ("Looking through your files from last week…", then "Found 6 files"),
+the step at work breathing beside a small brain. Its thinking shows as one line, the sentence it is
+thinking now, which opens to the whole reasoning streaming in. When the answer is written the rail
+folds into a chip ("2 steps · 9 s") that opens it again. Answers fade in as they are written; under
+the last one, Copy and Retry.
+
+**Thinking, only when it helps.** A question whose answer has to be worked out (how many, how much, how
+long, a total, a comparison, "should I", "is it enough") gets a short think, after its tools when it
+uses any; greetings, facts and plain lookups are answered straight away. It answers about your files,
+documents, calendar, weather and PC only from what its tools returned, quoting names and figures
+exactly, and says so when they do not hold the answer. On questions built to tempt it into inventing,
+that took it from 6 right of 8 to 8 of 8 (CHAT-PLAN.md has the measurements).
+
+**Memory.** It remembers what you tell it about yourself (your name, where you live, your work, the
+people in your life, your tastes), across conversations: after a message that sounds personal, a short
+request of its own notes what changed, and a quiet "Remembered: …" line with Undo appears under the
+answer. Settings has a Chat memory switch and every fact as a row (Enter forgets it). Long
+conversations keep their thread: what scrolls out of the model's view is folded into a running summary.
+Everything (conversations in `%LOCALAPPDATA%\palette\chats`, memory in `memory.json`) stays on this PC.
 
 ### Asking your documents
 
@@ -186,10 +222,13 @@ the semantic index covers (PDF, Word, PowerPoint, text, Markdown) can answer.
 
 Setup: `scripts\get-chat.ps1` fetches llama.cpp's server (the Vulkan build, 32 MB) into `models\chat`;
 the model is any chat GGUF of 2 to 12 GB: `PALETTE_CHAT_MODEL`, a file in `models\chat`, or one LM
-Studio already has (Qwen3.5 4B preferred, then Gemma 3 4B). The model loads on the first question
-(a few seconds) and is let go after ten idle minutes. On an Intel Arc GPU a 4B model reads about 450
-tokens a second and writes about 19-25, so reading a long page takes six seconds: that is done while
-you type. Once the row appears and typing pauses, the window's text, exactly as it comes before the
+Studio already has. Gemma 4 E4B is preferred (`gemma-4-E4B-it-Q4_0.gguf` from unsloth), with its
+multi-token-prediction draft beside it (`mtp-gemma-4-E4B-it.gguf`), which about doubles how fast it
+writes: in a comparison on the chat's kinds of messages it gave the best answers and was the quickest
+of the good ones (about 25 tokens a second here, against 19 for Qwen3.5 4B, then preferred), and picked
+its tools in under a second. The model loads on the first question (about 17 s for Gemma, a few for a
+smaller one) and is let go after ten idle minutes. On an Intel Arc GPU a 4B model reads a long page in
+a few seconds: that is done while you type. Once the row appears and typing pauses, the window's text, exactly as it comes before the
 question in the final prompt, is fed to the model, which keeps it; Enter adds only the question, and
 the first words come in about a second (8 s without). The server runs below normal priority, which
 Windows applies to its GPU work too, with two CPU threads and flash attention. `examples\ask_probe.rs` asks about any window from the command line.
