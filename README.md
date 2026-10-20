@@ -188,6 +188,7 @@ things, never for small talk or general knowledge:
 | "make a folder called Taxes 2026 in Documents" | makes it | a line with Undo (it removes the folder while empty) |
 | "put these photos in a folder called Lyon trip", "rename it to beach.jpg", "delete the blurry one" | moves, renames or recycles files it found, after asking | a card with the files, Deny and Allow; then a line with Undo |
 | "undo that", "put them back" | undoes the last thing it did | a line saying what was undone |
+| "search the web for the best pizza in Lyon", "who won the final this year?", "what time does the Louvre open?" | searches the web, after asking, and reads the best pages | the pages cited as [1] [2], each a link with a small globe that opens it in the browser |
 
 **How it answers.** In prose, never lists. Before it looks something up it says in one sentence what it
 is about to do, so words come within about half a second; what it then does runs down a thin rail in
@@ -222,6 +223,15 @@ Windows, Program Files or app data. A question is not a request: asked "is Wi-Fi
 state and changes nothing. Everything it does is logged in `%LOCALAPPDATA%\palette\actions.json`, so Undo
 works from the line, or by asking, after a restart too. Like reminders, a request to act requires a tool
 call of the model, which otherwise says it did something it did not.
+
+**The web, only with your say-so.** The model searches when you ask it to, or when the answer depends
+on recent or changing facts (results, prices, opening hours); greetings and general knowledge it answers
+itself. Every search first shows a card with the query word for word, what leaves the PC (those words,
+to DuckDuckGo, and visits to the pages read; nothing from your files, memory or conversation), and Allow
+once, Allow for this chat (later searches in that conversation go ahead, each still a step on the rail)
+or Deny. Allowed, it searches DuckDuckGo's plain results page (Brave Search when DuckDuckGo turns it
+away, as it does after a few searches in a row), reads the three best pages for the passages that match,
+and answers from them alone, citing them. Declined, nothing is sent and it says what it cannot tell.
 
 **The bubble.** When a reminder comes due, a small pill appears centred just above the taskbar: a
 breathing dot, what it is about and its time. It glows three times with Windows' reminder sound, then

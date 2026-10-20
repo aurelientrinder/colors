@@ -60,14 +60,20 @@ public sealed partial class MainWindow
     /// </summary>
     private FrameworkElement MakeFileLink(string path, string text)
     {
+        // A web page (a search result cited as [1]): a small globe, and it opens in the browser.
+        bool web = path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
         var icon = new Image { Width = 14, Height = 14, Stretch = Stretch.UniformToFill, VerticalAlignment = VerticalAlignment.Center };
         var frame = new Border
         {
             Width = 15, Height = 15, CornerRadius = new CornerRadius(2), Margin = new Thickness(1, 0, 4, 0),
-            VerticalAlignment = VerticalAlignment.Center, Child = icon,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = web ? new FontIcon { Glyph = "", FontSize = 12, Foreground = Res("TextFillColorSecondaryBrush") } : icon,
         };
-        _ = FileIconInto(icon, path);
-        _ = ThumbnailInto(icon, path, 15);
+        if (!web)
+        {
+            _ = FileIconInto(icon, path);
+            _ = ThumbnailInto(icon, path, 15);
+        }
 
         var name = new TextBlock { Text = text, FontSize = 14 };
         var dots = new Microsoft.UI.Xaml.Shapes.Line
@@ -99,6 +105,11 @@ public sealed partial class MainWindow
             dots.StrokeDashArray = new DoubleCollection { 1, 2 };
         };
         link.Tapped += (_, e) => { e.Handled = true; OpenFromChat(path, reveal: false); };
+        if (web)
+        {
+            ToolTipService.SetToolTip(link, $"{path}\nClick to open in your browser");
+            return link;
+        }
         link.RightTapped += (_, e) => { e.Handled = true; OpenFromChat(path, reveal: true); };
         string where = ShortFolder(Path.GetDirectoryName(path) ?? "");
         string when = File.Exists(path) ? " · changed " + Ago(new DateTimeOffset(File.GetLastWriteTime(path)).ToUnixTimeSeconds()) : "";

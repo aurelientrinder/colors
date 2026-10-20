@@ -969,8 +969,23 @@ internal static class ChatMarkdown
     public static IReadOnlyList<LinkToken> LinksOf(IEnumerable<object> blocks)
     {
         var list = new List<LinkToken>();
+        // [1], [2]: the latest documents or web pages read are the ones an answer cites.
+        var cited = new Dictionary<string, LinkToken>();
         foreach (var b in blocks)
         {
+            if (b is WebSourcesBlock w)
+            {
+                for (int i = 0; i < w.Sources.Count; i++) cited[$"[{i + 1}]"] = new LinkToken($"[{i + 1}]", w.Sources[i].Url, w.Sources[i].Site, true);
+                continue;
+            }
+            if (b is SourcesBlock src)
+            {
+                for (int i = 0; i < src.Docs.Count; i++)
+                {
+                    string st = System.IO.Path.GetFileNameWithoutExtension(src.Docs[i].Name);
+                    cited[$"[{i + 1}]"] = new LinkToken($"[{i + 1}]", src.Docs[i].Path, st.Length > 28 ? st[..26] + "…" : st, true);
+                }
+            }
             if (b is FilesBlock f)
             {
                 foreach (var file in f.Files)
@@ -982,16 +997,10 @@ internal static class ChatMarkdown
             }
             else if (b is SourcesBlock s)
             {
-                for (int i = 0; i < s.Docs.Count; i++)
-                {
-                    var d = s.Docs[i];
-                    string stem = System.IO.Path.GetFileNameWithoutExtension(d.Name);
-                    string label = stem.Length > 28 ? stem[..26] + "…" : stem;
-                    list.Add(new LinkToken($"[{i + 1}]", d.Path, label, true));
-                    list.Add(new LinkToken(d.Name, d.Path, d.Name, false));
-                }
+                foreach (var d in s.Docs) list.Add(new LinkToken(d.Name, d.Path, d.Name, false));
             }
         }
+        list.AddRange(cited.Values);
         return list.OrderByDescending(l => l.Token.Length).ToList();
     }
 
@@ -1000,6 +1009,8 @@ internal static class ChatMarkdown
     {
         inlines.Clear();
         md = Link.Replace(md.Replace("\r", "").Trim(), "$1");
+        // "[1, 3]" cites two sources: "[1] [3]", each its own link.
+        md = Regex.Replace(md, @"\[(\d+(?:\s*[,;]\s*\d+)+)\]", m => string.Join(" ", Regex.Matches(m.Groups[1].Value, @"\d+").Select(d => $"[{d.Value}]")));
         // A name the model dressed up (**Report.docx**, `Report.docx`, "Report.docx") is a link all the same.
         foreach (var l in links)
             md = Regex.Replace(md, @"(\*\*|__|`|""|“|«\s?)(" + Regex.Escape(l.Token) + @")(\*\*|__|`|""|”|\s?»)", "$2",

@@ -108,6 +108,7 @@ public sealed partial class MainWindow
             case "rename_file": return "Renaming a file";
             case "recycle_files": return "Putting files in the Recycle Bin";
             case "undo_last_action": return "Undoing the last thing I did";
+            case "web_search": return Arg("query") is { Length: > 0 } wq ? $"Searching the web for “{wq}”" : "Searching the web";
             default: return "Looking it up";
         }
     }
@@ -120,6 +121,7 @@ public sealed partial class MainWindow
         (_, WeatherBlock w) => $"Checked the weather in {w.Weather.Place}",
         (_, EventsBlock e) => e.Events.Count == 0 ? "Nothing on the calendar" : e.Events.Count == 1 ? "Found 1 event" : $"Found {e.Events.Count} events",
         (_, SystemBlock) => "Checked your PC",
+        (_, WebSourcesBlock w) => w.Sources.Count == 1 ? "Found 1 result" : $"Found {w.Sources.Count} results",
         (_, ReminderBlock { Kind: "set" } r) => "Set for " + ReminderStore.Describe(r.Reminders[0].At),
         (_, ReminderBlock { Kind: "cancelled" } r) => r.Reminders.Count == 1 ? "Cancelled it" : $"Cancelled {r.Reminders.Count} reminders",
         (_, ReminderBlock { Kind: "list" } r) => r.Reminders.Count == 0 ? "No reminders set" : r.Reminders.Count == 1 ? "Found 1 reminder" : $"Found {r.Reminders.Count} reminders",
@@ -129,6 +131,7 @@ public sealed partial class MainWindow
         (_, ActionBlock { State: "failed" }) => "Couldn't do it",
         ("open", _) => result.StartsWith("Opened") ? result.TrimEnd('.') : "Not opened",
         ("move_files" or "rename_file" or "recycle_files" or "create_folder" or "change_setting" or "undo_last_action", _) => "Not done",
+        ("web_search", _) => "Nothing found",
         ("set_reminder", _) => "Not set",
         ("cancel_reminder", _) => "Nothing cancelled",
         ("find_files", _) => "No file found",
@@ -175,6 +178,7 @@ public sealed partial class MainWindow
                 "rename_file" => await RenameTool(Arg("file"), Arg("new_name"), ct),
                 "recycle_files" => await RecycleTool(Strings(args, "files"), ct),
                 "undo_last_action" => UndoTool(),
+                "web_search" => await WebSearchTool(Arg("query"), ct),
                 _ => ($"There is no tool called {name}.", null, null),
             };
         }

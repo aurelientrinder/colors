@@ -47,6 +47,8 @@ public sealed record ChatAnswer() : WebAnswers.Answer("chat")
     public Task<Native.ChatOpened>? Opening { get; set; }
     public string Footer { get; set; } = "On this PC";
     public bool Busy { get; set; }
+    /// <summary>The user allowed web searches for the rest of this conversation (ChatWeb.cs); not kept across restarts.</summary>
+    public bool WebAllowed { get; set; }
     public string Hint { get; set; } = "Reading the window…";
     /// <summary>Which conversation this is (its file in ChatStore).</summary>
     public string Id { get; set; } = NewId();
@@ -275,7 +277,7 @@ public sealed partial class MainWindow
             bool retried = false, introduced = false;
             // "Remind me…", "move these to…", "turn the volume down": a small model says it will do it and
             // does not, unless it must call a tool.
-            bool reminder = AsksReminder(message) || AsksAction(message);
+            bool reminder = AsksReminder(message) || AsksAction(message) || AsksWeb(message);
             _mayAct = AsksToAct(message);
             for (int round = 0; ; round++)
             {

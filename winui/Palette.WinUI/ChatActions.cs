@@ -40,7 +40,20 @@ public sealed class ActionBlock
     }
 
     /// <summary>Allow (true) or Deny (false), from its buttons or Enter.</summary>
-    public void Decide(bool allow) => Answer?.TrySetResult(allow);
+    public void Decide(bool allow, bool always = false)
+    {
+        if (Answer == null) return;
+        Always = allow && always;
+        Answer.TrySetResult(allow);
+    }
+
+    /// <summary>Shown word for word on the card (a web search's query: what leaves the PC).</summary>
+    public string Detail { get; init; } = "";
+    /// <summary>Small print on the card, before its keys.</summary>
+    public string Note { get; init; } = "";
+    /// <summary>The card offers "Allow for this chat" besides "Allow once"; <see cref="Always"/> says which was chosen.</summary>
+    public bool OfferAlways { get; init; }
+    public bool Always { get; private set; }
 }
 
 /// <summary>
@@ -105,7 +118,7 @@ public sealed partial class MainWindow
                 }
             }
             bool allow = await block.Answer.Task;
-            if (!allow) block.Set("denied", "You declined: nothing was changed");
+            if (!allow) block.Set("denied", block.Kind == "web" ? "You declined: nothing was sent" : "You declined: nothing was changed");
             return allow;
         }
         finally
@@ -466,21 +479,41 @@ public sealed partial class MainWindow
                 files.Children.Add(new TextBlock { Text = $"and {block.Paths.Count - 6} more", FontSize = 12, Foreground = Res("TextFillColorTertiaryBrush") });
             panel.Children.Add(files);
         }
+        if (block.Detail.Length > 0)
+        {
+            // What leaves the PC, word for word.
+            panel.Children.Add(new Border
+            {
+                Background = Res("SubtleFillColorSecondaryBrush"), BorderBrush = Res("CardStrokeColorDefaultBrush"), BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 6, 10, 7),
+                Child = new TextBlock { Text = block.Detail, FontSize = 13, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
+            });
+        }
+        string hint = block.OfferAlways ? "Enter allows once · Esc stops" : "Enter allows · Esc stops";
+        panel.Children.Add(new TextBlock
+        {
+            Text = block.Note.Length > 0 ? $"{block.Note} {hint}." : hint, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+            Foreground = Res("TextFillColorTertiaryBrush"),
+        });
         var row = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 2, 0, 0) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.Children.Add(new TextBlock
-        {
-            Text = "Enter allows · Esc stops", FontSize = 11, Foreground = Res("TextFillColorTertiaryBrush"), VerticalAlignment = VerticalAlignment.Center,
-        });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var deny = new Button { Content = "Deny", MinWidth = 72 };
         deny.Click += (_, _) => block.Decide(false);
         Grid.SetColumn(deny, 1);
         row.Children.Add(deny);
-        var allow = new Button { Content = "Allow", MinWidth = 72, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        if (block.OfferAlways)
+        {
+            var always = new Button { Content = "Allow for this chat" };
+            always.Click += (_, _) => block.Decide(true, always: true);
+            Grid.SetColumn(always, 2);
+            row.Children.Add(always);
+        }
+        var allow = new Button { Content = block.OfferAlways ? "Allow once" : "Allow", MinWidth = 72, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
         allow.Click += (_, _) => block.Decide(true);
-        Grid.SetColumn(allow, 2);
+        Grid.SetColumn(allow, 3);
         row.Children.Add(allow);
         panel.Children.Add(row);
         var card = Card(panel, new Thickness(0));

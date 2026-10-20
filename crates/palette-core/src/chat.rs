@@ -82,14 +82,17 @@ pub const TOOLS: &str = r#"[
 {"type":"function","function":{"name":"rename_file","description":"Rename a file your tools found. The user is asked first; they can undo it after.","parameters":{"type":"object","properties":{"file":{"type":"string","description":"Its exact name, as your tools returned it."},"new_name":{"type":"string","description":"The new name (its extension is kept if you leave it out)."}},"required":["file","new_name"]}}},
 {"type":"function","function":{"name":"recycle_files","description":"Put files your tools found in the Recycle Bin, when the user asks to delete them. The user is asked first; they can undo it after.","parameters":{"type":"object","properties":{"files":{"type":"array","items":{"type":"string"},"description":"The files' exact names, as your tools returned them."}},"required":["files"]}}},
 {"type":"function","function":{"name":"create_folder","description":"Make a new folder (the user can undo it).","parameters":{"type":"object","properties":{"name":{"type":"string"},"in":{"type":"string","description":"Where: Documents, Desktop, Downloads, Pictures, or a folder inside them (Documents/Work). Documents if left out."}},"required":["name"]}}},
+{"type":"function","function":{"name":"web_search","description":"Search the web, then read the best pages. The user is asked first and sees the query. Use it when they ask you to search or look something up online, or for recent or changing facts (news, results, prices, opening hours). Cite the results you use as [1], [2]: each becomes a link to its page.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"A short search query, in the words a search engine wants (lyon weather alerts this weekend). Never put anything private in it."}},"required":["query"]}}},
 {"type":"function","function":{"name":"undo_last_action","description":"Undo the last thing you did on the PC (files moved, renamed or recycled, a folder made, a setting changed, a reminder set), when the user asks to undo it or put things back.","parameters":{"type":"object","properties":{}}}}
 ]"#;
 
 /// How the model is to use its tools.
 const TOOL_USE: &str = "Answer general questions and conversation from your own knowledge, and talk only about what the user asked. \
 You also have tools to look things up on the user's PC (their files, their documents, the weather, their calendar, how their PC is doing) \
-and to set, list and cancel reminders: call one only when the request is about one of those, never otherwise, and never offer to look up \
-what no tool reaches (recipes, the news, the web): answer from what you know. When the user asks to be reminded of something, set the \
+and to set, list and cancel reminders: call one only when the request is about one of those, never otherwise. \
+You can search the web (web_search; the user is asked first), but only when they ask you to search or look something up online, or \
+when the answer depends on recent or changing facts you cannot know (news, results, prices, opening hours, what happened lately); \
+answer everything else, general knowledge included, from what you know. When the user asks to be reminded of something, set the \
 reminder with the tool (never say it is set without calling it), then say in a sentence when it will pop up. \
 You can also act on the PC when the user asks you to, and only then: open apps, files and folders, change a setting, make folders, \
 move, rename or recycle files your tools found (find them first), and undo what you did. Moving, renaming and recycling ask the user \
@@ -105,7 +108,7 @@ repeating every number. If a tool finds nothing, say so. When the user asks abou
 /// Answering from what the tools found. Measured on questions built to tempt it (CHAT-PLAN.md, "Grounding"):
 /// with these rules and a short think over the results, 8 of 8 right against 6 without (a yearly rent off by
 /// 290 euros, a count of days skipped or wrong).
-const GROUNDING: &str = "Ground every fact about the user's files, documents, calendar, weather and PC in what your tools returned in \
+const GROUNDING: &str = "Ground every fact about the user's files, documents, calendar, weather and PC, and every fact from the web, in what your tools returned in \
 this conversation: quote names, dates and numbers exactly as they came, never estimate or invent them, and never name a file a tool \
 did not return. If the results do not hold the answer, say plainly that you could not find it (and what you did find), instead of \
 guessing. You may reason from the results (count, compare, work out a date), saying what you based it on.";

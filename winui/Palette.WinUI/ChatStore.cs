@@ -38,7 +38,8 @@ internal static class ChatStore
         List<SourceDoc>? Sources = null,
         List<MemoryChange>? Memory = null,
         List<Reminder>? Reminders = null,
-        SavedAction? Action = null);
+        SavedAction? Action = null,
+        List<WebSource>? Web = null);
 
     /// <summary>An action under an answer (ChatActions.cs): one still asking when Palette closed was never done.</summary>
     public sealed record SavedAction(string Kind, string Question, List<string> Paths, string State, string Message, ActionRecord? Record);
@@ -195,6 +196,7 @@ internal static class ChatStore
                     "system" when b.System != null => new SystemBlock(b.System),
                     "sources" when b.Sources != null => new SourcesBlock(b.Sources),
                     "memory" when b.Memory != null => new MemoryBlock(b.Memory),
+                    "web" when b.Web != null => new WebSourcesBlock(b.Web),
                     "reminders" when b.Reminders != null => new ReminderBlock(b.Title ?? "set", b.Reminders),
                     "action" when b.Action is { } a => new ActionBlock
                     {
@@ -277,6 +279,7 @@ internal static class ChatStore
         SourcesBlock s => new SavedBlock("sources", Sources: s.Docs),
         MemoryBlock m => new SavedBlock("memory", Memory: m.Changes),
         ReminderBlock r => new SavedBlock("reminders", Title: r.Kind, Reminders: r.Reminders),
+        WebSourcesBlock w => new SavedBlock("web", Web: w.Sources),
         ActionBlock a => new SavedBlock("action", Action: new SavedAction(a.Kind, a.Question, a.Paths.ToList(), a.State, a.Message, a.Record)),
         _ => null,
     };
