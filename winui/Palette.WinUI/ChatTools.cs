@@ -134,7 +134,7 @@ public sealed partial class MainWindow
         string request = Encoding.UTF8.GetString(ms.ToArray());
         var files = await Task.Run(() => Native.FindFiles(request));
         if (files.Count == 0) return ("No file matches.", null, null);
-        var sb = new StringBuilder($"{files.Count} file(s), best first (the user sees them as cards):\n");
+        var sb = new StringBuilder($"{files.Count} file(s), best first (name the ones you mean, with their extension: each name becomes a link):\n");
         for (int i = 0; i < files.Count; i++)
         {
             var f = files[i];

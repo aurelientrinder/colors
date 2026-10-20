@@ -8,22 +8,22 @@ using Microsoft.UI.Xaml.Media;
 namespace Palette;
 
 /// <summary>
-/// What the chat's tools found, as cards inside the answer: files to click (open; right-click shows it in
-/// its folder), the weather, a day's events. Built once per block; nothing in them changes afterwards.
+/// What the chat's tools found. Files and documents are links inside the answer's text (MakeFileLink): a
+/// small icon and the name over a dotted line, to click (open; right-click shows it in its folder). The
+/// weather, a day's events and the PC's state are cards under the answer. Built once; nothing in them
+/// changes afterwards.
 /// </summary>
 public sealed partial class MainWindow
 {
     private static Brush Res(string key) => (Brush)Application.Current.Resources[key];
 
-    /// <summary>The card for a tool's block.</summary>
-    private FrameworkElement MakeBlockView(object block) => block switch
+    /// <summary>The card for a tool's block, or null for what shows as links in the text (files, documents).</summary>
+    private FrameworkElement? MakeBlockView(object block) => block switch
     {
-        FilesBlock f => FilesCard(f),
         WeatherBlock w => WeatherCard(w.Weather),
         EventsBlock e => EventsCard(e),
-        SourcesBlock d => SourcesCard(d),
         SystemBlock y => SystemCard(y.Reading),
-        _ => new Border(),
+        _ => null,
     };
 
     private static Border Card(UIElement child, Thickness? padding = null) => new()
@@ -48,42 +48,59 @@ public sealed partial class MainWindow
         return g;
     }
 
-    // ------------------------------------------------------------------ files
+    // ------------------------------------------------------------------ files, inline
 
-    private FrameworkElement FilesCard(FilesBlock block)
+    /// <summary>
+    /// A file named in an answer, as a link inside the sentence: its type's icon (a tiny picture of it, for
+    /// a photo or a PDF), then <paramref name="text"/> over a dotted line, which turns solid under the
+    /// pointer. Click opens it; right-click shows it in its folder; the tip says where it is.
+    /// </summary>
+    private FrameworkElement MakeFileLink(string path, string text)
     {
-        var rows = new StackPanel { Spacing = 0 };
-        foreach (var f in block.Files)
+        var icon = new Image { Width = 14, Height = 14, Stretch = Stretch.UniformToFill, VerticalAlignment = VerticalAlignment.Center };
+        var frame = new Border
         {
-            var row = Hoverable(() => OpenFromChat(f.Path, reveal: false), () => OpenFromChat(f.Path, reveal: true));
-            row.ColumnSpacing = 10;
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            ToolTipService.SetToolTip(row, f.Path + "\nClick to open · right-click to show in its folder");
+            Width = 15, Height = 15, CornerRadius = new CornerRadius(2), Margin = new Thickness(1, 0, 4, 0),
+            VerticalAlignment = VerticalAlignment.Center, Child = icon,
+        };
+        _ = FileIconInto(icon, path);
+        _ = ThumbnailInto(icon, path, 15);
 
-            var icon = new Image { Width = 22, Height = 22, VerticalAlignment = VerticalAlignment.Center, Stretch = Stretch.UniformToFill };
-            var frame = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(4), Child = icon };
-            _ = FileIconInto(icon, f.Path);
-            _ = ThumbnailInto(icon, frame, f.Path);
-            row.Children.Add(frame);
+        var name = new TextBlock { Text = text, FontSize = 14 };
+        var dots = new Microsoft.UI.Xaml.Shapes.Line
+        {
+            StrokeThickness = 1, Stroke = Res("TextFillColorSecondaryBrush"), StrokeDashArray = new DoubleCollection { 1, 2 },
+            VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 1),
+        };
+        name.SizeChanged += (_, _) => dots.X2 = name.ActualWidth;
+        var label = new Grid();
+        label.Children.Add(name);
+        label.Children.Add(dots);
 
-            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            text.Children.Add(new TextBlock { Text = f.Name, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-            text.Children.Add(new TextBlock
-            {
-                Text = $"{ShortFolder(f.Folder)} · {FileWhen(f)}", FontSize = 11, Foreground = Res("TextFillColorTertiaryBrush"),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-            Grid.SetColumn(text, 1);
-            row.Children.Add(text);
-
-            var go = new FontIcon { Glyph = "\uE8A7", FontSize = 12, Foreground = Res("TextFillColorTertiaryBrush"), VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(go, 2);
-            row.Children.Add(go);
-            rows.Children.Add(row);
-        }
-        return Card(rows);
+        var link = new StackPanel { Orientation = Orientation.Horizontal, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        link.Children.Add(frame);
+        link.Children.Add(label);
+        // An inline element stands on the text's baseline: let it hang below it by the text's descent, so the
+        // name lines up with the words around it and the line is no taller than the others.
+        link.Margin = new Thickness(0, 0, 0, -4);
+        link.PointerEntered += (_, _) =>
+        {
+            name.Foreground = Res("AccentTextFillColorPrimaryBrush");
+            dots.Stroke = Res("AccentTextFillColorPrimaryBrush");
+            dots.StrokeDashArray = new DoubleCollection();
+        };
+        link.PointerExited += (_, _) =>
+        {
+            name.ClearValue(TextBlock.ForegroundProperty);
+            dots.Stroke = Res("TextFillColorSecondaryBrush");
+            dots.StrokeDashArray = new DoubleCollection { 1, 2 };
+        };
+        link.Tapped += (_, e) => { e.Handled = true; OpenFromChat(path, reveal: false); };
+        link.RightTapped += (_, e) => { e.Handled = true; OpenFromChat(path, reveal: true); };
+        string where = ShortFolder(Path.GetDirectoryName(path) ?? "");
+        string when = File.Exists(path) ? " · changed " + Ago(new DateTimeOffset(File.GetLastWriteTime(path)).ToUnixTimeSeconds()) : "";
+        ToolTipService.SetToolTip(link, $"{Path.GetFileName(path)}\n{where}{when}\nClick to open · right-click to show in its folder");
+        return link;
     }
 
     /// <summary>The file type's icon, from the same cache as the result rows.</summary>
@@ -108,22 +125,20 @@ public sealed partial class MainWindow
     };
 
     /// <summary>The file's own picture (a photo, a PDF's first page) from the shell, over the icon when there is one.</summary>
-    private static async Task ThumbnailInto(Image image, Border frame, string path)
+    private static async Task ThumbnailInto(Image image, string path, double size)
     {
         if (!Thumbed.Contains(Path.GetExtension(path))) return;
         try
         {
             var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
-            using var thumb = await file.GetThumbnailAsync(Windows.Storage.FileProperties.ThumbnailMode.SingleItem, 64,
+            using var thumb = await file.GetThumbnailAsync(Windows.Storage.FileProperties.ThumbnailMode.SingleItem, (uint)Math.Max(32, size * 2),
                 Windows.Storage.FileProperties.ThumbnailOptions.ResizeThumbnail);
             // Without a picture of its own the shell hands back the type's icon: keep ours then.
             if (thumb == null || thumb.Type != Windows.Storage.FileProperties.ThumbnailType.Image) return;
             var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
             await bmp.SetSourceAsync(thumb);
-            image.Width = image.Height = 32;
+            image.Width = image.Height = size;
             image.Source = bmp;
-            frame.BorderBrush = Res("CardStrokeColorDefaultBrush");
-            frame.BorderThickness = new Thickness(1);
         }
         catch (Exception ex)
         {
@@ -244,40 +259,6 @@ public sealed partial class MainWindow
             list.Children.Add(row);
         }
         return Card(list, new Thickness(0));
-    }
-
-    // ------------------------------------------------------------------ documents behind an answer
-
-    private FrameworkElement SourcesCard(SourcesBlock block)
-    {
-        var rows = new StackPanel();
-        for (int i = 0; i < block.Docs.Count; i++)
-        {
-            var d = block.Docs[i];
-            var row = Hoverable(() => OpenFromChat(d.Path, reveal: false), () => OpenFromChat(d.Path, reveal: true));
-            row.Padding = new Thickness(8, 4, 8, 4);
-            row.ColumnSpacing = 8;
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            ToolTipService.SetToolTip(row, d.Path + "\nClick to open · right-click to show in its folder");
-            var badge = new Border
-            {
-                Background = Res("AccentFillColorDefaultBrush"), CornerRadius = new CornerRadius(4), Padding = new Thickness(5, 0, 5, 1),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock { Text = (i + 1).ToString(CultureInfo.InvariantCulture), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Res("TextOnAccentFillColorPrimaryBrush") },
-            };
-            row.Children.Add(badge);
-            var icon = new Image { Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Center };
-            _ = FileIconInto(icon, d.Path);
-            Grid.SetColumn(icon, 1);
-            row.Children.Add(icon);
-            var name = new TextBlock { Text = d.Name, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(name, 2);
-            row.Children.Add(name);
-            rows.Children.Add(row);
-        }
-        return Card(rows, new Thickness(2));
     }
 
     // ------------------------------------------------------------------ the PC

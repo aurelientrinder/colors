@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -151,7 +152,8 @@ internal sealed class WaitingDots : StackPanel
 
 /// <summary>
 /// An assistant message: a line for the model's thinking (the brain, then "Thought for 6 s", which opens
-/// to the reasoning), the answer, and small print under it.
+/// to the reasoning), the answer, the cards of what its tools found (weather, calendar, the PC), and small
+/// print under it. Files and documents the answer names are links inside its text, not cards.
 /// </summary>
 internal sealed class AssistantView : StackPanel
 {
@@ -165,16 +167,21 @@ internal sealed class AssistantView : StackPanel
         FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed,
         Margin = new Thickness(24, 0, 0, 2), LineHeight = 17,
     };
-    private readonly TextBlock _body = new() { TextWrapping = TextWrapping.Wrap, LineHeight = 21, IsTextSelectionEnabled = true };
+    private readonly RichTextBlock _body = new() { TextWrapping = TextWrapping.Wrap, LineHeight = 22, IsTextSelectionEnabled = true };
+    private readonly Paragraph _para = new();
     private readonly TextBlock _note = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly StackPanel _blocks = new() { Spacing = 4 };
-    private readonly Func<object, FrameworkElement> _makeBlock;
+    private readonly Func<object, FrameworkElement?> _makeBlock;
+    private readonly Func<string, string, FrameworkElement> _makeLink;
+    private int _blocksSeen;
     private bool _open;
 
-    public AssistantView(Action onResize, Func<object, FrameworkElement> makeBlock)
+    public AssistantView(Action onResize, Func<object, FrameworkElement?> makeBlock, Func<string, string, FrameworkElement> makeLink)
     {
         _makeBlock = makeBlock;
+        _makeLink = makeLink;
         Spacing = 3;
+        _body.Blocks.Add(_para);
         var dim = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
         _label.Foreground = dim;
@@ -245,17 +252,43 @@ internal sealed class AssistantView : StackPanel
             _reasoning.Visibility = Visibility.Collapsed;
         }
 
-        _body.Visibility = answering ? Visibility.Visible : Visibility.Collapsed;
-        if (answering && m.Text != _text)
+        // What the tools found: files and documents become links in the text; the rest, cards under it.
+        bool relink = false;
+        for (; _blocksSeen < m.Blocks.Count; _blocksSeen++)
         {
+            if (_makeBlock(m.Blocks[_blocksSeen]) is { } card) _blocks.Children.Add(card);
+            relink = true;
+        }
+        if (relink) _links = ChatMarkdown.LinksOf(m.Blocks);
+
+        _body.Visibility = answering ? Visibility.Visible : Visibility.Collapsed;
+        if (answering && (m.Text != _text || relink))
+        {
+            if (writing && m.Text != _text) _fresh = true;
             _text = m.Text;
-            if (writing) _fresh = true;
             DrawBody();
         }
-        // What the tools found: cards under the text, each added once.
-        for (int i = _blocks.Children.Count; i < m.Blocks.Count; i++) _blocks.Children.Add(_makeBlock(m.Blocks[i]));
         _note.Text = m.Note;
         _note.Visibility = m.Note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ------------------------------------------------------------------ links to files in the text
+
+    private IReadOnlyList<LinkToken> _links = Array.Empty<LinkToken>();
+    private readonly Dictionary<string, InlineUIContainer> _linkViews = new();
+
+    /// <summary>The link for the <paramref name="occurrence"/>th mention of a file, made once and reused at every draw.</summary>
+    private Inline LinkInline(LinkToken link, string shown, int occurrence)
+    {
+        string key = $"{link.Path}|{shown}|{occurrence}";
+        if (!_linkViews.TryGetValue(key, out var c))
+        {
+            var view = _makeLink(link.Path, shown);
+            view.Tag = shown.Length;
+            _linkViews[key] = c = new InlineUIContainer { Child = view };
+        }
+        c.Child.Opacity = 1;
+        return c;
     }
 
     // ------------------------------------------------------------------ the answer fading in as it is written
@@ -271,6 +304,14 @@ internal sealed class AssistantView : StackPanel
     private bool _ticking;
     private int _drawn;                                     // the answer's drawn length at the last draw
 
+    /// <summary>Characters an inline stands for: a run's text, a link's name.</summary>
+    private static int LengthOf(Inline i) => i switch
+    {
+        Run r => r.Text.Length,
+        InlineUIContainer { Child: FrameworkElement { Tag: int n } } => n,
+        _ => 0,
+    };
+
     /// <summary>
     /// The answer, with the newest text fading in: each chunk sweeps from its first character to its
     /// last over the time since the chunk before (so the words come up like a breath across the line,
@@ -278,10 +319,10 @@ internal sealed class AssistantView : StackPanel
     /// </summary>
     private void DrawBody()
     {
-        ChatMarkdown.Fill(_body, _text);
+        ChatMarkdown.Fill(_para.Inlines, _body.FontSize, _text, _links, LinkInline);
         long now = Environment.TickCount64;
         int total = 0;
-        foreach (var i in _body.Inlines) total += i is Microsoft.UI.Xaml.Documents.Run r ? r.Text.Length : 0;
+        foreach (var i in _para.Inlines) total += LengthOf(i);
         if (_fresh)
         {
             _fresh = false;
@@ -339,16 +380,25 @@ internal sealed class AssistantView : StackPanel
     {
         // The first mark is the length before the oldest fading chunk: everything before it is solid.
         int from = _marks[0].len;
-        var runs = _body.Inlines.ToList();
-        _body.Inlines.Clear();
+        var inlines = _para.Inlines.ToList();
+        _para.Inlines.Clear();
         var solid = ((SolidColorBrush)Application.Current.Resources["TextFillColorPrimaryBrush"]).Color;
         int pos = 0;
-        foreach (var inline in runs)
+        foreach (var inline in inlines)
         {
-            if (inline is not Microsoft.UI.Xaml.Documents.Run run || pos + run.Text.Length <= from)
+            int len = LengthOf(inline);
+            if (inline is InlineUIContainer link)
             {
-                if (inline is Microsoft.UI.Xaml.Documents.Run r0) pos += r0.Text.Length;
-                _body.Inlines.Add(inline);
+                // A link comes up whole, as its first character would.
+                link.Child.Opacity = pos + len <= from ? 1 : Alpha(pos, now);
+                _para.Inlines.Add(link);
+                pos += len;
+                continue;
+            }
+            if (inline is not Run run || pos + len <= from)
+            {
+                pos += len;
+                _para.Inlines.Add(inline);
                 continue;
             }
             var color = (run.Foreground as SolidColorBrush)?.Color ?? solid;
@@ -356,7 +406,7 @@ internal sealed class AssistantView : StackPanel
             int at = 0;
             if (from > pos)
             {
-                _body.Inlines.Add(Piece(run, t[..(from - pos)], null));
+                _para.Inlines.Add(Piece(run, t[..(from - pos)], null));
                 at = from - pos;
             }
             // Pieces of three characters: fine enough for a smooth sweep, few enough to stay cheap.
@@ -366,38 +416,80 @@ internal sealed class AssistantView : StackPanel
                 double a = Alpha(pos + at + n - 1, now);
                 var c = color;
                 c.A = (byte)Math.Round(color.A * a);
-                _body.Inlines.Add(Piece(run, t.Substring(at, n), a >= 1 ? null : new SolidColorBrush(c)));
+                _para.Inlines.Add(Piece(run, t.Substring(at, n), a >= 1 ? null : new SolidColorBrush(c)));
                 at += n;
             }
             pos += t.Length;
         }
     }
 
-    private static Microsoft.UI.Xaml.Documents.Run Piece(Microsoft.UI.Xaml.Documents.Run like, string text, Brush? brush)
+    private static Run Piece(Run like, string text, Brush? brush)
     {
-        var r = new Microsoft.UI.Xaml.Documents.Run
+        var r = new Run
         {
             Text = text, FontWeight = like.FontWeight, FontStyle = like.FontStyle, FontSize = like.FontSize,
             FontFamily = like.FontFamily,
         };
         if (brush != null) r.Foreground = brush;
-        else if (like.ReadLocalValue(Microsoft.UI.Xaml.Documents.TextElement.ForegroundProperty) != DependencyProperty.UnsetValue)
+        else if (like.ReadLocalValue(TextElement.ForegroundProperty) != DependencyProperty.UnsetValue)
             r.Foreground = like.Foreground;
         return r;
     }
 }
 
-/// <summary>The model's markdown (bold, italics, code, headings, bullets) as the runs of a text block.</summary>
+/// <summary>Text in an answer that stands for a file: its name (or "[2]" for a cited document), and what to show.</summary>
+internal sealed record LinkToken(string Token, string Path, string Label, bool Citation);
+
+/// <summary>The model's markdown (bold, italics, code, headings) as inlines, with the files it names as links.</summary>
 internal static class ChatMarkdown
 {
     private static readonly Regex Inline = new(@"\*\*(?<b>.+?)\*\*|__(?<b>.+?)__|`(?<c>[^`]+)`|(?<![\w*])\*(?<i>[^*\s][^*]*?)\*(?![\w*])",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex Link = new(@"\[([^\]\n]+)\]\((?:https?://|file:)[^)\s]+\)", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    public static void Fill(TextBlock tb, string md)
+    /// <summary>
+    /// What in an answer's text is a link: the names of the files its tools found (and their names without
+    /// the extension, when distinctive), and [1], [2] for the documents it read. Longest first.
+    /// </summary>
+    public static IReadOnlyList<LinkToken> LinksOf(IEnumerable<object> blocks)
     {
-        tb.Inlines.Clear();
+        var list = new List<LinkToken>();
+        foreach (var b in blocks)
+        {
+            if (b is FilesBlock f)
+            {
+                foreach (var file in f.Files)
+                {
+                    list.Add(new LinkToken(file.Name, file.Path, file.Name, false));
+                    string stem = System.IO.Path.GetFileNameWithoutExtension(file.Name);
+                    if (stem.Length >= 6 && stem != file.Name) list.Add(new LinkToken(stem, file.Path, stem, false));
+                }
+            }
+            else if (b is SourcesBlock s)
+            {
+                for (int i = 0; i < s.Docs.Count; i++)
+                {
+                    var d = s.Docs[i];
+                    string stem = System.IO.Path.GetFileNameWithoutExtension(d.Name);
+                    string label = stem.Length > 28 ? stem[..26] + "…" : stem;
+                    list.Add(new LinkToken($"[{i + 1}]", d.Path, label, true));
+                    list.Add(new LinkToken(d.Name, d.Path, d.Name, false));
+                }
+            }
+        }
+        return list.OrderByDescending(l => l.Token.Length).ToList();
+    }
+
+    public static void Fill(InlineCollection inlines, double fontSize, string md,
+        IReadOnlyList<LinkToken> links, Func<LinkToken, string, int, Inline> makeLink)
+    {
+        inlines.Clear();
         md = Link.Replace(md.Replace("\r", "").Trim(), "$1");
+        // A name the model dressed up (**Report.docx**, `Report.docx`, "Report.docx") is a link all the same.
+        foreach (var l in links)
+            md = Regex.Replace(md, @"(\*\*|__|`|""|“|«\s?)(" + Regex.Escape(l.Token) + @")(\*\*|__|`|""|”|\s?»)", "$2",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var seen = new Dictionary<string, int>();
         var lines = md.Split('\n');
         for (int n = 0; n < lines.Length; n++)
         {
@@ -409,26 +501,67 @@ internal static class ChatMarkdown
                 heading = true;
                 line = line[h.Length..];
             }
-            line = Regex.Replace(line, @"^(\s*)[*-]\s+", "$1• ");
+            // Split the line at the names of files; what is between is markdown.
             int at = 0;
-            foreach (Match m in Inline.Matches(line))
+            while (at < line.Length)
             {
-                if (m.Index > at) tb.Inlines.Add(Plain(line[at..m.Index], heading));
-                if (m.Groups["b"].Success) tb.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = m.Groups["b"].Value, FontWeight = FontWeights.SemiBold });
-                else if (m.Groups["c"].Success)
-                    tb.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
-                    {
-                        Text = m.Groups["c"].Value, FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = tb.FontSize - 1,
-                        Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"],
-                    });
-                else tb.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = m.Groups["i"].Value, FontStyle = Windows.UI.Text.FontStyle.Italic });
-                at = m.Index + m.Length;
+                (int index, LinkToken? link) best = (-1, null);
+                foreach (var l in links)
+                {
+                    int i = Find(line, l, at);
+                    if (i >= 0 && (best.index < 0 || i < best.index)) best = (i, l);
+                }
+                if (best.link is not { } found)
+                {
+                    Text(inlines, line[at..], heading, fontSize);
+                    break;
+                }
+                if (best.index > at) Text(inlines, line[at..best.index], heading, fontSize);
+                string shown = found.Citation ? found.Label : line.Substring(best.index, found.Token.Length);
+                int k = seen.GetValueOrDefault(found.Path + shown);
+                seen[found.Path + shown] = k + 1;
+                inlines.Add(makeLink(found, shown, k));
+                at = best.index + found.Token.Length;
             }
-            if (at < line.Length) tb.Inlines.Add(Plain(line[at..], heading));
-            if (n < lines.Length - 1) tb.Inlines.Add(new Microsoft.UI.Xaml.Documents.LineBreak());
+            if (n < lines.Length - 1) inlines.Add(new LineBreak());
         }
     }
 
-    private static Microsoft.UI.Xaml.Documents.Run Plain(string s, bool heading) =>
+    /// <summary>Where <paramref name="l"/> is written in <paramref name="line"/> from <paramref name="from"/> on, as a whole word; -1 if not.</summary>
+    private static int Find(string line, LinkToken l, int from)
+    {
+        for (int i = line.IndexOf(l.Token, from, StringComparison.OrdinalIgnoreCase); i >= 0;
+             i = line.IndexOf(l.Token, i + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            if (l.Citation) return i;
+            bool before = i == 0 || !char.IsLetterOrDigit(line[i - 1]);
+            int end = i + l.Token.Length;
+            bool after = end >= line.Length || !char.IsLetterOrDigit(line[end]) && !(line[end] == '.' && end + 1 < line.Length && char.IsLetterOrDigit(line[end + 1]));
+            if (before && after) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>A piece of markdown without links, as runs.</summary>
+    private static void Text(InlineCollection inlines, string text, bool heading, double fontSize)
+    {
+        int at = 0;
+        foreach (Match m in Inline.Matches(text))
+        {
+            if (m.Index > at) inlines.Add(Plain(text[at..m.Index], heading));
+            if (m.Groups["b"].Success) inlines.Add(new Run { Text = m.Groups["b"].Value, FontWeight = FontWeights.SemiBold });
+            else if (m.Groups["c"].Success)
+                inlines.Add(new Run
+                {
+                    Text = m.Groups["c"].Value, FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = fontSize - 1,
+                    Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"],
+                });
+            else inlines.Add(new Run { Text = m.Groups["i"].Value, FontStyle = Windows.UI.Text.FontStyle.Italic });
+            at = m.Index + m.Length;
+        }
+        if (at < text.Length) inlines.Add(Plain(text[at..], heading));
+    }
+
+    private static Run Plain(string s, bool heading) =>
         new() { Text = s, FontWeight = heading ? FontWeights.SemiBold : FontWeights.Normal };
 }

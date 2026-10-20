@@ -488,7 +488,7 @@ public sealed partial class MainWindow
                 Child = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
             };
         }
-        return new AssistantView(() => { if (_chat is { } c) RenderChat(c); }, MakeBlockView);
+        return new AssistantView(() => { if (_chat is { } c) RenderChat(c); }, MakeBlockView, MakeFileLink);
     }
 
     private static void UpdateMessageView(FrameworkElement view, ChatMsg m, bool writing)
