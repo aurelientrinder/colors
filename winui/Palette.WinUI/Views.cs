@@ -20,7 +20,7 @@ namespace Palette;
 /// </summary>
 public sealed partial class MainWindow
 {
-    private enum View { Results, AllApps, Actions, Done, Settings, Chat }
+    private enum View { Results, AllApps, Actions, Done, Settings, Chat, Chats }
 
     private const string SearchPlaceholder = "Search";
 
@@ -69,6 +69,7 @@ public sealed partial class MainWindow
         var row = Items[i];
         OpenButton.Content = _view == View.Actions ? "Run"
             : _view == View.Chat ? "Send"
+            : _view == View.Chats ? "Open"
             : _view == View.Settings ? SettingButton(row)
             : row.IsTimer ? row.TimerLabel
             : row.Confirming ? row.ConfirmLabel
@@ -93,7 +94,8 @@ public sealed partial class MainWindow
     private string KeyHintsFor(HitVm row)
     {
         if (_view == View.Actions) return "Esc Back";
-        if (_view == View.Chat) return "\u21b5 Send  \u00b7  Shift+\u21b5 Think  \u00b7  Ctrl+N New chat  \u00b7  Tab or Esc Leave";
+        if (_view == View.Chat) return "\u21b5 Send  \u00b7  Shift+\u21b5 Think  \u00b7  Ctrl+N New  \u00b7  Ctrl+H Earlier chats  \u00b7  Esc Leave";
+        if (_view == View.Chats) return "\u21b5 Open  \u00b7  Shift+Del Delete  \u00b7  Esc Back to the chat";
         if (row.Confirming) return $"↵ {row.ConfirmLabel}  ·  Esc Cancel";
         if (row.IsTimer) return $"↵ {row.TimerLabel}";
         var keys = new List<string>();

@@ -43,6 +43,15 @@ public sealed record ChatAnswer() : WebAnswers.Answer("chat")
     public string Footer { get; set; } = "On this PC";
     public bool Busy { get; set; }
     public string Hint { get; set; } = "Reading the window…";
+    /// <summary>Which conversation this is (its file in ChatStore).</summary>
+    public string Id { get; set; } = NewId();
+    /// <summary>A few words for the list of chats, written by the model after the first answer ("" until then).</summary>
+    public string Title { get; set; } = "";
+    /// <summary>What was said before the messages the model still sees (ChatList.cs Summarize), and up to which message.</summary>
+    public string Summary { get; set; } = "";
+    public int SummaryUpTo { get; set; }
+
+    public static string NewId() => DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
 }
 
 /// <summary>
@@ -94,11 +103,7 @@ public sealed partial class MainWindow
     private void StartChat(string typed)
     {
         CancelAsk();
-        if (_conversation == null)
-        {
-            _conversation = new ChatAnswer();
-            _conversation.Messages.AddRange(ChatStore.Load());
-        }
+        _conversation ??= ChatStore.LoadCurrent();
         var chat = _conversation;
         chat.Hint = "Reading the window…";
         _chat = chat;
@@ -254,8 +259,8 @@ public sealed partial class MainWindow
                     answer.Text = "I ran out of room before I could answer. Ask again, a little more simply.";
                 chat.Busy = false;
                 RenderChat(chat);
-                if (chat == _conversation) ChatStore.Save(chat.Messages);
-                if (!failed && port > 0 && _settings.ChatMemory && MemoryNotice.MayBePersonal(user.Text)) _ = NoticeMemory(chat, answer, port, user.Text);
+                Save(chat);
+                if (!failed && port > 0) _ = AfterAnswer(chat, answer, port, user.Text);
             }
         }
     }
@@ -330,26 +335,6 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// After an answer: note what the message said about the user (MemoryNotice), and show what was
-    /// remembered under the answer. Runs on its own; a failure only goes to the log.
-    /// </summary>
-    private async Task NoticeMemory(ChatAnswer chat, ChatMsg answer, int port, string message)
-    {
-        try
-        {
-            var changes = await MemoryNotice.Notice(port, message, CancellationToken.None);
-            if (changes.Count == 0) return;
-            answer.Blocks.Add(new MemoryBlock(changes));
-            RenderChat(chat);
-            if (chat == _conversation && !chat.Busy) ChatStore.Save(chat.Messages);
-        }
-        catch (Exception ex)
-        {
-            App.Log("memory notice failed: " + ex.Message);
-        }
-    }
-
-    /// <summary>
     /// The reasoning and the answer so far. The server splits them (reasoning_content); a model that
     /// writes its reasoning inside the answer in think tags is split here.
     /// </summary>
@@ -387,12 +372,13 @@ public sealed partial class MainWindow
                 w.WriteString("content", content);
                 w.WriteEndObject();
             }
-            Message("system", system);
+            // What has left the model's view is told in a summary (ChatList.cs Summarize).
+            Message("system", chat.Summary.Length > 0
+                ? system + "\n\nEarlier in this conversation (a summary; those messages are no longer shown): " + chat.Summary
+                : system);
             // Older turns stay as they were sent, so the model's cache of the conversation holds; the last
             // message is the one being answered, with the tools used for it so far.
-            var turns = chat.Messages.Where(m => m.Role == "user" || m.Text.Length > 0 || m.Rounds.Count > 0).ToList();
-            int from = Math.Max(0, turns.Count - 13);   // the last six exchanges and the new message
-            foreach (var m in turns.Skip(from))
+            foreach (var m in chat.Messages.Skip(ChatWindowStart(chat)).Where(Counts))
             {
                 if (m.Role == "user")
                 {
@@ -521,25 +507,44 @@ public sealed partial class MainWindow
         else if (view is AssistantView a) a.Update(m, writing);
     }
 
-    /// <summary>Ctrl+N: put the conversation away and start a new one.</summary>
+    /// <summary>A message the model is sent: a question, or an answer with something in it.</summary>
+    private static bool Counts(ChatMsg m) => m.Role == "user" || m.Text.Length > 0 || m.Rounds.Count > 0;
+
+    /// <summary>Where the messages the model sees begin: the last six exchanges and the new message, from a question on.</summary>
+    private static int ChatWindowStart(ChatAnswer chat)
+    {
+        var shown = Enumerable.Range(0, chat.Messages.Count).Where(i => Counts(chat.Messages[i])).ToList();
+        if (shown.Count <= 13) return 0;
+        int start = shown[^13];
+        while (start < chat.Messages.Count && chat.Messages[start].Role != "user") start++;
+        return start;
+    }
+
+    /// <summary>Ctrl+N: put the conversation away (it stays in the list, Ctrl+H) and start a new one.</summary>
     private void NewChat()
     {
-        CancelChat();
+        if (_conversation is { } old && old.Messages.Count > 0) Save(old);
         _conversation = new ChatAnswer();
-        ChatStore.Clear();
+        ChatStore.SetCurrent(null);
         StartChat("");
     }
 
     /// <summary>Leave the chat for the home view. The conversation is kept (an answer being written goes on).</summary>
     private void LeaveChat()
     {
-        if (_chat is { Busy: false } c && c == _conversation) ChatStore.Save(c.Messages);
+        LeaveChatView();
+        ShowHome();
+    }
+
+    /// <summary>Take the chat's card away, keeping the conversation, before another view takes the list.</summary>
+    private void LeaveChatView()
+    {
+        if (_chat is { } c && ReferenceEquals(c, _conversation) && c.Messages.Count > 0) Save(c);
         _chat = null;
         _chatViews.Clear();
         ChatMessages.Children.Clear();
         // The card goes at once: left to close with the row's room, it showed as an empty box that
         // shrank under the first result.
         ResetPreview();
-        ShowHome();
     }
 }

@@ -10,8 +10,9 @@ thinking off; the conversation is lost when the palette closes; the model has no
 
 ## Steps (each lands working and is committed on its own)
 
-Status (2026-10-20): 1–4 done; 5 half done (the conversation is saved and resumed with Tab, Ctrl+N starts
-a new one; a list of earlier chats and the rolling summary remain); 6 built but NOT YET TESTED ON SCREEN
+Status (2026-10-20): 1–4 done; 5 done (conversations kept in chats\, resumed with Tab, Ctrl+N files one
+away, Ctrl+H lists them with model-written titles, a running summary covers what leaves the model's view;
+the list and the summary are NOT YET TESTED ON SCREEN); 6 built but NOT YET TESTED ON SCREEN
 (MemoryStore.cs: a separate request after each personal-sounding message notes facts as + - ~ lines,
 because Gemma would not call a remember tool; "Remembered: …" lines with Undo; Settings rows); 7 to do.
 Answers are prose only (never lists) and name files as inline links. Thinking is on only for messages

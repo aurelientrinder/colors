@@ -815,6 +815,11 @@ public sealed partial class MainWindow : Window
         _ignoreText = null;
         CancelAsk();
         if (_view == View.Chat) return;   // what is typed is the message
+        if (_view == View.Chats)
+        {
+            ShowChats(Input.Text);
+            return;
+        }
         if (_view == View.Actions)
         {
             if (_renaming) ShowRename();
@@ -867,8 +872,23 @@ public sealed partial class MainWindow : Window
                 StartChat(Input.Text);
                 e.Handled = true;
                 return;
-            case VirtualKey.N when _view == View.Chat && Held(VirtualKey.Control):
+            case VirtualKey.N when _view is View.Chat or View.Chats && Held(VirtualKey.Control):
                 NewChat();
+                e.Handled = true;
+                return;
+            case VirtualKey.H when _view == View.Chat && Held(VirtualKey.Control):
+                LeaveChatView();
+                ShowChats();
+                e.Handled = true;
+                return;
+            case VirtualKey.Delete when _view == View.Chats && Held(VirtualKey.Shift):
+                DeleteChatRow(sel);
+                e.Handled = true;
+                return;
+            case VirtualKey.Back when empty && _view == View.Chats:
+            case VirtualKey.Escape when _view == View.Chats:
+            case VirtualKey.Tab when _view == View.Chats:
+                StartChat("");
                 e.Handled = true;
                 return;
             case VirtualKey.Tab when _view == View.Chat:
@@ -1025,6 +1045,11 @@ public sealed partial class MainWindow : Window
             SendChat(Input.Text);
             return;
         }
+        if (_view == View.Chats)
+        {
+            OpenChatRow(index);
+            return;
+        }
         if (_view == View.Done || index < 0 || index >= Items.Count) return;
         var vm = Items[index];
         if (vm.IsTimer)
@@ -1129,7 +1154,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyResults(int version, string query, Native.SearchResult r)
     {
-        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done or View.Settings or View.Chat) return;
+        if (version != _queryVersion || !_visible || _view is View.Actions or View.Done or View.Settings or View.Chat or View.Chats) return;
         _gen = r.Gen;
         if (_undoPending)
         {
@@ -1258,7 +1283,7 @@ public sealed partial class MainWindow : Window
     private void AppendRelated(int version, Native.Appended r)
     {
         // Drop the rows if the user kept typing or the list was rebuilt in the meantime.
-        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings or View.Chat) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings or View.Chat or View.Chats) return;
         if (r.Replace)
         {
             // Strong meaning matches lead; the engine rebuilt the whole list around them.
@@ -1310,7 +1335,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowPlan(int version, Native.Appended r)
     {
-        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings or View.Chat) return;
+        if (version != _queryVersion || !_visible || r.Gen != _gen || _view is View.Actions or View.Done or View.Settings or View.Chat or View.Chats) return;
         // Enter runs the plan unless a row further down was chosen meanwhile.
         int sel = ResultsList.SelectedIndex;
         bool lead = sel <= AnswerOffset;
