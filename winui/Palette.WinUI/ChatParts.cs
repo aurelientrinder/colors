@@ -60,7 +60,7 @@ internal sealed class BrainIcon : Grid
     /// <summary>Accent while thinking, quiet once done.</summary>
     private void Tone(bool active)
     {
-        var brush = (Brush)Application.Current.Resources[active ? "AccentTextFillColorPrimaryBrush" : "TextFillColorTertiaryBrush"];
+        var brush = (Brush)Application.Current.Resources[active ? "TextFillColorSecondaryBrush" : "TextFillColorTertiaryBrush"];
         foreach (var p in _all) p.Stroke = brush;
     }
 
@@ -151,85 +151,117 @@ internal sealed class WaitingDots : StackPanel
 }
 
 /// <summary>
-/// An assistant message: a line for the model's thinking (the brain, then "Thought for 6 s", which opens
-/// to the reasoning), the answer, the cards of what its tools found (weather, calendar, the PC), and small
-/// print under it. Files and documents the answer names are links inside its text, not cards.
+/// An assistant message, as a timeline (direction B of the chat designs). While the model works, a thin
+/// rail runs down the left margin with a node for each thing it does (its thinking, each tool) and its
+/// sentences between them; the node at work breathes. Once the answer is written the rail folds into one
+/// small chip ("2 steps · 9 s") above it, which opens it again. Then the answer, the cards of what its
+/// tools found (weather, calendar, the PC), and small print. Files and documents it names are links.
 /// </summary>
 internal sealed class AssistantView : StackPanel
 {
-    private readonly Grid _think = new() { Visibility = Visibility.Collapsed };
-    private readonly BrainIcon _brain = new();
-    private readonly TextBlock _label = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
-    private readonly WaitingDots _dots = new() { Visibility = Visibility.Collapsed };
-    private readonly FontIcon _chevron = new() { Glyph = "", FontSize = 9, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
-    private readonly TextBlock _reasoning = new()
-    {
-        FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed,
-        Margin = new Thickness(24, 0, 0, 2), LineHeight = 17,
-    };
+    /// <summary>How far into the left margin the rail's nodes hang, so the text on it lines up with the answer.</summary>
+    public const double Gutter = 30;
+
+    private readonly Grid _railHost = new() { Visibility = Visibility.Collapsed };
+    private readonly StackPanel _rail = new() { Spacing = 7 };
+    private readonly Grid _chip = new() { Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly StackPanel _chipIcons = new() { Orientation = Orientation.Horizontal, Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _chipText = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+    private readonly FontIcon _chipChevron = new() { Glyph = "\uE70D", FontSize = 9, VerticalAlignment = VerticalAlignment.Center };
+    /// <summary>Dots before the first words, and while the model goes on after its tools.</summary>
+    private readonly WaitingDots _tail = new() { Visibility = Visibility.Collapsed, Margin = new Thickness(2, 4, 0, 4), HorizontalAlignment = HorizontalAlignment.Left };
     private readonly RichTextBlock _body = new() { TextWrapping = TextWrapping.Wrap, LineHeight = 22, IsTextSelectionEnabled = true };
     private readonly Paragraph _para = new();
     private readonly TextBlock _note = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly StackPanel _blocks = new() { Spacing = 4 };
     private readonly Func<object, FrameworkElement?> _makeBlock;
     private readonly Func<string, string, FrameworkElement> _makeLink;
-    private int _blocksSeen;
-    private bool _open;
-
     private readonly Action _onResize;
+    private int _blocksSeen;
+    private bool _expanded;     // the rail opened again from its chip
 
     public AssistantView(Action onResize, Func<object, FrameworkElement?> makeBlock, Func<string, string, FrameworkElement> makeLink)
     {
         _onResize = onResize;
         _makeBlock = makeBlock;
         _makeLink = makeLink;
-        Spacing = 3;
+        Spacing = 6;
         _body.Blocks.Add(_para);
-        var dim = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
-        var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
-        _label.Foreground = dim;
-        _chevron.Foreground = faint;
-        _reasoning.Foreground = faint;
+        var faint = Res("TextFillColorTertiaryBrush");
         _note.Foreground = faint;
+        _chipText.Foreground = Res("TextFillColorSecondaryBrush");
+        _chipChevron.Foreground = faint;
 
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        row.Children.Add(_brain);
-        row.Children.Add(_label);
-        row.Children.Add(_dots);
-        row.Children.Add(_chevron);
-        _think.Children.Add(row);
-        // A tap on the line opens the reasoning (once there is some).
-        _think.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        _think.Tapped += (_, _) =>
+        // The rail: a line in the margin, behind the nodes.
+        var line = new Microsoft.UI.Xaml.Shapes.Rectangle
         {
-            if (_reasoning.Text.Length == 0) return;
-            _open = !_open;
-            _reasoning.Visibility = _open ? Visibility.Visible : Visibility.Collapsed;
-            _chevron.Glyph = _open ? "" : "";
-            onResize();
+            Width = 1.5, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(-Gutter + 9.25, 12, 0, 12),
+            Fill = Res("ControlStrongStrokeColorDisabledBrush"),
+        };
+        _railHost.Children.Add(line);
+        _railHost.Children.Add(_rail);
+
+        // The chip the rail folds into.
+        var chipRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        chipRow.Children.Add(_chipIcons);
+        chipRow.Children.Add(_chipText);
+        chipRow.Children.Add(_chipChevron);
+        var chipFace = new Border
+        {
+            Background = Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = Res("CardStrokeColorDefaultBrush"),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Padding = new Thickness(5, 3, 10, 3), Child = chipRow,
+        };
+        _chip.Children.Add(chipFace);
+        _chip.PointerEntered += (_, _) => chipFace.Background = Res("SubtleFillColorSecondaryBrush");
+        _chip.PointerExited += (_, _) => chipFace.Background = Res("CardBackgroundFillColorDefaultBrush");
+        _chip.Tapped += (_, e) =>
+        {
+            e.Handled = true;
+            _expanded = !_expanded;
+            Fold.Turn(_chipChevron, _expanded);
+            Fold.Toggle(_railHost, _expanded, onResize);
         };
 
-        Children.Add(_think);
-        Children.Add(_reasoning);
-        Children.Add(_timeline);
+        Children.Add(_chip);
+        Children.Add(_railHost);
         Children.Add(_tail);
         Children.Add(_body);
         Children.Add(_blocks);
         Children.Add(_note);
     }
 
-    // ------------------------------------------------------------------ the timeline: text, steps, text…
+    private static Brush Res(string key) => (Brush)Application.Current.Resources[key];
 
-    /// <summary>What the model wrote and did before its last turn: each round's text, then a line per tool it used.</summary>
-    private readonly StackPanel _timeline = new() { Spacing = 4 };
-    /// <summary>Dots while the model goes on after its tools, before its next words.</summary>
-    private readonly WaitingDots _tail = new() { Visibility = Visibility.Collapsed, Margin = new Thickness(2, 2, 0, 2), HorizontalAlignment = HorizontalAlignment.Left };
-    private readonly List<(ToolCall call, ToolStep view)> _steps = new();
+    // ------------------------------------------------------------------ the rail's rows
+
+    private RailThink? _thinkRow;
+    private readonly List<(ToolCall call, RailStep view)> _steps = new();
     private readonly List<(ToolRound round, StackPanel calls)> _rounds = new();
 
-    /// <summary>Draw the rounds of tools not drawn yet, and bring the steps up to date (running, then done).</summary>
-    private void SyncTimeline(ChatMsg m)
+    /// <summary>A row of the rail: a node in the margin, then what it stands for.</summary>
+    public static Grid RailRow(FrameworkElement node, UIElement content)
     {
+        var g = new Grid { Margin = new Thickness(-Gutter, 0, 0, 0), ColumnSpacing = Gutter - 20 };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        node.VerticalAlignment = VerticalAlignment.Top;
+        node.HorizontalAlignment = HorizontalAlignment.Center;
+        g.Children.Add(node);
+        Grid.SetColumn((FrameworkElement)content, 1);
+        g.Children.Add(content);
+        return g;
+    }
+
+    /// <summary>Add what is new to the rail (thinking, each round's sentence and tools) and bring every node up to date.</summary>
+    private void SyncRail(ChatMsg m, bool thinkingLive)
+    {
+        if (_thinkRow == null && (thinkingLive || m.Thinking.Length > 0))
+        {
+            _thinkRow = new RailThink(_onResize);
+            _rail.Children.Insert(0, _thinkRow.Row);
+        }
+        _thinkRow?.Update(m, thinkingLive);
+
         for (int i = _rounds.Count; i < m.Rounds.Count; i++)
         {
             var round = m.Rounds[i];
@@ -238,13 +270,15 @@ internal sealed class AssistantView : StackPanel
                 var text = new RichTextBlock { TextWrapping = TextWrapping.Wrap, LineHeight = 22, IsTextSelectionEnabled = true };
                 var para = new Paragraph();
                 text.Blocks.Add(para);
-                ChatMarkdown.Fill(para.Inlines, text.FontSize, round.Content.Trim(), _links, (l, shown, k) => LinkInline(l, shown, 1000 * (i + 1) + k));
-                _timeline.Children.Add(text);
+                int n = i;
+                ChatMarkdown.Fill(para.Inlines, text.FontSize, round.Content.Trim(), _links, (l, shown, k) => LinkInline(l, shown, 1000 * (n + 1) + k));
+                var dot = new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 7, Height = 7, Fill = Res("TextFillColorDisabledBrush"), Margin = new Thickness(0, 8, 0, 0) };
+                _rail.Children.Add(RailRow(dot, text));
             }
-            var calls = new StackPanel { Spacing = 2, Margin = new Thickness(0, 1, 0, 1) };
-            _timeline.Children.Add(calls);
+            var calls = new StackPanel { Spacing = 7 };
+            _rail.Children.Add(calls);
             _rounds.Add((round, calls));
-            // The text of the turn that called these is now above them: the next words start afresh.
+            // The words of the turn that called these now sit on the rail: the next words start afresh.
             _text = "";
             _drawn = 0;
             _marks.Clear();
@@ -254,12 +288,42 @@ internal sealed class AssistantView : StackPanel
             foreach (var call in round.Calls)
             {
                 if (_steps.Any(s => ReferenceEquals(s.call, call))) continue;
-                var view = new ToolStep(call, _onResize);
-                calls.Children.Add(view);
+                var view = new RailStep(call, _onResize);
+                calls.Children.Add(view.Row);
                 _steps.Add((call, view));
             }
         }
         foreach (var (call, view) in _steps) view.Update(call);
+    }
+
+    /// <summary>The chip's icons and words: the tools used (and the brain, if it thought), steps and time.</summary>
+    private void FillChip(ChatMsg m)
+    {
+        var calls = m.Rounds.SelectMany(r => r.Calls).ToList();
+        _chipIcons.Children.Clear();
+        var glyphs = new List<string>();
+        if (m.Thinking.Length > 0) glyphs.Add("brain");
+        foreach (var c in calls)
+        {
+            string g = RailStep.Glyph(c.Name);
+            if (!glyphs.Contains(g)) glyphs.Add(g);
+        }
+        foreach (var g in glyphs.Take(4))
+        {
+            var face = new Border { Width = 18, Height = 18, CornerRadius = new CornerRadius(9), Background = Res("SubtleFillColorSecondaryBrush") };
+            face.Child = g == "brain"
+                ? new BrainIcon(11) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+                : new FontIcon { Glyph = g, FontSize = 10, Foreground = Res("TextFillColorSecondaryBrush") };
+            _chipIcons.Children.Add(face);
+        }
+        double secs = (m.ThinkMs + calls.Sum(c => c.Ms)) / 1000.0;
+        string time = secs >= 1 ? $"{secs:0} s" : "a moment";
+        _chipText.Text = calls.Count switch
+        {
+            0 => $"Thought for {time}",
+            1 => secs >= 1 ? $"1 step · {time}" : "1 step",
+            _ => secs >= 1 ? $"{calls.Count} steps · {time}" : $"{calls.Count} steps",
+        };
     }
 
     public void Update(ChatMsg m, bool writing)
@@ -272,51 +336,32 @@ internal sealed class AssistantView : StackPanel
             relink = true;
         }
         if (relink) _links = ChatMarkdown.LinksOf(m.Blocks);
-        SyncTimeline(m);
 
         string reply = m.Text[Math.Min(m.ReplyStart, m.Text.Length)..];
-        bool stepRunning = m.Rounds.Any(r => r.Calls.Any(c => !c.Done));
         bool answering = reply.Trim().Length > 0;
-        bool thinkingNow = writing && m.Text.Trim().Length == 0 && m.Rounds.Count == 0;
-        bool hasThoughts = m.Thinking.Length > 0;
-        // After its tools, the model's next words take a moment: dots meanwhile.
-        bool waiting = writing && m.Rounds.Count > 0 && !stepRunning && !answering;
-        _tail.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed;
-        if (waiting) _tail.Start();
-        else _tail.Stop();
+        bool stepRunning = m.Rounds.Any(r => r.Calls.Any(c => !c.Done));
+        // Thinking (or reading documents first) before any word: the brain's node, live.
+        bool thinkingLive = writing && !answering && m.Rounds.Count == 0 && (m.Think || m.Thinking.Length > 0 || m.Hint.Length > 0);
+        SyncRail(m, thinkingLive);
 
-        // The thinking line: animated while the model has not begun to answer, then a summary.
-        _think.Visibility = thinkingNow || hasThoughts ? Visibility.Visible : Visibility.Collapsed;
-        if (thinkingNow)
+        bool worked = m.Rounds.Count > 0 || m.Thinking.Length > 0 || thinkingLive;
+        if (writing)
         {
-            // The brain for thinking or searching; a message answered straight away just gets the dots.
-            bool busy = m.Think || hasThoughts || m.Hint.Length > 0;
-            _brain.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-            if (busy) _brain.Start();
-            _dots.Visibility = Visibility.Visible;
-            _dots.Start();
-            _label.Text = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : busy ? "Thinking" : "";
-            _chevron.Visibility = hasThoughts ? Visibility.Visible : Visibility.Collapsed;
+            _railHost.Visibility = worked ? Visibility.Visible : Visibility.Collapsed;
+            _chip.Visibility = Visibility.Collapsed;
         }
         else
         {
-            _brain.Stop();
-            _brain.Visibility = Visibility.Visible;
-            _dots.Stop();
-            _dots.Visibility = Visibility.Collapsed;
-            if (hasThoughts)
-            {
-                double s = m.ThinkMs / 1000.0;
-                _label.Text = s < 1 ? "Thought for a moment" : $"Thought for {s:0} s";
-                _chevron.Visibility = Visibility.Visible;
-            }
+            // Done: the rail folds into its chip (and opens again from it).
+            FillChip(m);
+            _chip.Visibility = worked ? Visibility.Visible : Visibility.Collapsed;
+            _railHost.Visibility = worked && _expanded ? Visibility.Visible : Visibility.Collapsed;
         }
-        _reasoning.Text = m.Thinking.Trim();
-        if (!hasThoughts && _open)
-        {
-            _open = false;
-            _reasoning.Visibility = Visibility.Collapsed;
-        }
+
+        bool waiting = writing && !answering && !stepRunning && !thinkingLive;
+        _tail.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed;
+        if (waiting) _tail.Start();
+        else _tail.Stop();
 
         _body.Visibility = answering ? Visibility.Visible : Visibility.Collapsed;
         if (answering && (reply != _text || relink))
@@ -495,59 +540,211 @@ internal sealed class AssistantView : StackPanel
 }
 
 /// <summary>
-/// One thing the model did, as a quiet line in its answer: while it runs, the brain at work and what it is
-/// doing ("Looking through your files from last week"); once done, the tool's icon and what came of it
-/// ("Found 6 files"). A tap opens what was asked and what was found.
+/// A node on the rail: a small disc with an icon. Live (the model is at it), it is tinted with the accent,
+/// its brain works and a ring breathes out of it; done, it is a quiet disc with the tool's icon.
 /// </summary>
-internal sealed class ToolStep : StackPanel
+internal sealed class RailNode : Grid
 {
-    private readonly BrainIcon _brain = new(13) { VerticalAlignment = VerticalAlignment.Center };
-    private readonly FontIcon _icon = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
-    private readonly TextBlock _label = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-    private readonly WaitingDots _dots = new();
-    private readonly FontIcon _chevron = new() { Glyph = "", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
-    private readonly TextBlock _detail = new()
-    {
-        FontSize = 11, TextWrapping = TextWrapping.Wrap, MaxLines = 12, TextTrimming = TextTrimming.CharacterEllipsis,
-        Margin = new Thickness(21, 2, 0, 2), Visibility = Visibility.Collapsed,
-    };
-    private bool _done, _open;
+    private readonly Border _disc = new() { Width = 20, Height = 20, CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1) };
+    private readonly Microsoft.UI.Xaml.Shapes.Ellipse _ring = new() { Width = 20, Height = 20, StrokeThickness = 1.5, Opacity = 0 };
+    private readonly ScaleTransform _ringScale = new() { CenterX = 10, CenterY = 10 };
+    private readonly BrainIcon _brain = new(12) { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private readonly FontIcon _icon = new() { FontSize = 10, Visibility = Visibility.Collapsed };
+    private Storyboard? _breath;
+    private bool? _live;
 
-    public ToolStep(ToolCall call, Action onResize)
+    public RailNode()
     {
-        Spacing = 0;
+        Width = 20;
+        Height = 20;
+        _ring.RenderTransform = _ringScale;
+        _ring.Stroke = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+        var face = new Grid();
+        face.Children.Add(_brain);
+        face.Children.Add(_icon);
+        _disc.Child = face;
+        Children.Add(_ring);
+        Children.Add(_disc);
+        _icon.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+    }
+
+    /// <summary>Live (the brain at work), or done showing <paramref name="glyph"/> (null: the brain, still).</summary>
+    public void Set(bool live, string? glyph)
+    {
+        if (_live == live && (live || _icon.Glyph == (glyph ?? ""))) return;
+        _live = live;
+        if (live)
+        {
+            _disc.Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"];
+            _disc.BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"];
+            _brain.Visibility = Visibility.Visible;
+            _icon.Visibility = Visibility.Collapsed;
+            _brain.Start();
+            if (_breath == null)
+            {
+                var sb = new Storyboard();
+                void Anim(DependencyObject t, string p, double from, double to)
+                {
+                    var a = new DoubleAnimation { From = from, To = to, Duration = TimeSpan.FromMilliseconds(1400), RepeatBehavior = RepeatBehavior.Forever,
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                    Storyboard.SetTarget(a, t);
+                    Storyboard.SetTargetProperty(a, p);
+                    sb.Children.Add(a);
+                }
+                Anim(_ringScale, "ScaleX", 1, 1.7);
+                Anim(_ringScale, "ScaleY", 1, 1.7);
+                Anim(_ring, "Opacity", 0.55, 0);
+                _breath = sb;
+                sb.Begin();
+            }
+        }
+        else
+        {
+            _breath?.Stop();
+            _breath = null;
+            _ring.Opacity = 0;
+            _brain.Stop();
+            _disc.Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"];
+            _disc.BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"];
+            _brain.Visibility = glyph == null ? Visibility.Visible : Visibility.Collapsed;
+            _icon.Visibility = glyph == null ? Visibility.Collapsed : Visibility.Visible;
+            _icon.Glyph = glyph ?? "";
+        }
+    }
+}
+
+/// <summary>A label that shimmers (its opacity breathing) while the step it names is under way.</summary>
+internal static class Shimmer
+{
+    public static Storyboard Start(UIElement target)
+    {
+        var a = new DoubleAnimation { From = 1, To = 0.45, Duration = TimeSpan.FromMilliseconds(850), AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } };
+        Storyboard.SetTarget(a, target);
+        Storyboard.SetTargetProperty(a, "Opacity");
+        var sb = new Storyboard();
+        sb.Children.Add(a);
+        sb.Begin();
+        return sb;
+    }
+}
+
+/// <summary>
+/// The model's thinking on the rail. Live: "Thinking", shimmering, and under it a faint tail of what it is
+/// thinking right now, two lines at most. Done: "Thought for 9 s", which opens to the whole reasoning.
+/// </summary>
+internal sealed class RailThink
+{
+    public Grid Row { get; }
+    private readonly RailNode _node = new();
+    private readonly TextBlock _label = new() { FontSize = 12, Margin = new Thickness(0, 2, 0, 0) };
+    private readonly FontIcon _chevron = new() { Glyph = "\uE70D", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 0, 0), Visibility = Visibility.Collapsed };
+    private readonly Whisper _whisper = new();
+    private readonly TextBlock _full = new() { FontSize = 11, LineHeight = 16, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    private Storyboard? _shimmer;
+    private bool _open, _done;
+
+    public RailThink(Action onResize)
+    {
         var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
         _label.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
-        _icon.Foreground = faint;
+        _chevron.Foreground = faint;
+        _full.Foreground = faint;
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        head.Children.Add(_label);
+        head.Children.Add(_chevron);
+        head.Tapped += (_, e) =>
+        {
+            if (!_done || _full.Text.Length == 0) return;
+            e.Handled = true;
+            _open = !_open;
+            Fold.Turn(_chevron, _open);
+            Fold.Toggle(_full, _open, onResize);
+        };
+        var content = new StackPanel { Spacing = 2 };
+        content.Children.Add(head);
+        content.Children.Add(_whisper);
+        content.Children.Add(_full);
+        Row = AssistantView.RailRow(_node, content);
+    }
+
+    public void Update(ChatMsg m, bool live)
+    {
+        string thinking = m.Thinking.Trim();
+        if (live)
+        {
+            _node.Set(true, null);
+            _label.Text = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : "Thinking";
+            _shimmer ??= Shimmer.Start(_label);
+            _whisper.Text = thinking;
+            _whisper.Visibility = thinking.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            return;
+        }
+        _shimmer?.Stop();
+        _shimmer = null;
+        _label.Opacity = 1;
+        _node.Set(false, null);
+        _done = true;
+        double s = m.ThinkMs / 1000.0;
+        _label.Text = thinking.Length == 0 ? "Read your documents" : s < 1 ? "Thought for a moment" : $"Thought for {s:0} s";
+        _whisper.Visibility = Visibility.Collapsed;
+        _full.Text = thinking;
+        _chevron.Visibility = thinking.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+}
+
+/// <summary>
+/// One tool the model used, on the rail: while it runs, the live node and what it is doing ("Looking through
+/// your files from last week"), shimmering; once done, the tool's icon and what came of it ("Found 6 files"),
+/// which opens to what was asked and what was found.
+/// </summary>
+internal sealed class RailStep
+{
+    public Grid Row { get; }
+    private readonly RailNode _node = new();
+    private readonly TextBlock _label = new() { FontSize = 12, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis };
+    private readonly FontIcon _chevron = new() { Glyph = "\uE70D", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 0, 0), Visibility = Visibility.Collapsed };
+    private readonly TextBlock _detail = new()
+    {
+        FontSize = 11, LineHeight = 16, TextWrapping = TextWrapping.Wrap, MaxLines = 12, TextTrimming = TextTrimming.CharacterEllipsis,
+        Visibility = Visibility.Collapsed,
+    };
+    private Storyboard? _shimmer;
+    private bool _done, _open;
+
+    /// <summary>The icon of a tool (Segoe Fluent Icons).</summary>
+    public static string Glyph(string tool) => tool switch
+    {
+        "find_files" => "\uE8B7",          // folder
+        "search_documents" => "\uE8A5",    // document
+        "get_weather" => "\uE753",         // cloud
+        "get_calendar" => "\uE787",        // calendar
+        "get_system_status" => "\uE7F4",   // PC
+        _ => "\uE946",
+    };
+
+    public RailStep(ToolCall call, Action onResize)
+    {
+        var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+        _label.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         _chevron.Foreground = faint;
         _detail.Foreground = faint;
-        _icon.Glyph = call.Name switch
-        {
-            "find_files" => "",          // folder
-            "search_documents" => "",    // document
-            "get_weather" => "",         // cloud
-            "get_calendar" => "",        // calendar
-            "get_system_status" => "",   // PC
-            _ => "",
-        };
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-        row.Children.Add(_brain);
-        row.Children.Add(_icon);
-        row.Children.Add(_label);
-        row.Children.Add(_dots);
-        row.Children.Add(_chevron);
-        row.Tapped += (_, _) =>
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        head.Children.Add(_label);
+        head.Children.Add(_chevron);
+        head.Tapped += (_, e) =>
         {
             if (!_done || _detail.Text.Length == 0) return;
+            e.Handled = true;
             _open = !_open;
-            _detail.Visibility = _open ? Visibility.Visible : Visibility.Collapsed;
-            _chevron.Glyph = _open ? "" : "";
-            onResize();
+            Fold.Turn(_chevron, _open);
+            Fold.Toggle(_detail, _open, onResize);
         };
-        Children.Add(row);
-        Children.Add(_detail);
-        _brain.Start();
-        _dots.Start();
+        var content = new StackPanel { Spacing = 2 };
+        content.Children.Add(head);
+        content.Children.Add(_detail);
+        Row = AssistantView.RailRow(_node, content);
+        _node.Set(true, null);
     }
 
     public void Update(ToolCall call)
@@ -555,17 +752,16 @@ internal sealed class ToolStep : StackPanel
         if (!call.Done)
         {
             _label.Text = call.Label.Length > 0 ? call.Label : "Looking it up";
+            _shimmer ??= Shimmer.Start(_label);
             return;
         }
         if (_done) return;
         _done = true;
-        _brain.Stop();
-        _brain.Visibility = Visibility.Collapsed;
-        _dots.Stop();
-        _dots.Visibility = Visibility.Collapsed;
-        _icon.Visibility = Visibility.Visible;
+        _shimmer?.Stop();
+        _shimmer = null;
+        _label.Opacity = 1;
+        _node.Set(false, Glyph(call.Name));
         _label.Text = call.Outcome.Length > 0 ? call.Outcome : call.Label;
-        _label.Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
         string asked = call.Arguments is { Length: > 2 } a && a != "{}" ? $"Asked: {a}\n" : "";
         _detail.Text = (asked + call.Result).Trim();
         _chevron.Visibility = _detail.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -699,4 +895,124 @@ internal static class ChatMarkdown
 
     private static Run Plain(string s, bool heading) =>
         new() { Text = s, FontWeight = heading ? FontWeights.SemiBold : FontWeights.Normal };
+}
+
+/// <summary>
+/// Opening and closing parts of an answer (the rail, a step's details, the reasoning): what opens fades in
+/// while it slides down a few pixels; what closes fades out, then folds away. Chevrons turn.
+/// </summary>
+internal static class Fold
+{
+    private const double OpenMs = 200, CloseMs = 130;
+
+    public static void Toggle(FrameworkElement target, bool show, Action onResize)
+    {
+        var shift = target.RenderTransform as TranslateTransform ?? new TranslateTransform();
+        target.RenderTransform = shift;
+        var sb = new Storyboard();
+        void Anim(DependencyObject t, string prop, double to, double ms)
+        {
+            var a = new DoubleAnimation { To = to, Duration = TimeSpan.FromMilliseconds(ms), EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+            Storyboard.SetTarget(a, t);
+            Storyboard.SetTargetProperty(a, prop);
+            sb.Children.Add(a);
+        }
+        if (show)
+        {
+            target.Opacity = 0;
+            shift.Y = -6;
+            target.Visibility = Visibility.Visible;
+            Anim(target, "Opacity", 1, OpenMs);
+            Anim(shift, "Y", 0, OpenMs);
+            sb.Begin();
+            onResize();
+        }
+        else
+        {
+            Anim(target, "Opacity", 0, CloseMs);
+            Anim(shift, "Y", -4, CloseMs);
+            sb.Completed += (_, _) =>
+            {
+                target.Visibility = Visibility.Collapsed;
+                target.Opacity = 1;
+                shift.Y = 0;
+                onResize();
+            };
+            sb.Begin();
+        }
+    }
+
+    /// <summary>Turn a chevron (drawn pointing down) to point up when open, and back.</summary>
+    public static void Turn(FontIcon chevron, bool open)
+    {
+        chevron.Glyph = "\uE70D";
+        chevron.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
+        var turn = chevron.RenderTransform as RotateTransform ?? new RotateTransform();
+        chevron.RenderTransform = turn;
+        var a = new DoubleAnimation { To = open ? 180 : 0, Duration = TimeSpan.FromMilliseconds(OpenMs), EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        Storyboard.SetTarget(a, turn);
+        Storyboard.SetTargetProperty(a, "Angle");
+        var sb = new Storyboard();
+        sb.Children.Add(a);
+        sb.Begin();
+    }
+}
+
+/// <summary>
+/// The model's reasoning as it comes, in a window three lines high: the newest lines at the bottom, the
+/// older ones rising out of the top, where they fade away. No ellipsis, no cut words.
+/// </summary>
+internal sealed class Whisper : Grid
+{
+    private const double Lines = 3, LineHeight = 16;
+    private readonly TextBlock _text = new()
+    {
+        FontSize = 11, LineHeight = LineHeight, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+        TextWrapping = TextWrapping.Wrap, FontStyle = Windows.UI.Text.FontStyle.Italic, VerticalAlignment = VerticalAlignment.Bottom,
+    };
+    private readonly RectangleGeometry _clip = new();
+
+    public Whisper()
+    {
+        Height = Lines * LineHeight;
+        Clip = _clip;
+        Children.Add(_text);
+        SizeChanged += (_, e) => _clip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+        _text.SizeChanged += (_, _) => Shade();
+        Shade();
+    }
+
+    /// <summary>The reasoning so far; only its last few hundred characters are laid out (the rest could not show).</summary>
+    public string Text
+    {
+        set
+        {
+            string t = value.Replace('\n', ' ').Trim();
+            if (t.Length > 400)
+            {
+                t = t[^400..];
+                int space = t.IndexOf(' ');
+                if (space > 0) t = t[(space + 1)..];
+            }
+            _text.Text = t;
+        }
+    }
+
+    /// <summary>
+    /// The text's colour, as a gradient over its whole height: clear where it leaves the window at the top,
+    /// solid from a line below that on (the gradient follows the text's height as it grows).
+    /// </summary>
+    private void Shade()
+    {
+        var c = ((SolidColorBrush)Application.Current.Resources["TextFillColorTertiaryBrush"]).Color;
+        double h = Math.Max(_text.ActualHeight, Height);
+        double top = Math.Max(0, (h - Height) / h);
+        double solid = Math.Min(1, top + LineHeight * 1.2 / h);
+        var clear = Windows.UI.Color.FromArgb(0, c.R, c.G, c.B);
+        _text.Foreground = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(0, 1),
+            GradientStops = { new GradientStop { Color = clear, Offset = top }, new GradientStop { Color = c, Offset = solid } },
+        };
+    }
 }

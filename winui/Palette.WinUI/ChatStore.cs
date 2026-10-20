@@ -24,7 +24,7 @@ internal static class ChatStore
 
     private static readonly object Gate = new();
 
-    public sealed record SavedCall(string Id, string Name, string Arguments, string Result, string? Label = null, string? Outcome = null);
+    public sealed record SavedCall(string Id, string Name, string Arguments, string Result, string? Label = null, string? Outcome = null, long Ms = 0);
 
     public sealed record SavedRound(string Content, List<SavedCall> Calls);
 
@@ -176,7 +176,7 @@ internal static class ChatStore
             foreach (var r in s.Rounds)
             {
                 var round = new ToolRound { Content = r.Content };
-                foreach (var c in r.Calls) round.Calls.Add(new ToolCall { Id = c.Id, Name = c.Name, Arguments = c.Arguments, Result = c.Result, Label = c.Label ?? "", Outcome = c.Outcome ?? "", Done = true });
+                foreach (var c in r.Calls) round.Calls.Add(new ToolCall { Id = c.Id, Name = c.Name, Arguments = c.Arguments, Result = c.Result, Label = c.Label ?? "", Outcome = c.Outcome ?? "", Done = true, Ms = c.Ms });
                 m.Rounds.Add(round);
             }
             foreach (var b in s.Blocks)
@@ -208,7 +208,7 @@ internal static class ChatStore
         int skip = Math.Max(0, messages.Count - Keep);
         var snapshot = new SavedChat(DateTime.Now, messages.Skip(skip).Select(m => new SavedMsg(
             m.Role, m.Text, m.Sent, m.Note, m.Thinking, m.ThinkMs, m.Think, m.ReplyStart,
-            m.Rounds.Select(r => new SavedRound(r.Content, r.Calls.Select(c => new SavedCall(c.Id, c.Name, c.Arguments, c.Result, c.Label, c.Outcome)).ToList())).ToList(),
+            m.Rounds.Select(r => new SavedRound(r.Content, r.Calls.Select(c => new SavedCall(c.Id, c.Name, c.Arguments, c.Result, c.Label, c.Outcome, c.Ms)).ToList())).ToList(),
             m.Blocks.Select(Saved).Where(b => b != null).Select(b => b!).ToList())).ToList(),
             chat.Id, chat.Title, chat.Summary, Math.Max(0, chat.SummaryUpTo - skip));
         string firstAsk = messages.FirstOrDefault(m => m.Role == "user")?.Text ?? "";

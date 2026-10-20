@@ -17,6 +17,8 @@ public sealed class ToolCall
     /// <summary>What came of it, once done ("Found 6 files").</summary>
     public string Outcome { get; set; } = "";
     public bool Done { get; set; }
+    /// <summary>How long it took, in milliseconds.</summary>
+    public long Ms { get; set; }
 }
 
 /// <summary>One round of tools within an answer: what the model wrote with the calls, and the calls.</summary>

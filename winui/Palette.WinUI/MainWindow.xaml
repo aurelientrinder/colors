@@ -1095,7 +1095,7 @@
                         <Grid
                             x:Name="ChatPreview"
                             Height="140"
-                            Padding="20,12,20,10"
+                            Padding="0,12,0,10"
                             RowSpacing="6"
                             Visibility="Collapsed">
                             <Grid.RowDefinitions>
@@ -1106,11 +1106,12 @@
                                 x:Name="ChatScroll"
                                 HorizontalScrollMode="Disabled"
                                 VerticalScrollBarVisibility="Auto">
-                                <StackPanel x:Name="ChatMessages" Spacing="10" />
+                                <StackPanel x:Name="ChatMessages" Margin="40,0,20,0" Spacing="10" />
                             </ScrollViewer>
                             <TextBlock
                                 x:Name="ChatFooter"
                                 Grid.Row="1"
+                                Margin="40,0,20,0"
                                 FontSize="11"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                 MaxLines="2"

@@ -64,6 +64,8 @@ public sealed record ChatAnswer() : WebAnswers.Answer("chat")
 public sealed partial class MainWindow
 {
     private ChatAnswer? _chat;
+    /// <summary>The next draw scrolls smoothly to the end (a message was just sent).</summary>
+    private bool _glideToEnd;
     /// <summary>The conversation, kept while the chat is not on screen (and saved: ChatStore), so Tab picks it up again.</summary>
     private ChatAnswer? _conversation;
     private CancellationTokenSource? _chatCts;
@@ -162,6 +164,7 @@ public sealed partial class MainWindow
         var answer = new ChatMsg { Role = "assistant", Think = user.Think };
         chat.Messages.Add(user);
         chat.Messages.Add(answer);
+        _glideToEnd = true;
         RenderChat(chat);
         var cts = _chatCts = new CancellationTokenSource();
         _ = RunChat(chat, user, answer, cts.Token);
@@ -231,8 +234,10 @@ public sealed partial class MainWindow
                     call.Label = ToolLabel(call.Name, call.Arguments);
                     turn.Calls.Add(call);
                     RenderChat(chat);
+                    long began = Environment.TickCount64;
                     var (result, block, note) = await RunTool(call.Name, call.Arguments, ct);
                     if (ct.IsCancellationRequested) return;
+                    call.Ms = Environment.TickCount64 - began;
                     call.Result = result;
                     call.Outcome = ToolOutcome(call.Name, result, block);
                     call.Done = true;
@@ -471,7 +476,8 @@ public sealed partial class MainWindow
             UpdateMessageView(_chatViews[i].view, m, i == chat.Messages.Count - 1 && chat.Busy);
         }
 
-        double width = Math.Max(200, (ChatPreview.ActualWidth > 0 ? ChatPreview.ActualWidth : 560) - 40);
+        // The messages and the footer carry their own margins (the scroll bar runs along the card's edge).
+        double width = Math.Max(200, ChatPreview.ActualWidth > 0 ? ChatPreview.ActualWidth : 560);
         ChatMessages.Measure(new Windows.Foundation.Size(width, double.PositiveInfinity));
         ChatFooter.Measure(new Windows.Foundation.Size(width, double.PositiveInfinity));
         double h = Math.Clamp(ChatMessages.DesiredSize.Height + 12 + 6 + 10 + Math.Max(16, ChatFooter.DesiredSize.Height), 110, 400);
@@ -479,7 +485,15 @@ public sealed partial class MainWindow
         ChatPreview.Height = h;
         _pvFull = 6 + h + 12;
         if (grew && !_animating) ApplyShape();
-        if (stick) ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null, true);
+        if (_glideToEnd)
+        {
+            // A message just sent: glide down to it, from wherever the reading was. The layout has to
+            // take in the new message first, or the end is still the old one.
+            _glideToEnd = false;
+            ChatScroll.UpdateLayout();
+            ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null, false);
+        }
+        else if (stick) ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null, true);
     }
 
     private FrameworkElement MakeMessageView(ChatMsg m)
