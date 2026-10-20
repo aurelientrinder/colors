@@ -212,15 +212,19 @@ internal sealed class AssistantView : StackPanel
         _think.Visibility = thinkingNow || hasThoughts ? Visibility.Visible : Visibility.Collapsed;
         if (thinkingNow)
         {
-            _brain.Start();
+            // The brain for thinking or searching; a message answered straight away just gets the dots.
+            bool busy = m.Think || hasThoughts || m.Hint.Length > 0;
+            _brain.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+            if (busy) _brain.Start();
             _dots.Visibility = Visibility.Visible;
             _dots.Start();
-            _label.Text = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : "Thinking";
+            _label.Text = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : busy ? "Thinking" : "";
             _chevron.Visibility = hasThoughts ? Visibility.Visible : Visibility.Collapsed;
         }
         else
         {
             _brain.Stop();
+            _brain.Visibility = Visibility.Visible;
             _dots.Stop();
             _dots.Visibility = Visibility.Collapsed;
             if (hasThoughts)

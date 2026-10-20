@@ -6,6 +6,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.System;
 
 namespace Palette;
 
@@ -24,6 +25,8 @@ public sealed class ChatMsg
     public string Thinking { get; set; } = "";
     /// <summary>How long it thought, in milliseconds (set once the answer begins).</summary>
     public long ThinkMs { get; set; }
+    /// <summary>Should the model think before answering (on the user's message and on the answer to it)?</summary>
+    public bool Think { get; set; }
 }
 
 /// <summary>A chat with the model that runs on this PC, shown as a card under one row.</summary>
@@ -48,12 +51,42 @@ public sealed partial class MainWindow
         @"\b(my|in my|from my)\s+(documents?|files?|notes?|pdfs?|papers?|folders?|downloads?|contracts?|lease)\b|\b(mes|dans mes)\s+(documents?|fichiers?|notes?)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+    /// <summary>A message about the user's own things ("my lease", "the invoice I saved"), as opposed to chat or general knowledge.</summary>
+    private static readonly Regex Personal = new(
+        @"\b(my|mine|our|mes|mon|ma|notre)\b|\b(files?|documents?|pdfs?|notes?|folders?|invoices?|contracts?|reports?|papers?|fichiers?|factures?)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Is this message worth searching the user's documents for? Not a greeting or a short remark: the
+    /// search keeps any document holding one of the words, so "hello" brought back four unrelated files.
+    /// </summary>
+    private static bool WantsDocuments(string message) =>
+        message.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 4 && Personal.IsMatch(message);
+
     private ChatAnswer? _chat;
     private CancellationTokenSource? _chatCts;
     private readonly List<(FrameworkElement view, ChatMsg msg)> _chatViews = new();
 
-    /// <summary>Does the model reason before it answers? Slower to the first word, better answers.</summary>
-    private const bool ChatThinks = true;
+    /// <summary>
+    /// Messages worth reasoning about first: comparing, planning, working something out, debugging. A small
+    /// model thinks about "hello" as long as about anything (40 s measured), so it thinks only for these,
+    /// for long messages, and when Shift+Enter asks it to.
+    /// </summary>
+    private static readonly Regex Reasoning = new(
+        @"\b(compare|comparison|difference between|versus|pros and cons|trade-?offs?|plan|schedule|should i|which (is|one|should)|calculate|compute|solve|prove|derive|estimate|step by step|debug|figure out|analy[sz]e|reasoning|optimi[sz]e|pourquoi|explique|compare[rz]?|calcule[rz]?|diff[ée]rence entre|devrais-je|planifie[rz]?)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>Does this message get the model's thinking? (Shift+Enter always does.)</summary>
+    private static bool WantsThinking(string message)
+    {
+        int words = message.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        if (words < 4) return false;
+        if (words >= 30) return true;                                         // a long, many-part request
+        if (Regex.IsMatch(message, @"\d\s*[-+*/x×^%]\s*\d")) return true;     // arithmetic
+        if (Reasoning.IsMatch(message)) return true;
+        // "why" and "how" questions only when there is more to them than a fact to recall.
+        return words >= 10 && Regex.IsMatch(message, @"^\s*(why|how)\b", RegexOptions.IgnoreCase);
+    }
 
     private void CancelChat()
     {
@@ -117,8 +150,8 @@ public sealed partial class MainWindow
         if (_chat is not { } chat || text.Length == 0 || chat.Busy) return;
         SetInputText("");
         chat.Busy = true;
-        var user = new ChatMsg { Role = "user", Text = text, Sent = text };
-        var answer = new ChatMsg { Role = "assistant" };
+        var user = new ChatMsg { Role = "user", Text = text, Sent = text, Think = Held(VirtualKey.Shift) || WantsThinking(text) };
+        var answer = new ChatMsg { Role = "assistant", Think = user.Think };
         chat.Messages.Add(user);
         chat.Messages.Add(answer);
         RenderChat(chat);
@@ -141,11 +174,12 @@ public sealed partial class MainWindow
                 return;
             }
             // Documents, when the message is about your files: a "?" in front says so, so do words like
-            // "my documents", and so does a chat with no window read. Not for every follow-up: the search
-            // takes a moment, and what you have just been told is about the window.
+            // "my documents", and so does a longer message about your own things in a chat with no window
+            // read. Not for greetings or follow-ups: the search takes a moment and brings back files
+            // whenever one word matches.
             string message = user.Text;
             if (message.StartsWith('?')) message = message[1..].Trim();
-            if (message != user.Text || opened.Source == "none" || AboutFiles.IsMatch(message))
+            if (message != user.Text || AboutFiles.IsMatch(message) || (opened.Source == "none" && WantsDocuments(message)))
             {
                 answer.Hint = "Searching your documents…";
                 RenderChat(chat);
@@ -166,7 +200,7 @@ public sealed partial class MainWindow
 
             using var req = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{opened.Port}/v1/chat/completions")
             {
-                Content = new StringContent(ChatBody(opened.System ?? "", chat), Encoding.UTF8, "application/json"),
+                Content = new StringContent(ChatBody(opened.System ?? "", chat, user.Think), Encoding.UTF8, "application/json"),
             };
             using var resp = await AskHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             resp.EnsureSuccessStatusCode();
@@ -242,7 +276,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>The request: the system message, the conversation so far, and the new message. Written by hand: no reflection.</summary>
-    private static string ChatBody(string system, ChatAnswer chat)
+    private static string ChatBody(string system, ChatAnswer chat, bool think)
     {
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms))
@@ -264,12 +298,12 @@ public sealed partial class MainWindow
             foreach (var m in turns.Skip(from)) Message(m.Role, m.Role == "user" ? m.Sent : m.Text);
             w.WriteEndArray();
             w.WriteBoolean("stream", true);
-            w.WriteNumber("max_tokens", ChatThinks ? 2000 : 700);
+            w.WriteNumber("max_tokens", think ? 2000 : 700);
             w.WriteNumber("temperature", 0.3);
             w.WriteNumber("top_p", 0.9);
             w.WriteBoolean("cache_prompt", true);
             w.WriteStartObject("chat_template_kwargs");
-            w.WriteBoolean("enable_thinking", ChatThinks);
+            w.WriteBoolean("enable_thinking", think);
             w.WriteEndObject();
             w.WriteEndObject();
         }
