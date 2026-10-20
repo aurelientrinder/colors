@@ -242,10 +242,142 @@ internal sealed class AssistantView : StackPanel
         }
 
         _body.Visibility = answering ? Visibility.Visible : Visibility.Collapsed;
-        if (answering) ChatMarkdown.Fill(_body, m.Text);
-        else if (!thinkingNow && !writing) _body.Visibility = Visibility.Collapsed;
+        if (answering && m.Text != _text)
+        {
+            _text = m.Text;
+            if (writing) _fresh = true;
+            DrawBody();
+        }
         _note.Text = m.Note;
         _note.Visibility = m.Note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ------------------------------------------------------------------ the answer fading in as it is written
+
+    /// <summary>How long a piece of new text takes to come up from clear to solid.</summary>
+    private const double FadeMs = 420;
+    /// <summary>The longest a chunk's sweep spreads back in time (chunks come every 60 ms or so).</summary>
+    private const double SweepMs = 160;
+
+    private string _text = "";
+    private bool _fresh;                                    // new text since the last draw, while writing
+    private readonly List<(int len, long at)> _marks = new();   // drawn length of the answer when each chunk came
+    private bool _ticking;
+    private int _drawn;                                     // the answer's drawn length at the last draw
+
+    /// <summary>
+    /// The answer, with the newest text fading in: each chunk sweeps from its first character to its
+    /// last over the time since the chunk before (so the words come up like a breath across the line,
+    /// not one by one), and each character eases from clear to solid over FadeMs.
+    /// </summary>
+    private void DrawBody()
+    {
+        ChatMarkdown.Fill(_body, _text);
+        long now = Environment.TickCount64;
+        int total = 0;
+        foreach (var i in _body.Inlines) total += i is Microsoft.UI.Xaml.Documents.Run r ? r.Text.Length : 0;
+        if (_fresh)
+        {
+            _fresh = false;
+            // The first chunk after a pause sweeps from where the text stood.
+            if (_marks.Count == 0 && total > _drawn) _marks.Add((_drawn, now - (long)SweepMs));
+            if (_marks.Count > 0 && total > _marks[^1].len) _marks.Add((total, now));
+        }
+        _drawn = total;
+        // Marks whose chunk is solid already are of no more use (the one before the oldest fading chunk is
+        // where its sweep starts).
+        while (_marks.Count >= 2 && now - _marks[1].at > FadeMs + SweepMs) _marks.RemoveAt(0);
+        if (_marks.Count == 0 || now - _marks[^1].at > FadeMs + SweepMs)
+        {
+            _marks.Clear();
+            return;
+        }
+        Fade(now);
+        if (!_ticking)
+        {
+            _ticking = true;
+            CompositionTarget.Rendering += OnFrame;
+        }
+    }
+
+    private void OnFrame(object? sender, object e)
+    {
+        if (_marks.Count == 0)
+        {
+            _ticking = false;
+            CompositionTarget.Rendering -= OnFrame;
+            return;
+        }
+        DrawBody();
+    }
+
+    /// <summary>How solid the character at drawn position <paramref name="p"/> is now, 0 to 1.</summary>
+    private double Alpha(int p, long now)
+    {
+        if (p < _marks[0].len) return 1;
+        for (int i = 1; i < _marks.Count; i++)
+        {
+            var (len, at) = _marks[i];
+            if (p >= len) continue;
+            var (prevLen, prevAt) = _marks[i - 1];
+            double start = Math.Max(prevAt, at - SweepMs);
+            double appear = start + (at - start) * (p - prevLen + 1) / Math.Max(1, len - prevLen);
+            double x = Math.Clamp((now - appear) / FadeMs, 0, 1);
+            return 1 - (1 - x) * (1 - x) * (1 - x);   // eases out: quick to show, gentle to settle
+        }
+        return 1;
+    }
+
+    /// <summary>Split the runs from the oldest fading character on into small pieces, each with its own opacity.</summary>
+    private void Fade(long now)
+    {
+        // The first mark is the length before the oldest fading chunk: everything before it is solid.
+        int from = _marks[0].len;
+        var runs = _body.Inlines.ToList();
+        _body.Inlines.Clear();
+        var solid = ((SolidColorBrush)Application.Current.Resources["TextFillColorPrimaryBrush"]).Color;
+        int pos = 0;
+        foreach (var inline in runs)
+        {
+            if (inline is not Microsoft.UI.Xaml.Documents.Run run || pos + run.Text.Length <= from)
+            {
+                if (inline is Microsoft.UI.Xaml.Documents.Run r0) pos += r0.Text.Length;
+                _body.Inlines.Add(inline);
+                continue;
+            }
+            var color = (run.Foreground as SolidColorBrush)?.Color ?? solid;
+            string t = run.Text;
+            int at = 0;
+            if (from > pos)
+            {
+                _body.Inlines.Add(Piece(run, t[..(from - pos)], null));
+                at = from - pos;
+            }
+            // Pieces of three characters: fine enough for a smooth sweep, few enough to stay cheap.
+            while (at < t.Length)
+            {
+                int n = Math.Min(3, t.Length - at);
+                double a = Alpha(pos + at + n - 1, now);
+                var c = color;
+                c.A = (byte)Math.Round(color.A * a);
+                _body.Inlines.Add(Piece(run, t.Substring(at, n), a >= 1 ? null : new SolidColorBrush(c)));
+                at += n;
+            }
+            pos += t.Length;
+        }
+    }
+
+    private static Microsoft.UI.Xaml.Documents.Run Piece(Microsoft.UI.Xaml.Documents.Run like, string text, Brush? brush)
+    {
+        var r = new Microsoft.UI.Xaml.Documents.Run
+        {
+            Text = text, FontWeight = like.FontWeight, FontStyle = like.FontStyle, FontSize = like.FontSize,
+            FontFamily = like.FontFamily,
+        };
+        if (brush != null) r.Foreground = brush;
+        else if (like.ReadLocalValue(Microsoft.UI.Xaml.Documents.TextElement.ForegroundProperty) != DependencyProperty.UnsetValue)
+            r.Foreground = like.Foreground;
+        return r;
     }
 }
 
