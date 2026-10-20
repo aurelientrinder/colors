@@ -170,8 +170,7 @@ internal sealed class AssistantView : StackPanel
     private readonly FontIcon _chipChevron = new() { Glyph = "\uE70D", FontSize = 9, VerticalAlignment = VerticalAlignment.Center };
     /// <summary>Dots before the first words, and while the model goes on after its tools.</summary>
     private readonly WaitingDots _tail = new() { Visibility = Visibility.Collapsed, Margin = new Thickness(2, 4, 0, 4), HorizontalAlignment = HorizontalAlignment.Left };
-    private readonly RichTextBlock _body = new() { TextWrapping = TextWrapping.Wrap, LineHeight = 22, IsTextSelectionEnabled = true };
-    private readonly Paragraph _para = new();
+    private readonly StreamingText _body;
     private readonly TextBlock _note = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly StackPanel _blocks = new() { Spacing = 4 };
     private readonly Func<object, FrameworkElement?> _makeBlock;
@@ -186,7 +185,7 @@ internal sealed class AssistantView : StackPanel
         _makeBlock = makeBlock;
         _makeLink = makeLink;
         Spacing = 6;
-        _body.Blocks.Add(_para);
+        _body = new StreamingText(14, 22, LinkInline);
         var faint = Res("TextFillColorTertiaryBrush");
         _note.Foreground = faint;
         _chipText.Foreground = Res("TextFillColorSecondaryBrush");
@@ -225,7 +224,7 @@ internal sealed class AssistantView : StackPanel
         Children.Add(_chip);
         Children.Add(_railHost);
         Children.Add(_tail);
-        Children.Add(_body);
+        Children.Add(_body.View);
         Children.Add(_blocks);
         Children.Add(_note);
     }
@@ -279,9 +278,7 @@ internal sealed class AssistantView : StackPanel
             _rail.Children.Add(calls);
             _rounds.Add((round, calls));
             // The words of the turn that called these now sit on the rail: the next words start afresh.
-            _text = "";
-            _drawn = 0;
-            _marks.Clear();
+            _body.Reset();
         }
         foreach (var (round, calls) in _rounds)
         {
@@ -326,7 +323,10 @@ internal sealed class AssistantView : StackPanel
         };
     }
 
-    public void Update(ChatMsg m, bool writing)
+    private int _earlierSeen = -1;
+
+    /// <param name="earlier">What the tools found for the messages before this one: an answer may name a file found earlier.</param>
+    public void Update(ChatMsg m, bool writing, IReadOnlyList<object> earlier)
     {
         // What the tools found: files and documents become links in the text; the rest, cards under it.
         bool relink = false;
@@ -335,7 +335,12 @@ internal sealed class AssistantView : StackPanel
             if (_makeBlock(m.Blocks[_blocksSeen]) is { } card) _blocks.Children.Add(card);
             relink = true;
         }
-        if (relink) _links = ChatMarkdown.LinksOf(m.Blocks);
+        if (earlier.Count != _earlierSeen)
+        {
+            _earlierSeen = earlier.Count;
+            relink = true;
+        }
+        if (relink) _links = ChatMarkdown.LinksOf(earlier.Concat(m.Blocks));
 
         string reply = m.Text[Math.Min(m.ReplyStart, m.Text.Length)..];
         bool answering = reply.Trim().Length > 0;
@@ -363,13 +368,9 @@ internal sealed class AssistantView : StackPanel
         if (waiting) _tail.Start();
         else _tail.Stop();
 
-        _body.Visibility = answering ? Visibility.Visible : Visibility.Collapsed;
-        if (answering && (reply != _text || relink))
-        {
-            if (writing && reply != _text) _fresh = true;
-            _text = reply;
-            DrawBody();
-        }
+        _body.View.Visibility = answering ? Visibility.Visible : Visibility.Collapsed;
+        _body.Links = _links;
+        if (answering) _body.Set(reply, writing, redraw: relink);
         _note.Text = m.Note;
         _note.Visibility = m.Note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -392,19 +393,58 @@ internal sealed class AssistantView : StackPanel
         c.Child.Opacity = 1;
         return c;
     }
+}
 
-    // ------------------------------------------------------------------ the answer fading in as it is written
-
+/// <summary>
+/// Text that fades in as it is written (the answer, the reasoning): each new chunk sweeps from its first
+/// character to its last over the time since the chunk before, so the words come up like a breath across
+/// the line, not one by one, and each character eases from clear to solid. Markdown and links as in
+/// ChatMarkdown. Runs are split into pieces only in the fading tail, and only while something fades.
+/// </summary>
+internal sealed class StreamingText
+{
     /// <summary>How long a piece of new text takes to come up from clear to solid.</summary>
     private const double FadeMs = 420;
     /// <summary>The longest a chunk's sweep spreads back in time (chunks come every 60 ms or so).</summary>
     private const double SweepMs = 160;
 
+    public RichTextBlock View { get; }
+    private readonly Paragraph _para = new();
+    private readonly Func<LinkToken, string, int, Inline> _link;
+    public IReadOnlyList<LinkToken> Links { get; set; } = Array.Empty<LinkToken>();
+
     private string _text = "";
-    private bool _fresh;                                    // new text since the last draw, while writing
-    private readonly List<(int len, long at)> _marks = new();   // drawn length of the answer when each chunk came
+    private bool _fresh;                                    // new text since the last draw, while streaming
+    private readonly List<(int len, long at)> _marks = new();   // drawn length when each chunk came
     private bool _ticking;
-    private int _drawn;                                     // the answer's drawn length at the last draw
+    private int _drawn;                                     // drawn length at the last draw
+
+    public StreamingText(double fontSize, double lineHeight, Func<LinkToken, string, int, Inline>? link = null)
+    {
+        View = new RichTextBlock { TextWrapping = TextWrapping.Wrap, FontSize = fontSize, LineHeight = lineHeight, IsTextSelectionEnabled = true };
+        View.Blocks.Add(_para);
+        _link = link ?? ((_, shown, _) => new Run { Text = shown });
+    }
+
+    public string Text => _text;
+
+    /// <summary>Show <paramref name="text"/>; while <paramref name="streaming"/>, what is new fades in. <paramref name="redraw"/>: draw even if unchanged (new links).</summary>
+    public void Set(string text, bool streaming, bool redraw = false)
+    {
+        if (text == _text && !redraw) return;
+        if (streaming && text != _text) _fresh = true;
+        _text = text;
+        Draw();
+    }
+
+    /// <summary>Start afresh: the next text fades in from its first character.</summary>
+    public void Reset()
+    {
+        _text = "";
+        _drawn = 0;
+        _marks.Clear();
+        _para.Inlines.Clear();
+    }
 
     /// <summary>Characters an inline stands for: a run's text, a link's name.</summary>
     private static int LengthOf(Inline i) => i switch
@@ -414,14 +454,9 @@ internal sealed class AssistantView : StackPanel
         _ => 0,
     };
 
-    /// <summary>
-    /// The answer, with the newest text fading in: each chunk sweeps from its first character to its
-    /// last over the time since the chunk before (so the words come up like a breath across the line,
-    /// not one by one), and each character eases from clear to solid over FadeMs.
-    /// </summary>
-    private void DrawBody()
+    private void Draw()
     {
-        ChatMarkdown.Fill(_para.Inlines, _body.FontSize, _text, _links, LinkInline);
+        ChatMarkdown.Fill(_para.Inlines, View.FontSize, _text, Links, _link);
         long now = Environment.TickCount64;
         int total = 0;
         foreach (var i in _para.Inlines) total += LengthOf(i);
@@ -457,7 +492,7 @@ internal sealed class AssistantView : StackPanel
             CompositionTarget.Rendering -= OnFrame;
             return;
         }
-        DrawBody();
+        Draw();
     }
 
     /// <summary>How solid the character at drawn position <paramref name="p"/> is now, 0 to 1.</summary>
@@ -484,7 +519,7 @@ internal sealed class AssistantView : StackPanel
         int from = _marks[0].len;
         var inlines = _para.Inlines.ToList();
         _para.Inlines.Clear();
-        var solid = ((SolidColorBrush)Application.Current.Resources["TextFillColorPrimaryBrush"]).Color;
+        var solid = (View.Foreground as SolidColorBrush)?.Color ?? ((SolidColorBrush)Application.Current.Resources["TextFillColorPrimaryBrush"]).Color;
         int pos = 0;
         foreach (var inline in inlines)
         {
@@ -536,6 +571,106 @@ internal sealed class AssistantView : StackPanel
         else if (like.ReadLocalValue(TextElement.ForegroundProperty) != DependencyProperty.UnsetValue)
             r.Foreground = like.Foreground;
         return r;
+    }
+}
+
+/// <summary>
+/// The model's thinking on the rail. Live: one line beside the brain, the sentence it is thinking now,
+/// changing as it goes (a quick cross-fade); a click opens the whole reasoning, streaming in as the answer
+/// does. Done: "Thought for 9 s", which opens to the reasoning.
+/// </summary>
+internal sealed class RailThink
+{
+    public Grid Row { get; }
+    private readonly RailNode _node = new();
+    private readonly TextBlock _label = new()
+    {
+        FontSize = 12, Margin = new Thickness(0, 2, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.NoWrap,
+    };
+    private readonly FontIcon _chevron = new() { Glyph = "", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 0, 0), Visibility = Visibility.Collapsed };
+    private readonly StreamingText _full = new(11.5, 17);
+    private Storyboard? _swap;
+    private string _thinking = "";
+    private bool _open, _live;
+
+    public RailThink(Action onResize)
+    {
+        var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+        _label.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+        _chevron.Foreground = faint;
+        _full.View.Foreground = faint;
+        _full.View.Visibility = Visibility.Collapsed;
+        _full.View.Margin = new Thickness(0, 2, 0, 2);
+        var head = new Grid { ColumnSpacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        head.Children.Add(_label);
+        Grid.SetColumn(_chevron, 1);
+        head.Children.Add(_chevron);
+        head.Tapped += (_, e) =>
+        {
+            if (_thinking.Length == 0) return;
+            e.Handled = true;
+            _open = !_open;
+            // Laid out only when open: what was thought so far comes whole, what follows streams in.
+            if (_open) _full.Set(_thinking, streaming: false);
+            Fold.Turn(_chevron, _open);
+            Fold.Toggle(_full.View, _open, onResize);
+        };
+        var content = new StackPanel { Spacing = 2 };
+        content.Children.Add(head);
+        content.Children.Add(_full.View);
+        Row = AssistantView.RailRow(_node, content);
+    }
+
+    /// <summary>The sentence the model is thinking now: the last one long enough to say something, without its markdown.</summary>
+    public static string Latest(string thinking)
+    {
+        string t = thinking.Replace("**", "").Replace("`", "").Replace('\n', ' ').Trim();
+        var sentences = System.Text.RegularExpressions.Regex.Split(t, @"(?<=[.!?])\s+")
+            .Select(x => x.Trim().TrimStart('*', '-', '•', ' ')).Where(x => x.Length > 0).ToList();
+        for (int i = sentences.Count - 1; i >= 0; i--)
+        {
+            // The sentence being written, once it says enough; else the one before it.
+            if (sentences[i].Length >= 24 || i == 0) return sentences[i];
+        }
+        return "";
+    }
+
+    public void Update(ChatMsg m, bool live)
+    {
+        string thinking = m.Thinking.Trim();
+        _thinking = thinking;
+        _chevron.Visibility = thinking.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (live)
+        {
+            _live = true;
+            _node.Set(true, null);
+            string line = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : Latest(thinking) is { Length: > 0 } s ? s : "Thinking";
+            if (line != _label.Text)
+            {
+                _label.Text = line;
+                // The new sentence comes up quickly in place of the old one.
+                _swap?.Stop();
+                var a = new DoubleAnimation { From = 0.25, To = 1, Duration = TimeSpan.FromMilliseconds(260), EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                Storyboard.SetTarget(a, _label);
+                Storyboard.SetTargetProperty(a, "Opacity");
+                _swap = new Storyboard();
+                _swap.Children.Add(a);
+                _swap.Begin();
+            }
+            if (_open) _full.Set(thinking, streaming: true);
+            return;
+        }
+        if (_live || _label.Text.Length == 0)
+        {
+            _live = false;
+            _node.Set(false, null);
+            double s = m.ThinkMs / 1000.0;
+            _label.Text = thinking.Length == 0 ? "Read your documents" : s < 1 ? "Thought for a moment" : $"Thought for {s:0} s";
+        }
+        if (_open) _full.Set(thinking, streaming: false);
     }
 }
 
@@ -626,70 +761,6 @@ internal static class Shimmer
         sb.Children.Add(a);
         sb.Begin();
         return sb;
-    }
-}
-
-/// <summary>
-/// The model's thinking on the rail. Live: "Thinking", shimmering, and under it a faint tail of what it is
-/// thinking right now, two lines at most. Done: "Thought for 9 s", which opens to the whole reasoning.
-/// </summary>
-internal sealed class RailThink
-{
-    public Grid Row { get; }
-    private readonly RailNode _node = new();
-    private readonly TextBlock _label = new() { FontSize = 12, Margin = new Thickness(0, 2, 0, 0) };
-    private readonly FontIcon _chevron = new() { Glyph = "\uE70D", FontSize = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 3, 0, 0), Visibility = Visibility.Collapsed };
-    private readonly Whisper _whisper = new();
-    private readonly TextBlock _full = new() { FontSize = 11, LineHeight = 16, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-    private Storyboard? _shimmer;
-    private bool _open, _done;
-
-    public RailThink(Action onResize)
-    {
-        var faint = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
-        _label.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
-        _chevron.Foreground = faint;
-        _full.Foreground = faint;
-        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-        head.Children.Add(_label);
-        head.Children.Add(_chevron);
-        head.Tapped += (_, e) =>
-        {
-            if (!_done || _full.Text.Length == 0) return;
-            e.Handled = true;
-            _open = !_open;
-            Fold.Turn(_chevron, _open);
-            Fold.Toggle(_full, _open, onResize);
-        };
-        var content = new StackPanel { Spacing = 2 };
-        content.Children.Add(head);
-        content.Children.Add(_whisper);
-        content.Children.Add(_full);
-        Row = AssistantView.RailRow(_node, content);
-    }
-
-    public void Update(ChatMsg m, bool live)
-    {
-        string thinking = m.Thinking.Trim();
-        if (live)
-        {
-            _node.Set(true, null);
-            _label.Text = m.Hint.Length > 0 ? m.Hint.TrimEnd('…', '.') : "Thinking";
-            _shimmer ??= Shimmer.Start(_label);
-            _whisper.Text = thinking;
-            _whisper.Visibility = thinking.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-            return;
-        }
-        _shimmer?.Stop();
-        _shimmer = null;
-        _label.Opacity = 1;
-        _node.Set(false, null);
-        _done = true;
-        double s = m.ThinkMs / 1000.0;
-        _label.Text = thinking.Length == 0 ? "Read your documents" : s < 1 ? "Thought for a moment" : $"Thought for {s:0} s";
-        _whisper.Visibility = Visibility.Collapsed;
-        _full.Text = thinking;
-        _chevron.Visibility = thinking.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 }
 
@@ -955,64 +1026,5 @@ internal static class Fold
         var sb = new Storyboard();
         sb.Children.Add(a);
         sb.Begin();
-    }
-}
-
-/// <summary>
-/// The model's reasoning as it comes, in a window three lines high: the newest lines at the bottom, the
-/// older ones rising out of the top, where they fade away. No ellipsis, no cut words.
-/// </summary>
-internal sealed class Whisper : Grid
-{
-    private const double Lines = 3, LineHeight = 16;
-    private readonly TextBlock _text = new()
-    {
-        FontSize = 11, LineHeight = LineHeight, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-        TextWrapping = TextWrapping.Wrap, FontStyle = Windows.UI.Text.FontStyle.Italic, VerticalAlignment = VerticalAlignment.Bottom,
-    };
-    private readonly RectangleGeometry _clip = new();
-
-    public Whisper()
-    {
-        Height = Lines * LineHeight;
-        Clip = _clip;
-        Children.Add(_text);
-        SizeChanged += (_, e) => _clip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
-        _text.SizeChanged += (_, _) => Shade();
-        Shade();
-    }
-
-    /// <summary>The reasoning so far; only its last few hundred characters are laid out (the rest could not show).</summary>
-    public string Text
-    {
-        set
-        {
-            string t = value.Replace('\n', ' ').Trim();
-            if (t.Length > 400)
-            {
-                t = t[^400..];
-                int space = t.IndexOf(' ');
-                if (space > 0) t = t[(space + 1)..];
-            }
-            _text.Text = t;
-        }
-    }
-
-    /// <summary>
-    /// The text's colour, as a gradient over its whole height: clear where it leaves the window at the top,
-    /// solid from a line below that on (the gradient follows the text's height as it grows).
-    /// </summary>
-    private void Shade()
-    {
-        var c = ((SolidColorBrush)Application.Current.Resources["TextFillColorTertiaryBrush"]).Color;
-        double h = Math.Max(_text.ActualHeight, Height);
-        double top = Math.Max(0, (h - Height) / h);
-        double solid = Math.Min(1, top + LineHeight * 1.2 / h);
-        var clear = Windows.UI.Color.FromArgb(0, c.R, c.G, c.B);
-        _text.Foreground = new LinearGradientBrush
-        {
-            StartPoint = new Windows.Foundation.Point(0, 0), EndPoint = new Windows.Foundation.Point(0, 1),
-            GradientStops = { new GradientStop { Color = clear, Offset = top }, new GradientStop { Color = c, Offset = solid } },
-        };
     }
 }

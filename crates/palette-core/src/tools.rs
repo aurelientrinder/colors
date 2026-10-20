@@ -134,10 +134,10 @@ fn changed_in(roots: &[std::path::PathBuf], from: i64, to: i64, max: usize, budg
 
 /// Words that say what kind of file is wanted rather than what it is called ("my photos", "the pdf"):
 /// left out of the query (the kind is its own argument), or no file would match "photos" by name.
-const KIND_WORDS: [&str; 30] = [
+const KIND_WORDS: [&str; 37] = [
     "file", "files", "photo", "photos", "picture", "pictures", "pic", "pics", "image", "images", "document", "documents",
     "doc", "docs", "video", "videos", "my", "the", "a", "an", "some", "fichier", "fichiers", "mes", "les", "des", "took",
-    "taken", "recent", "latest",
+    "taken", "recent", "latest", "any", "all", "every", "anything", "worked", "opened", "tous",
 ];
 
 /// `query` without the words of KIND_WORDS.
@@ -291,6 +291,7 @@ mod tests {
         assert_eq!(strip_kind_words("photos"), "");
         assert_eq!(strip_kind_words("my holiday photos"), "holiday");
         assert_eq!(strip_kind_words("the Q3 report"), "Q3 report");
+        assert_eq!(strip_kind_words("any"), "");
     }
 
     #[test]

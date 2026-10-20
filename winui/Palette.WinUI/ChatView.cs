@@ -215,11 +215,23 @@ public sealed partial class MainWindow
             // Ask; while the model asks for tools, run them, tell it what they found, and ask again. It
             // thinks (when the message calls for it) before its first move only: with the tools' results
             // in hand, it answers straight away.
+            bool retried = false;
             for (int round = 0; ; round++)
             {
                 bool lastRound = round >= MaxToolRounds;
                 string body = ChatBody(opened.System ?? "", chat, think: user.Think && round == 0, tools: lastRound ? null : opened.Tools);
                 var calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct);
+                if (calls.Count == 0 && !lastRound && !retried && Announces(answer.Text[answer.ReplyStart..]))
+                {
+                    // It said it would look ("I'll look through your files…") and answered without looking:
+                    // that turn is dropped and asked again with a tool call required.
+                    App.Log($"chat: announced without a tool call, asking again: {answer.Text[answer.ReplyStart..]}");
+                    retried = true;
+                    answer.Text = answer.Text[..answer.ReplyStart];
+                    RenderChat(chat);
+                    body = ChatBody(opened.System ?? "", chat, think: false, tools: opened.Tools, requireTool: true);
+                    calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct);
+                }
                 if (calls.Count == 0 || lastRound) break;
 
                 // What the model wrote before calling stays on screen; the next turn writes after it.
@@ -361,7 +373,14 @@ public sealed partial class MainWindow
     /// they found), and the new message; the tools offered, when <paramref name="tools"/> is given.
     /// Written by hand: no reflection.
     /// </summary>
-    private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools)
+    /// <summary>A turn that says it is about to look something up: "I'll look through…", "Let me check…".</summary>
+    private static readonly Regex Announce = new(
+        @"^\s*(I'll|I will|I'm going to|I am going to|Let me|Je vais|Laisse-moi)\b[^.!?\n]{0,120}?\b(look|check|search|find|read|open|go through|scan|see|regard|cherch|vérifi|lis|consult|ouvr)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool Announces(string turn) => Announce.IsMatch(turn);
+
+    private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools, bool requireTool = false)
     {
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms))
@@ -424,6 +443,7 @@ public sealed partial class MainWindow
             {
                 w.WritePropertyName("tools");
                 w.WriteRawValue(tools);
+                if (requireTool) w.WriteString("tool_choice", "required");
             }
             w.WriteBoolean("stream", true);
             w.WriteNumber("max_tokens", think ? 2000 : 700);
@@ -464,6 +484,7 @@ public sealed partial class MainWindow
             ChatMessages.Children.Clear();
         }
 
+        var earlier = new List<object>();   // what the tools found before each message (links to files named again)
         for (int i = 0; i < chat.Messages.Count; i++)
         {
             var m = chat.Messages[i];
@@ -473,7 +494,8 @@ public sealed partial class MainWindow
                 _chatViews.Add((view, m));
                 ChatMessages.Children.Add(view);
             }
-            UpdateMessageView(_chatViews[i].view, m, i == chat.Messages.Count - 1 && chat.Busy);
+            UpdateMessageView(_chatViews[i].view, m, i == chat.Messages.Count - 1 && chat.Busy, earlier);
+            earlier = earlier.Concat(m.Blocks).ToList();
         }
 
         // The messages and the footer carry their own margins (the scroll bar runs along the card's edge).
@@ -513,10 +535,10 @@ public sealed partial class MainWindow
         return new AssistantView(() => { if (_chat is { } c) RenderChat(c); }, MakeBlockView, MakeFileLink);
     }
 
-    private static void UpdateMessageView(FrameworkElement view, ChatMsg m, bool writing)
+    private static void UpdateMessageView(FrameworkElement view, ChatMsg m, bool writing, IReadOnlyList<object> earlier)
     {
         if (view is Border { Child: TextBlock user }) user.Text = m.Text;
-        else if (view is AssistantView a) a.Update(m, writing);
+        else if (view is AssistantView a) a.Update(m, writing, earlier);
     }
 
     /// <summary>A message the model is sent: a question, or an answer with something in it.</summary>
