@@ -175,7 +175,7 @@ public sealed partial class MainWindow
                 "set_reminder" => SetReminderTool(Arg("text"), Num("in_minutes"), Num("in_seconds"), Arg("time"), Arg("day").Length > 0 ? Arg("day") : Arg("date")),
                 "list_reminders" => ListRemindersTool(),
                 "cancel_reminder" => CancelReminderTool(Arg("about")),
-                "open" => await OpenTool(Arg("target")),
+                "open" => await OpenTool(Arg("target"), ct),
                 "change_setting" => await SettingTool(Arg("setting"), Arg("value").Length > 0 ? Arg("value") : Num("value")?.ToString(CultureInfo.InvariantCulture) ?? ""),
                 "create_folder" => CreateFolderTool(Arg("name"), Arg("in")),
                 "move_files" => await MoveTool(Strings(args, "files"), Arg("to"), ct),

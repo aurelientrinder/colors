@@ -52,12 +52,29 @@ function Install-Palette {
         }
     }
 
+    # The folder is mirrored on install and deleted on uninstall: never one that holds anything but Palette.
+    $isPalette = Test-Path (Join-Path $dir "PaletteWinUI.exe")
+    if ((Test-Path $dir) -and -not $isPalette -and (Get-ChildItem $dir -Force | Select-Object -First 1)) {
+        throw "$dir already holds other files and is not a Palette install: choose an empty folder or a new one."
+    }
+
     if ($Uninstall) {
         Say "Removing Palette"
         Stop-Palette
         Remove-LogonTask
         Remove-Item $shortcut, $uninstallKey -Force -ErrorAction SilentlyContinue
-        if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+        if ($isPalette) { Remove-Item $dir -Recurse -Force }
+        # The file index's elevated logon task and its copy of the helper in Program Files, made when Palette
+        # first asked to read the drives quickly: removing them takes admin, so Windows asks once.
+        # Paths from the system, not the environment, and no PowerShell modules: nothing the user's
+        # environment can change decides what runs elevated.
+        $sys = [Environment]::SystemDirectory
+        $index = Join-Path ([IO.Path]::GetPathRoot($sys)) "Program Files\Palette Index"
+        if ((Get-ScheduledTask -TaskName PaletteMftRefresh -ErrorAction SilentlyContinue) -or (Test-Path $index)) {
+            $cmd = "/c `"`"$sys\schtasks.exe`" /delete /tn PaletteMftRefresh /f & rd /s /q `"$index`"`""
+            try { Start-Process (Join-Path $sys "cmd.exe") -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList $cmd }
+            catch { Write-Host "The file index task (PaletteMftRefresh) and $index are still there: removing them needs admin." }
+        }
         Write-Host "Palette is removed. Your settings and search index are still in $env:LOCALAPPDATA\palette; delete that folder too to remove everything."
         return
     }

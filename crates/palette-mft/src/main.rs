@@ -8,6 +8,12 @@
 //! Usage:
 //!   palette-mft --snapshot        write snapshots for all fixed NTFS drives
 //!   palette-mft --install-task    register a logon task so no UAC is needed later
+//!
+//! It runs elevated, so it is careful about two things an unelevated program could otherwise turn
+//! into admin rights. The logon task runs a copy kept in Program Files (only admins can change it),
+//! never the exe it was started as, which may sit in a folder the user can write to. And the
+//! snapshots are written with the admin rights dropped (as the user, at medium integrity): the index
+//! folder is the user's, so a link planted there must not let an elevated write land anywhere else.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
@@ -19,6 +25,14 @@ use std::process::Command;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Security::{
+    CreateRestrictedToken, CreateWellKnownSid, ImpersonateLoggedOnUser, RevertToSelf, SetTokenInformation,
+    TokenIntegrityLevel, WinBuiltinAdministratorsSid, WinMediumLabelSid, CREATE_RESTRICTED_TOKEN_FLAGS, PSID,
+    SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    WELL_KNOWN_SID_TYPE,
+};
+use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, GetDriveTypeW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
     OPEN_EXISTING,
@@ -214,9 +228,93 @@ fn dir_path(
     base
 }
 
+const DISABLE_MAX_PRIVILEGE: u32 = 0x1;
+const LUA_TOKEN: u32 = 0x4;
+const SE_GROUP_INTEGRITY: u32 = 0x20;
+
+/// A well-known SID, in a buffer large enough for any.
+fn well_known_sid(kind: WELL_KNOWN_SID_TYPE) -> Option<Vec<u8>> {
+    let mut buf = vec![0u8; 68];
+    let mut len = buf.len() as u32;
+    unsafe { CreateWellKnownSid(kind, None, Some(PSID(buf.as_mut_ptr() as *mut _)), &mut len).ok()? };
+    Some(buf)
+}
+
+/// This process's token with Administrators made deny-only, every privilege but the basic ones gone,
+/// and medium integrity: what the user has unelevated. (The new token has the access of the handle it
+/// is made from, hence adjust-default, to set its integrity, and impersonate.)
+fn unelevated_token() -> Option<HANDLE> {
+    unsafe {
+        let mut own = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT | TOKEN_IMPERSONATE, &mut own).ok()?;
+        let mut admins = well_known_sid(WinBuiltinAdministratorsSid)?;
+        let disable = [SID_AND_ATTRIBUTES { Sid: PSID(admins.as_mut_ptr() as *mut _), Attributes: 0 }];
+        let mut low = HANDLE::default();
+        let made = CreateRestrictedToken(
+            own,
+            CREATE_RESTRICTED_TOKEN_FLAGS(DISABLE_MAX_PRIVILEGE | LUA_TOKEN),
+            Some(&disable),
+            None,
+            None,
+            &mut low,
+        );
+        let _ = CloseHandle(own);
+        made.ok()?;
+        let mut medium = well_known_sid(WinMediumLabelSid)?;
+        let label = TOKEN_MANDATORY_LABEL {
+            Label: SID_AND_ATTRIBUTES { Sid: PSID(medium.as_mut_ptr() as *mut _), Attributes: SE_GROUP_INTEGRITY },
+        };
+        let set = SetTokenInformation(
+            low,
+            TokenIntegrityLevel,
+            &label as *const _ as *const _,
+            (std::mem::size_of::<TOKEN_MANDATORY_LABEL>() + medium.len()) as u32,
+        );
+        if set.is_err() {
+            let _ = CloseHandle(low);
+            return None;
+        }
+        Some(low)
+    }
+}
+
+/// Runs `f` as the unelevated user; not at all (an error) if the rights cannot be dropped.
+fn as_user<T>(f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+    let Some(low) = unelevated_token() else { return Err(std::io::Error::other("could not drop admin rights")) };
+    let imp = unsafe { ImpersonateLoggedOnUser(low) };
+    unsafe {
+        let _ = CloseHandle(low);
+    }
+    imp.map_err(|e| std::io::Error::other(e.to_string()))?;
+    let r = f();
+    if unsafe { RevertToSelf() }.is_err() {
+        // Neither who it should be nor safely back to admin: stop here.
+        std::process::exit(1);
+    }
+    r
+}
+
+/// `X:\Users\<someone else>\...`: an account folder this user cannot list (asked once per folder, while
+/// running as the user), whose files must not be listed for them here either.
+fn other_profile(path: &str, root: &str, seen: &mut HashMap<String, bool>) -> bool {
+    let Some(rest) = path.get(root.len()..) else { return false };
+    let lower = rest.to_lowercase();
+    let Some(after) = lower.strip_prefix("\\users\\") else { return false };
+    let name = after.split('\\').next().unwrap_or("");
+    if name.is_empty() {
+        return false;
+    }
+    *seen.entry(name.to_string()).or_insert_with(|| fs::read_dir(format!("{root}\\Users\\{name}")).is_err())
+}
+
 fn snapshot_drive(letter: char, dir: &PathBuf) -> std::io::Result<usize> {
     let Some(map) = enumerate_volume(letter) else { return Ok(0) };
+    as_user(|| write_snapshot(letter, dir, &map))
+}
+
+fn write_snapshot(letter: char, dir: &PathBuf, map: &HashMap<u64, Rec>) -> std::io::Result<usize> {
     let root = format!("{letter}:");
+    let mut seen: HashMap<String, bool> = HashMap::new();
     let mut memo: HashMap<u64, Option<String>> = HashMap::new();
     let tmp = dir.join(format!("{letter}.txt.tmp"));
     let mut w = BufWriter::with_capacity(1 << 20, fs::File::create(&tmp)?);
@@ -228,7 +326,7 @@ fn snapshot_drive(letter: char, dir: &PathBuf) -> std::io::Result<usize> {
         }
         let is_dir = r.attrs & ATTR_DIR != 0;
         if is_dir {
-            if let Some(p) = dir_path(frn, &map, &mut memo, &root) {
+            if let Some(p) = dir_path(frn, map, &mut memo, &root).filter(|p| !other_profile(p, &root, &mut seen)) {
                 writeln!(w, "{p}\\")?;
                 count += 1;
             }
@@ -238,7 +336,7 @@ fn snapshot_drive(letter: char, dir: &PathBuf) -> std::io::Result<usize> {
                     continue;
                 }
             }
-            if let Some(parent) = dir_path(r.parent, &map, &mut memo, &root) {
+            if let Some(parent) = dir_path(r.parent, map, &mut memo, &root).filter(|p| !other_profile(p, &root, &mut seen)) {
                 writeln!(w, "{parent}\\{}", r.name)?;
                 count += 1;
             }
@@ -252,7 +350,7 @@ fn snapshot_drive(letter: char, dir: &PathBuf) -> std::io::Result<usize> {
 
 fn snapshot_all() {
     let dir = out_dir();
-    let _ = fs::create_dir_all(&dir);
+    let _ = as_user(|| fs::create_dir_all(&dir));
     let mut log = String::new();
     for letter in 'A'..='Z' {
         let root = wide(&format!("{letter}:\\"));
@@ -265,22 +363,46 @@ fn snapshot_all() {
             Err(e) => log.push_str(&format!("{letter}: error {e}\n")),
         }
     }
-    let _ = fs::write(dir.join("last-run.log"), log);
+    let _ = as_user(|| fs::write(dir.join("last-run.log"), log));
 }
 
+/// The Windows folder, from the system rather than %WINDIR%, which the user's environment could change.
+fn windows_dir() -> Option<PathBuf> {
+    let mut buf = [0u16; 260];
+    let n = unsafe { GetSystemWindowsDirectoryW(Some(&mut buf)) } as usize;
+    (n > 0 && n < buf.len()).then(|| PathBuf::from(String::from_utf16_lossy(&buf[..n])))
+}
+
+/// Registers the elevated logon task, on a copy of this exe in Program Files (on the Windows drive):
+/// a folder only admins can write to, so nothing unelevated can swap what the task runs.
 fn install_task() {
-    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    let Some(win) = windows_dir() else { return };
+    let Some(drive) = win.to_str().and_then(|w| w.get(..2)) else { return };
+    let home = PathBuf::from(format!("{drive}\\Program Files\\Palette Index"));
+    let exe = home.join("palette-mft.exe");
+    let Ok(me) = std::env::current_exe() else { return };
+    if fs::create_dir_all(&home).is_err() || (me != exe && fs::copy(&me, &exe).is_err()) {
+        return;
+    }
+    let ps = win.join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    let module = win.join("System32\\WindowsPowerShell\\v1.0\\Modules\\ScheduledTasks");
+    // The module by its full path and the account from the token: nothing in the user's environment
+    // (PSModulePath, USERNAME) decides what this elevated PowerShell runs, or for whom.
     let script = format!(
-        "$a = New-ScheduledTaskAction -Execute '{exe}' -Argument '--snapshot'; \
-         $t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; \
+        "Import-Module '{module}'; \
+         $u = [Security.Principal.WindowsIdentity]::GetCurrent().Name; \
+         $a = New-ScheduledTaskAction -Execute '{exe}' -Argument '--snapshot'; \
+         $t = New-ScheduledTaskTrigger -AtLogOn -User $u; \
          $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries \
               -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10); \
-         $p = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest; \
+         $p = New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Highest; \
          Register-ScheduledTask -TaskName PaletteMftRefresh -Action $a -Trigger $t -Settings $s \
-              -Principal $p -Force | Out-Null"
+              -Principal $p -Force | Out-Null",
+        module = module.display(),
+        exe = exe.display(),
     );
-    let _ = Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+    let _ = Command::new(ps)
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
         .creation_flags(NO_WINDOW)
         .status();
 }

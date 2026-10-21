@@ -165,6 +165,19 @@ internal static class ActionLog
 
     public static bool Exists(string p) => File.Exists(p) || Directory.Exists(p);
 
+    /// <summary>A UNC or device path (\\server\share, //server, \\?\…) rather than one on a drive of this PC.</summary>
+    public static bool IsNetwork(string p) => p.StartsWith(@"\\", StringComparison.Ordinal) || p.StartsWith("//", StringComparison.Ordinal);
+
+    /// <summary>Extensions Windows runs rather than opens in an app: programs, scripts, installers, shortcuts.</summary>
+    private static readonly HashSet<string> Runnable = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".com", ".scr", ".pif", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+        ".hta", ".msi", ".msp", ".msix", ".msixbundle", ".appx", ".appxbundle", ".appinstaller", ".msc", ".cpl", ".lnk",
+        ".url", ".reg", ".jar", ".py", ".pyw", ".appref-ms", ".application", ".inf", ".scf", ".settingcontent-ms",
+    };
+
+    public static bool IsRunnable(string path) => File.Exists(path) && Runnable.Contains(Path.GetExtension(path));
+
     public static void MovePath(string from, string to)
     {
         if (Directory.Exists(from)) Directory.Move(from, to);
@@ -193,6 +206,8 @@ internal static class ActionLog
         string full;
         try { full = Path.GetFullPath(path).TrimEnd('\\'); }
         catch (Exception) { return "not a path"; }
+        // \\server\share and \\?\ paths: reaching one sends the user's sign-in to that server.
+        if (IsNetwork(full)) return "a network location";
         if (full.Length <= 3) return "a whole drive";
         static string F(Environment.SpecialFolder f) => Environment.GetFolderPath(f).TrimEnd('\\');
         var off = new[]

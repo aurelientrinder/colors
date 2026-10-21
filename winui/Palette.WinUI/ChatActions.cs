@@ -155,6 +155,12 @@ public sealed partial class MainWindow
     {
         why = "";
         name = name.Trim().Trim('"', '“', '”');
+        if (ActionLog.IsNetwork(name))
+        {
+            // Not even looked at: checking that it exists would already reach the server.
+            why = "I only work with files on this PC, not on network locations.";
+            return null;
+        }
         if (Path.IsPathRooted(name) && ActionLog.Exists(name)) return Path.GetFullPath(name);
         var found = FoundPaths().Reverse().Distinct(StringComparer.OrdinalIgnoreCase).Where(ActionLog.Exists).ToList();
         var hit = found.FirstOrDefault(p => Path.GetFileName(p).Equals(name, StringComparison.OrdinalIgnoreCase))
@@ -240,13 +246,28 @@ public sealed partial class MainWindow
     // ------------------------------------------------------------------ the tools
 
     /// <summary>Open an app (by its name, as the palette finds it), a file the tools found, or a folder.</summary>
-    private async Task<(string, object?, string?)> OpenTool(string target)
+    private async Task<(string, object?, string?)> OpenTool(string target, CancellationToken ct)
     {
         if (!_mayAct) return (OnlyAsked, null, null);
         if (target.Length == 0) return ("Say what to open (target).", null, null);
         string? path = ResolveFile(target, out _) ?? (ActionLog.Known(target) is { } k ? k : null);
         if (path != null)
         {
+            // A program or script runs rather than opens, and the name may have come from a page or a
+            // document the chat read rather than from the user: it asks first.
+            if (ActionLog.IsRunnable(path))
+            {
+                var block = new ActionBlock
+                {
+                    Kind = "run", Paths = new() { path }, Question = $"Run {Path.GetFileName(path)}?", Working = "Starting it…",
+                    Note = "It is a program or script: it can change anything you can.",
+                };
+                if (!await AskFirst(block, ct)) return ("The user declined: it was not run.", block, null);
+                DispatcherQueue.TryEnqueue(() => OpenFromChat(path, reveal: false));
+                block.Set("done", $"Ran {Path.GetFileName(path)}");
+                ActionLog.Add(new ActionRecord(ActionLog.NewId(), "open", $"Ran {Path.GetFileName(path)}", DateTime.Now, ChatId));
+                return ($"Started {Path.GetFileName(path)}.", block, null);
+            }
             DispatcherQueue.TryEnqueue(() => OpenFromChat(path, reveal: false));
             ActionLog.Add(new ActionRecord(ActionLog.NewId(), "open", $"Opened {Path.GetFileName(path)}", DateTime.Now, ChatId));
             return ($"Opened {Path.GetFileName(path)}.", null, null);
