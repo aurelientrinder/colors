@@ -519,7 +519,8 @@ public sealed partial class MainWindow
     /// <summary>The first turn of a message that needs working out: a sentence first, the work after.</summary>
     private const string IntroNote = "\n\nStart your reply with one short sentence, in your own words, saying what you are about to do. " +
         "Call a tool only if the answer depends on the user's own files, documents, calendar, weather or PC; dates, arithmetic and general " +
-        "knowledge need none: then stop after that sentence, you will work it out next.";
+        "knowledge need none: then stop after that sentence, you will work it out next. Without a tool call, do not say you will look " +
+        "anything up, search or check: say what you will think through.";
 
     /// <summary>The turn after that sentence: the answer itself, not the announcement again.</summary>
     private const string WorkItOutNote = "\n\nYou have already told the user what you are about to do. Now work it out and give the " +
@@ -605,18 +606,22 @@ public sealed partial class MainWindow
                 w.WriteString("content", content);
                 w.WriteEndObject();
             }
-            // What has left the model's view is told in a summary (ChatList.cs Summarize).
-            Message("system", chat.Summary.Length > 0
-                ? system + "\n\nEarlier in this conversation (a summary; those messages are no longer shown): " + chat.Summary
-                : system);
+            Message("system", system);
             // Older turns stay as they were sent, so the model's cache of the conversation holds; the last
             // message is the one being answered, with the tools used for it so far.
-            foreach (var m in chat.Messages.Skip(ChatWindowStart(chat)).Where(Counts))
+            int start = ChatWindowStart(chat);
+            foreach (var m in chat.Messages.Skip(start).Where(Counts))
             {
                 if (m.Role == "user")
                 {
-                    Message("user", note != null && ReferenceEquals(m, answering)
-                        ? $"{m.Sent}\n\n(Palette's note for this reply, not the user's words: {note.Trim()})" : m.Sent);
+                    string sent = note != null && ReferenceEquals(m, answering)
+                        ? $"{m.Sent}\n\n(Palette's note for this reply, not the user's words: {note.Trim()})" : m.Sent;
+                    // What has left the model's view is told in a summary (ChatList.cs Summarize), ahead of the first
+                    // message it sees: in the system message, each new summary had it read the whole prompt again
+                    // (12 s), tools and all.
+                    if (chat.Summary.Length > 0 && ReferenceEquals(m, chat.Messages[start]))
+                        sent = $"(Palette's summary of this conversation so far, not the user's words; those messages are no longer shown: {chat.Summary})\n\n{sent}";
+                    Message("user", sent);
                     continue;
                 }
                 foreach (var round in m.Rounds)
@@ -881,14 +886,29 @@ public sealed partial class MainWindow
     /// <summary>A message the model is sent: a question, or an answer with something in it.</summary>
     private static bool Counts(ChatMsg m) => m.Role == "user" || m.Text.Length > 0 || m.Rounds.Count > 0;
 
-    /// <summary>Where the messages the model sees begin: the last six exchanges and the new message, from a question on.</summary>
+    /// <summary>Messages after the summary the model is sent before the older ones are folded into it (ChatList.cs Summarize)…</summary>
+    private const int WindowMax = 14;
+    /// <summary>…and how many recent ones stay when they are.</summary>
+    private const int WindowKeep = 6;
+
+    /// <summary>
+    /// Where the messages the model sees begin: where the running summary stops. The start moves only when older
+    /// messages are folded into the summary, a few exchanges at a time: each move has the model read the
+    /// conversation again from there (5 s and more), so moving it on every message made long chats slow.
+    /// If the summary falls behind (the model did not answer), the start slides on its own.
+    /// </summary>
     private static int ChatWindowStart(ChatAnswer chat)
     {
-        var shown = Enumerable.Range(0, chat.Messages.Count).Where(i => Counts(chat.Messages[i])).ToList();
-        if (shown.Count <= 13) return 0;
-        int start = shown[^13];
-        while (start < chat.Messages.Count && chat.Messages[start].Role != "user") start++;
-        return start;
+        var shown = Enumerable.Range(chat.SummaryUpTo, chat.Messages.Count - chat.SummaryUpTo).Where(i => Counts(chat.Messages[i])).ToList();
+        int start = shown.Count > WindowMax + 4 ? shown[^WindowMax] : chat.SummaryUpTo;
+        return FromQuestion(chat, start);
+    }
+
+    /// <summary><paramref name="i"/>, or the first question after it.</summary>
+    private static int FromQuestion(ChatAnswer chat, int i)
+    {
+        while (i < chat.Messages.Count && chat.Messages[i].Role != "user") i++;
+        return i;
     }
 
     /// <summary>Ctrl+N: put the conversation away (it stays in the list, Ctrl+H) and start a new one.</summary>

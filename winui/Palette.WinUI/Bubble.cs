@@ -371,8 +371,7 @@ internal sealed class Bubble : Window
     {
         _notice = n;
         _pillText.Text = n.Pill;
-        _pillTime.Text = n.PillTime + (more > 0 ? $" · +{more}" : "");
-        _head.Text = n.Head + (more > 0 ? $" · {more} more" : "");
+        Count(n, more);
         _title.Text = n.Title;
         _from.Text = n.Body;
         _from.Visibility = n.Body.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -409,6 +408,32 @@ internal sealed class Bubble : Window
             _glowing.Begin();
             if (n.Chime) Chime();
         }
+    }
+
+    /// <summary>
+    /// Another notice came in behind the one showing, or one waiting went: say how many wait, without showing
+    /// it again. The pill takes its new width; an open card has room for it already.
+    /// </summary>
+    public void SetMore(int more)
+    {
+        if (_notice is not { } n) return;
+        string was = _pillTime.Text;
+        Count(n, more);
+        if (_pillTime.Text == was || _expanded) return;
+        var pill = PillSize();
+        if (_t < 1)
+        {
+            _toW = pill.w;   // closing: it lands on the new width
+            return;
+        }
+        _card.Width = pill.w;
+        FitRegion(pill.w, pill.h);
+    }
+
+    private void Count(Notice n, int more)
+    {
+        _pillTime.Text = n.PillTime + (more > 0 ? $" · +{more}" : "");
+        _head.Text = n.Head + (more > 0 ? $" · {more} more" : "");
     }
 
     /// <summary>Put the bubble away (nothing left to say, or the palette is opening where it sits).</summary>

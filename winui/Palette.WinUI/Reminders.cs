@@ -56,7 +56,11 @@ public sealed partial class MainWindow
         if (_visible) return;   // the palette is where the bubble would be: after it closes
         var n = due.Count > 0 ? ReminderNotice(due[0]) : _notices[0];
         _bubble ??= MakeBubble();
-        if (_bubble.Showing && _bubble.Current is { } shown && shown.Key == n.Key) return;
+        if (_bubble.Showing && _bubble.Current is { } shown && shown.Key == n.Key)
+        {
+            _bubble.SetMore(waiting - 1);   // one came in behind it, or one waiting expired
+            return;
+        }
         bool announce = _announced.Add(n.Key);
         App.Log($"bubble: {n.Kind} {n.Title} (announce={announce})");
         _bubble.Show(n, waiting - 1, announce);

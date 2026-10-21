@@ -173,13 +173,16 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Once at least six messages have left the model's view (it is sent the last six exchanges), fold
-    /// them into the conversation's running summary, which the model is given ahead of what it sees.
+    /// Once the model is sent more than <see cref="WindowMax"/> messages after the summary, fold all but the
+    /// last few into the conversation's running summary, which the model is given ahead of what it sees: the
+    /// start of what it sees moves then, and stays put for the next few exchanges (ChatWindowStart).
     /// </summary>
     private static async Task<bool> Summarize(ChatAnswer chat, int port)
     {
-        int start = ChatWindowStart(chat);
-        if (start - chat.SummaryUpTo < 6) return false;
+        var shown = Enumerable.Range(chat.SummaryUpTo, chat.Messages.Count - chat.SummaryUpTo).Where(i => Counts(chat.Messages[i])).ToList();
+        if (shown.Count <= WindowMax) return false;
+        int start = FromQuestion(chat, shown[^WindowKeep]);
+        if (start <= chat.SummaryUpTo) return false;
         var part = new StringBuilder();
         for (int i = chat.SummaryUpTo; i < start; i++)
         {
