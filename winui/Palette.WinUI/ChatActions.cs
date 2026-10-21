@@ -49,7 +49,9 @@ public sealed class ActionBlock
 
     /// <summary>Shown word for word on the card (a web search's query: what leaves the PC).</summary>
     public string Detail { get; init; } = "";
-    /// <summary>Small print on the card, before its keys.</summary>
+    /// <summary>What is being done once allowed ("Moving 3 files…"), on the line that takes the card's place.</summary>
+    public string Working { get; init; } = "";
+    /// <summary>Small print on the card, under what it is about.</summary>
     public string Note { get; init; } = "";
     /// <summary>The card offers "Allow for this chat" besides "Allow once"; <see cref="Always"/> says which was chosen.</summary>
     public bool OfferAlways { get; init; }
@@ -119,6 +121,8 @@ public sealed partial class MainWindow
             }
             bool allow = await block.Answer.Task;
             if (!allow) block.Set("denied", block.Kind == "web" ? "You declined: nothing was sent" : "You declined: nothing was changed");
+            // Allowed: the card goes at once, for a line saying what is being done until it is.
+            else block.Set("working", block.Working.Length > 0 ? block.Working : "Working on it…");
             return allow;
         }
         finally
@@ -332,7 +336,7 @@ public sealed partial class MainWindow
         bool make = !Directory.Exists(folder);
         var block = new ActionBlock
         {
-            Kind = "move", Paths = paths,
+            Kind = "move", Paths = paths, Working = $"Moving {Files(paths.Count)}…",
             Question = make ? $"Make the folder {ActionLog.Show(folder)} and move {Files(paths.Count)} into it?"
                 : $"Move {Files(paths.Count)} to {ActionLog.Show(folder)}?",
         };
@@ -385,7 +389,7 @@ public sealed partial class MainWindow
         if (dest.Equals(p, StringComparison.Ordinal)) return ("It already has that name.", null, null);
         if (ActionLog.Exists(dest) && !dest.Equals(p, StringComparison.OrdinalIgnoreCase)) return ($"Not renamed: there is already a {newName} in that folder.", null, null);
 
-        var block = new ActionBlock { Kind = "rename", Paths = new() { p }, Question = $"Rename {Path.GetFileName(p)} to {newName}?" };
+        var block = new ActionBlock { Kind = "rename", Paths = new() { p }, Question = $"Rename {Path.GetFileName(p)} to {newName}?", Working = "Renaming it…" };
         if (!await AskFirst(block, ct)) return ("The user declined: the name was not changed.", block, null);
         try
         {
@@ -415,7 +419,10 @@ public sealed partial class MainWindow
             if (ActionLog.Forbidden(p) is { } no) return ($"Nothing recycled: {Path.GetFileName(p)} is in {no}.", null, null);
             if (!paths.Contains(p, StringComparer.OrdinalIgnoreCase)) paths.Add(p);
         }
-        var block = new ActionBlock { Kind = "recycle", Paths = paths, Question = $"Put {Files(paths.Count)} in the Recycle Bin?" };
+        var block = new ActionBlock
+        {
+            Kind = "recycle", Paths = paths, Question = $"Put {Files(paths.Count)} in the Recycle Bin?", Working = $"Putting {Files(paths.Count)} in the Recycle Bin…",
+        };
         if (!await AskFirst(block, ct)) return ("The user declined: nothing was recycled.", block, null);
         var done = await Task.Run(() => ActionLog.Recycle(paths));
         if (done.Count == 0)
@@ -451,20 +458,69 @@ public sealed partial class MainWindow
     private FrameworkElement ActionView(ActionBlock block)
     {
         var host = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
+        string drawn = block.State;
         void Draw()
         {
-            host.Content = block.State == "asking" ? AskCard(block) : ActionLine(block);
+            if (block.State == drawn && block.State != "working") return;
+            drawn = block.State;
+            var next = block.State == "asking" ? AskCard(block) : ActionLine(block);
+            // The card gives way to its line at once, which fades in as the card's room closes.
+            next.Opacity = 0;
+            host.Content = next;
+            FadeIn(next);
             if (_chat is { } c) DispatcherQueue.TryEnqueue(() => RenderChat(c));
         }
         block.Changed += () => DispatcherQueue.TryEnqueue(Draw);
         host.Content = block.State == "asking" ? AskCard(block) : ActionLine(block);
+        if (block.State == "asking")
+        {
+            // The card has just come: bring it into view once it is laid out, wherever the reading was.
+            host.Opacity = 0;
+            host.Loaded += (_, _) =>
+            {
+                FadeIn(host);
+                _glideToEnd = true;
+                if (_chat is { } c) RenderChat(c);
+            };
+        }
         return host;
     }
 
+    private static void FadeIn(UIElement e)
+    {
+        var a = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            From = 0, To = 1, Duration = TimeSpan.FromMilliseconds(180),
+            EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut },
+        };
+        var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(a, e);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(a, "Opacity");
+        sb.Children.Add(a);
+        sb.Begin();
+    }
+
+    /// <summary>
+    /// The card that asks first, as the bubble's card: a small header (whose wish it is), the question,
+    /// what it is about (the files as links, or the query word for word in a soft box), one line of small
+    /// print, and the choices on the right: Deny, quiet; Allow (once), the accent. Enter allows, Esc stops.
+    /// </summary>
     private FrameworkElement AskCard(ActionBlock block)
     {
-        var panel = new StackPanel { Spacing = 8, Padding = new Thickness(12, 10, 12, 10) };
-        panel.Children.Add(new TextBlock { Text = block.Question, FontSize = 14, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        var panel = new StackPanel { Spacing = 10, Padding = new Thickness(16, 12, 14, 12) };
+        bool web = block.Kind == "web";
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        head.Children.Add(new FontIcon
+        {
+            Glyph = web ? "" : "", FontSize = 13, Foreground = Res("AccentTextFillColorPrimaryBrush"), VerticalAlignment = VerticalAlignment.Center,
+        });
+        head.Children.Add(new TextBlock
+        {
+            Text = web ? "Palette wants to use the web" : "Palette wants to change your files", FontSize = 12,
+            Foreground = Res("TextFillColorSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center,
+        });
+        panel.Children.Add(head);
+        panel.Children.Add(new TextBlock { Text = block.Question, FontSize = 15, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, -2, 0, 0) });
         if (block.Paths.Count > 0)
         {
             var files = new StackPanel { Spacing = 5 };
@@ -484,45 +540,47 @@ public sealed partial class MainWindow
             // What leaves the PC, word for word.
             panel.Children.Add(new Border
             {
-                Background = Res("SubtleFillColorSecondaryBrush"), BorderBrush = Res("CardStrokeColorDefaultBrush"), BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 6, 10, 7),
+                Background = Res("SubtleFillColorSecondaryBrush"), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 8, 12, 9),
                 Child = new TextBlock { Text = block.Detail, FontSize = 13, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
             });
         }
-        string hint = block.OfferAlways ? "Enter allows once · Esc stops" : "Enter allows · Esc stops";
+        string note = block.Note.Length > 0 ? block.Note
+            : block.Kind == "recycle" ? "They go to the Recycle Bin, and you can undo it afterwards." : "You can undo it afterwards.";
         panel.Children.Add(new TextBlock
         {
-            Text = block.Note.Length > 0 ? $"{block.Note} {hint}." : hint, FontSize = 11, TextWrapping = TextWrapping.Wrap,
-            Foreground = Res("TextFillColorTertiaryBrush"),
+            Text = note, FontSize = 12, LineHeight = 17, TextWrapping = TextWrapping.Wrap, Foreground = Res("TextFillColorTertiaryBrush"), Margin = new Thickness(0, -2, 0, 0),
         });
-        var row = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 2, 0, 0) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var deny = new Button { Content = "Deny", MinWidth = 72 };
-        deny.Click += (_, _) => block.Decide(false);
-        Grid.SetColumn(deny, 1);
-        row.Children.Add(deny);
-        if (block.OfferAlways)
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 2, 0, 0) };
+        Button Choice(string text, Action click, string? keys = null)
         {
-            var always = new Button { Content = "Allow for this chat" };
-            always.Click += (_, _) => block.Decide(true, always: true);
-            Grid.SetColumn(always, 2);
-            row.Children.Add(always);
+            var b = new Button { Content = text, Height = 32, Padding = new Thickness(14, 0, 14, 0), CornerRadius = new CornerRadius(6), FontSize = 13 };
+            b.Click += (_, _) => click();
+            if (keys != null) ToolTipService.SetToolTip(b, keys);
+            row.Children.Add(b);
+            return b;
         }
-        var allow = new Button { Content = block.OfferAlways ? "Allow once" : "Allow", MinWidth = 72, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
-        allow.Click += (_, _) => block.Decide(true);
-        Grid.SetColumn(allow, 3);
-        row.Children.Add(allow);
+        var deny = Choice("Deny", () => block.Decide(false), "Esc");
+        deny.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        deny.BorderThickness = new Thickness(0);
+        if (block.OfferAlways) Choice("Allow for this chat", () => block.Decide(true, always: true));
+        var allow = Choice(block.OfferAlways ? "Allow once" : "Allow", () => block.Decide(true), "Enter");
+        allow.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+        allow.FontWeight = FontWeights.SemiBold;
         panel.Children.Add(row);
-        var card = Card(panel, new Thickness(0));
-        card.BorderBrush = Res("AccentFillColorDefaultBrush");
-        return card;
+
+        return new Border
+        {
+            Background = Res("CardBackgroundFillColorDefaultBrush"), BorderBrush = Res("CardStrokeColorDefaultBrush"), BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 6, 0, 4), Child = panel,
+        };
     }
 
     private static FrameworkElement ActionLine(ActionBlock block)
     {
+        // Allowed and being done, or a search done: the step on the answer's rail already says it, so the card
+        // just leaves. (A file action comes back as its line, with Undo, once done.)
+        if (block.State == "working" || block.Kind == "web" && block.State == "done") return new Grid();
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 2, 0, 0) };
         string glyph = block.State switch { "done" => "", "undone" => "", "failed" => "", _ => "" };
         row.Children.Add(new FontIcon { Glyph = glyph, FontSize = 11, Foreground = Res("TextFillColorTertiaryBrush"), VerticalAlignment = VerticalAlignment.Center });

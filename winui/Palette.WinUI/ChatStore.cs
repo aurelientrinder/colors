@@ -201,8 +201,9 @@ internal static class ChatStore
                     "action" when b.Action is { } a => new ActionBlock
                     {
                         Kind = a.Kind, Question = a.Question, Paths = a.Paths, Record = a.Record,
-                        State = a.State == "asking" ? "stopped" : a.State,
-                        Message = a.State == "asking" ? "Not done: Palette closed before you answered" : a.Message,
+                        State = a.State is "asking" or "working" ? "stopped" : a.State,
+                        Message = a.State == "asking" ? "Not done: Palette closed before you answered"
+                            : a.State == "working" ? "Stopped: Palette closed while it was being done" : a.Message,
                     },
                     _ => null,
                 };

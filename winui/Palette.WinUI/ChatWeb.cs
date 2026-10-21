@@ -33,7 +33,8 @@ public sealed partial class MainWindow
             card = new ActionBlock
             {
                 Kind = "web", Question = "Search the web for this?", Detail = query, OfferAlways = true,
-                Note = "Only these words leave your PC: DuckDuckGo gets them, and the best pages are read. Nothing from your files or memory is sent.",
+                Note = "Only these words leave your PC. Nothing from your files, memory or this chat is sent.",
+                Working = $"Searching the web for “{query}”…",
             };
             if (!await AskFirst(card, ct))
                 return ("The user declined the web search: nothing was sent. Answer from what you know, saying it may be out of date, or say you can't tell.", card, null);
