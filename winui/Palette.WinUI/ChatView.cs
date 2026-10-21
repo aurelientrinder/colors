@@ -290,8 +290,12 @@ public sealed partial class MainWindow
                 bool remindersDone = answer.Rounds.Count > 0 && answer.Rounds[^1].Calls.Count > 0
                     && answer.Rounds[^1].Calls.All(c => Doing.Contains(c.Name));
                 string? turnNote = intro ? IntroNote : late && introduced && !afterTools ? WorkItOutNote : null;
-                string body = ChatBody(opened.System ?? "", chat, think: late && !remindersDone, tools: lastRound || remindersDone ? null : ToolsNow(opened.Tools, answer),
-                    requireTool: reminder && round == 0, thinkBudget: late && afterTools ? LateThinkBudget : 0, note: turnNote,
+                // The tools are offered on every turn, the same each time: the model's cache holds only while the
+                // start of the prompt does not change, and the tools are near the start (a turn without them, or
+                // with one left out, had it read the whole conversation again: ten seconds and more).
+                string? choice = lastRound || remindersDone ? "none" : reminder && round == 0 ? "required" : null;
+                string body = ChatBody(opened.System ?? "", chat, think: late && !remindersDone, tools: opened.Tools, toolChoice: choice,
+                    thinkBudget: late && afterTools ? LateThinkBudget : 0, note: turnNote,
                     maxTokens: intro ? 120 : null);
                 var calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct, late, stopAfterSentence: intro);
                 string said = answer.Text[answer.ReplyStart..];
@@ -330,7 +334,7 @@ public sealed partial class MainWindow
                     answer.Text = answer.Text[..answer.ReplyStart];
                     KeepAsStep(answer, FirstSentence(said));
                     RenderChat(chat);
-                    body = ChatBody(opened.System ?? "", chat, think: false, tools: opened.Tools, requireTool: true);
+                    body = ChatBody(opened.System ?? "", chat, think: false, tools: opened.Tools, toolChoice: "required");
                     calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct, late);
                 }
                 if (calls.Count == 0 || lastRound) break;
@@ -349,7 +353,10 @@ public sealed partial class MainWindow
                     RenderChat(chat);
                     long began = Environment.TickCount64;
                     _acting = (chat, answer);
-                    var (result, block, note) = await RunTool(call.Name, call.Arguments, ct);
+                    var found = call.Name == "find_files" ? FoundAlready(answer, call) : null;
+                    var (result, block, note) = found != null
+                        ? ("These files were already found for this question; answer from them, without searching again:\n" + found.Result, null, null)
+                        : await RunTool(call.Name, call.Arguments, ct);
                     if (ct.IsCancellationRequested) return;
                     call.Ms = Environment.TickCount64 - began;
                     call.Result = result;
@@ -568,27 +575,19 @@ public sealed partial class MainWindow
     private static bool Announces(string turn) => Announce.IsMatch(turn);
 
     /// <summary>
-    /// The tools to offer for the next turn of an answer: once a search has found the files, not find_files again (the
-    /// model would search the same thing with another kind, and the user would wait twice for one answer).
+    /// A find_files call of this answer that already found the files, when the model asks again (with another kind, the
+    /// same words): running it again would only make the user wait twice for one answer. Null for the first search.
     /// </summary>
-    private static string? ToolsNow(string? tools, ChatMsg answer)
-    {
-        bool found = answer.Rounds.Any(r => r.Calls.Any(c => c.Name == "find_files" && c.Done && c.Outcome.StartsWith("Found")));
-        if (!found || tools == null) return tools;
-        try
-        {
-            if (System.Text.Json.Nodes.JsonNode.Parse(tools) is not System.Text.Json.Nodes.JsonArray all) return tools;
-            foreach (var t in all.ToList())
-                if (t?["function"]?["name"]?.GetValue<string>() == "find_files") all.Remove(t);
-            return all.ToJsonString();
-        }
-        catch (System.Text.Json.JsonException) { return tools; }
-    }
+    private static ToolCall? FoundAlready(ChatMsg answer, ToolCall call) =>
+        answer.Rounds.SelectMany(r => r.Calls).FirstOrDefault(c => c != call && c.Name == "find_files" && c.Done && c.Outcome.StartsWith("Found"));
 
-    private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools, bool requireTool = false, int thinkBudget = 0,
+    private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools, string? toolChoice = null, int thinkBudget = 0,
         string? note = null, int? maxTokens = null)
     {
-        if (note != null) system += note;
+        // A note for this turn goes at the end of the message being answered (it is the last one sent while a note is
+        // given: notes come before any tool): in the system message it changed the start of the prompt, and the model
+        // read everything again instead of what it had read ahead.
+        var answering = chat.Messages.LastOrDefault(m => m.Role == "user");
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms))
         {
@@ -611,7 +610,8 @@ public sealed partial class MainWindow
             {
                 if (m.Role == "user")
                 {
-                    Message("user", m.Sent);
+                    Message("user", note != null && ReferenceEquals(m, answering)
+                        ? $"{m.Sent}\n\n(Palette's note for this reply, not the user's words: {note.Trim()})" : m.Sent);
                     continue;
                 }
                 foreach (var round in m.Rounds)
@@ -652,7 +652,7 @@ public sealed partial class MainWindow
             {
                 w.WritePropertyName("tools");
                 w.WriteRawValue(tools);
-                if (requireTool) w.WriteString("tool_choice", "required");
+                if (toolChoice != null) w.WriteString("tool_choice", toolChoice);
             }
             w.WriteBoolean("stream", true);
             w.WriteNumber("max_tokens", maxTokens ?? (think ? 2000 : 700));
