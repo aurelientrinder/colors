@@ -37,8 +37,7 @@ public sealed partial class MainWindow
         string[] candidates =
         {
             Path.Combine(AppContext.BaseDirectory, "sight.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Desktop", "random projects", "step viewer", "target", "release", "sight.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "palette", "sight.exe"),
         };
         return candidates.FirstOrDefault(File.Exists);
     }

@@ -129,6 +129,7 @@ pub fn zip(p: &Path) {
         .arg(&dest)
         .arg("-C")
         .arg(dir)
+        .arg("--")
         .arg(name)
         .creation_flags(NO_WINDOW)
         .output()
@@ -171,14 +172,39 @@ pub fn rename(p: &Path, new_name: &str) {
     }
 }
 
+/// Windows paths compared without regard to case (`c:\users\...\desktop` and `C:\Users\...\Desktop`
+/// are the same folder; Rust's `Path` compares folder names case-sensitively).
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+    let mut ac = a.components();
+    let mut bc = b.components();
+    loop {
+        match (ac.next(), bc.next()) {
+            (None, None) => return true,
+            (Some(x), Some(y)) if x.as_os_str().to_string_lossy().to_lowercase() == y.as_os_str().to_string_lossy().to_lowercase() => {}
+            _ => return false,
+        }
+    }
+}
+
+pub(crate) fn path_starts_with(path: &Path, base: &Path) -> bool {
+    let mut pc = path.components();
+    for b in base.components() {
+        let Some(p) = pc.next() else { return false };
+        if p.as_os_str().to_string_lossy().to_lowercase() != b.as_os_str().to_string_lossy().to_lowercase() {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn move_to(p: &Path, dir: &Path) {
     if !dir.is_dir() {
         return fail("That folder is gone");
     }
-    if dir.starts_with(p) {
+    if path_starts_with(dir, p) {
         return fail("Can't move a folder into itself");
     }
-    if p.parent() == Some(dir) {
+    if p.parent().is_some_and(|here| same_path(here, dir)) {
         return finish("It is already there", None);
     }
     let to = free_name(dir, &name_of(p));
@@ -237,7 +263,7 @@ pub fn destinations(item: &Path, favourites: &[PathBuf]) -> Vec<(PathBuf, String
     let here = item.parent().map(Path::to_path_buf);
     let mut out: Vec<(PathBuf, String)> = Vec::new();
     let mut add = |p: PathBuf, title: String| {
-        if Some(&p) != here.as_ref() && !p.starts_with(item) && p.is_dir() && !out.iter().any(|(o, _)| *o == p) {
+        if !here.as_ref().is_some_and(|h| same_path(&p, h)) && !path_starts_with(&p, item) && p.is_dir() && !out.iter().any(|(o, _)| same_path(o, &p)) {
             out.push((p, title));
         }
     };

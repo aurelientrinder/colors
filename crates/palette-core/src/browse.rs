@@ -48,7 +48,7 @@ fn split(q: &str) -> Option<(String, &str)> {
         dir
     };
     // "C:\a\\b": a doubled separator is no folder anyone means.
-    if dir[2..].contains("\\\\") {
+    if dir.get(2..).is_none_or(|s| s.contains("\\\\")) {
         return None;
     }
     Some((dir, filter))

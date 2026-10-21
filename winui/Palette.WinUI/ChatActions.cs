@@ -266,7 +266,7 @@ public sealed partial class MainWindow
                     Note = "It is a program or script: it can change anything you can.",
                 };
                 if (!await AskFirst(block, ct)) return ("The user declined: it was not run.", block, null);
-                DispatcherQueue.TryEnqueue(() => OpenFromChat(path, reveal: false));
+                DispatcherQueue.TryEnqueue(() => OpenFromChat(path, reveal: false, allowed: true));
                 block.Set("done", $"Ran {Path.GetFileName(path)}");
                 ActionLog.Add(new ActionRecord(ActionLog.NewId(), "open", $"Ran {Path.GetFileName(path)}", DateTime.Now, ChatId));
                 return ($"Started {Path.GetFileName(path)}.", block, null);
@@ -483,6 +483,7 @@ public sealed partial class MainWindow
     /// <summary>"Undo that": the latest thing done that can be undone (in this chat first).</summary>
     private (string, object?, string?) UndoTool()
     {
+        if (!_mayAct) return (OnlyAsked, null, null);
         if (ActionLog.LastUndoable(ChatId) is not { } r) return ("There is nothing to undo.", null, null);
         var (ok, message) = ActionLog.Undo(r);
         // The line under the answer that did it says so too.

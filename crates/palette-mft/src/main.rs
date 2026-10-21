@@ -198,11 +198,11 @@ fn dir_path(
             break;
         }
         match map.get(&cur) {
-            Some(r) => {
+            Some(r) if !chain.contains(&cur) && chain.len() < 256 => {
                 chain.push(cur);
                 cur = r.parent;
             }
-            None => {
+            _ => {
                 for c in chain {
                     memo.insert(c, None);
                 }

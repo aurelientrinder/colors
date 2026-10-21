@@ -265,7 +265,7 @@ fn gather(
     let timed = from != 0 || to != 0;
     let folder = if folder == "any" { "" } else { folder };
     let roots = own_folders(folder);
-    let in_folder = |p: &str| folder.is_empty() || roots.iter().any(|r| Path::new(p).starts_with(r));
+    let in_folder = |p: &str| folder.is_empty() || roots.iter().any(|r| crate::fileops::path_starts_with(Path::new(p), r));
 
     // path (lowercased) -> (path, opened, reasons)
     let mut found: HashMap<String, (String, i64, Vec<&'static str>)> = HashMap::new();

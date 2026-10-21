@@ -187,11 +187,15 @@ public sealed partial class MainWindow
     }
 
     /// <summary>A file clicked in the chat: open it (or show it in its folder), and get out of the way.</summary>
-    private void OpenFromChat(string path, bool reveal)
+    /// <summary>
+    /// Open a file the chat named, or show it in Explorer. A program or script is only shown, unless
+    /// <paramref name="allowed"/>: the user said yes to running it on the card that asked.
+    /// </summary>
+    private void OpenFromChat(string path, bool reveal, bool allowed = false)
     {
         try
         {
-            if (reveal) Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            if (reveal || (!allowed && ActionLog.IsRunnable(path))) Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
             else Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             HidePalette(restoreFocus: false);
         }

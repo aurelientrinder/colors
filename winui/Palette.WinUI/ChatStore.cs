@@ -141,8 +141,13 @@ internal static class ChatStore
     {
         try
         {
-            if (!File.Exists(PathOf(id))) return null;
-            var saved = JsonSerializer.Deserialize(File.ReadAllText(PathOf(id)), ChatJson.Default.SavedChat);
+            string raw;
+            lock (Gate)
+            {
+                if (!File.Exists(PathOf(id))) return null;
+                raw = File.ReadAllText(PathOf(id));
+            }
+            var saved = JsonSerializer.Deserialize(raw, ChatJson.Default.SavedChat);
             if (saved == null) return null;
             var chat = new ChatAnswer { Id = id, Title = saved.Title ?? "", Summary = saved.Summary ?? "", SummaryUpTo = saved.SummaryUpTo };
             chat.Messages.AddRange(Messages(saved));

@@ -166,7 +166,7 @@ internal static class ActionLog
     public static bool Exists(string p) => File.Exists(p) || Directory.Exists(p);
 
     /// <summary>A UNC or device path (\\server\share, //server, \\?\…) rather than one on a drive of this PC.</summary>
-    public static bool IsNetwork(string p) => p.StartsWith(@"\\", StringComparison.Ordinal) || p.StartsWith("//", StringComparison.Ordinal);
+    public static bool IsNetwork(string p) => p.Length >= 2 && (p[0] is '\\' or '/') && (p[1] is '\\' or '/');
 
     /// <summary>Extensions Windows runs rather than opens in an app: programs, scripts, installers, shortcuts.</summary>
     private static readonly HashSet<string> Runnable = new(StringComparer.OrdinalIgnoreCase)

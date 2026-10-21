@@ -293,6 +293,7 @@ public sealed partial class MainWindow
 
     private (string, object?, string?) SetReminderTool(string text, int? inMinutes, int? inSeconds, string time, string day)
     {
+        if (!_mayAct) return (OnlyAsked, null, null);
         if (text.Length == 0) return ("NOT SET: say what to remind the user of (text), and call set_reminder again.", null, null);
         string why = "";
         DateTime? at = inSeconds is > 0 and < 60 * 60 * 24 && inMinutes is null or 0
@@ -317,8 +318,9 @@ public sealed partial class MainWindow
         return (sb.ToString(), new ReminderBlock("list", all), null);
     }
 
-    private static (string, object?, string?) CancelReminderTool(string about)
+    private (string, object?, string?) CancelReminderTool(string about)
     {
+        if (!_mayAct) return (OnlyAsked, null, null);
         if (about.Length == 0) return ("Say which reminder to cancel (about).", null, null);
         var found = ReminderStore.Find(about);
         if (found.Count == 0)

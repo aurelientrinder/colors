@@ -869,6 +869,7 @@ pub fn serve(sh: Arc<Shared>) {
             }
             if now.saturating_sub(sh.activity.load(Ordering::Relaxed)) > EXIT_AFTER_SECS && sh.phase_is_idle() {
                 sh.docs.write().unwrap().flush();
+                let _ = std::fs::remove_file(sh.cfg.dir().join("current.txt"));
                 std::process::exit(0);
             }
         });
@@ -948,5 +949,6 @@ pub fn serve(sh: Arc<Shared>) {
         }
     }
     sh.stop.store(true, Ordering::Relaxed);
+    let _ = std::fs::remove_file(sh.cfg.dir().join("current.txt"));
     sh.docs.write().unwrap().flush();
 }

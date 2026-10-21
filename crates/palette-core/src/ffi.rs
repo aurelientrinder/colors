@@ -25,6 +25,9 @@ struct Engine {
     sem_gen: AtomicU64,
     /// (generation, hits) of the most recent search.
     last: Mutex<(u64, Vec<Hit>)>,
+    /// (generation, keys) of the hits the meaning search added to it: still marked related when the
+    /// list is sent again whole (a plan put first).
+    related: Mutex<(u64, std::collections::HashSet<String>)>,
     /// (generation, query) of the most recent search: what you typed to get the list you pick from.
     last_query: Mutex<(u64, String)>,
     gen: AtomicU64,
@@ -209,6 +212,7 @@ pub extern "C" fn pc_init() -> i32 {
             last_query: Mutex::new((0, String::new())),
             gen: AtomicU64::new(0),
             model_plan: Mutex::new(None),
+            related: Mutex::new((0, Default::default())),
         }
     });
     1
@@ -320,6 +324,7 @@ pub unsafe extern "C" fn pc_semantic(gen: u64, query: *const c_char) -> *mut c_c
     }
     let n = fresh.len();
     let new_hits: Vec<Hit> = fresh.into_iter().map(|(h, _)| h).collect();
+    *e.related.lock().unwrap() = (gen, new_hits.iter().map(Hit::key).collect());
 
     if !lead {
         let base = last.1.len();
@@ -404,7 +409,9 @@ pub unsafe extern "C" fn pc_plan(gen: u64, query: *const c_char) -> *mut c_char 
     }
     *e.model_plan.lock().unwrap() = Some((gen, q.to_string(), line, hit.title.clone()));
     last.1.insert(0, hit);
-    let json: Vec<HitJson> = last.1.iter().map(|h| hit_json(h, false, &pinned)).collect();
+    let related = e.related.lock().unwrap();
+    let is_related = |h: &Hit| related.0 == gen && related.1.contains(&h.key());
+    let json: Vec<HitJson> = last.1.iter().map(|h| hit_json(h, is_related(h), &pinned)).collect();
     let out = serde_json::to_string(&Appended { gen, base: 0, replace: true, hits: json })
         .unwrap_or_else(|_| format!("{{\"gen\":{gen},\"base\":0,\"hits\":[]}}"));
     into_c(out)
@@ -458,8 +465,9 @@ pub extern "C" fn pc_selection(wait_ms: i32) -> *mut c_char {
 
 /// Hit `index` of generation `gen`, if that generation is still the latest.
 fn hit_at(e: &Engine, gen: u64, index: i32) -> Option<Hit> {
+    let Ok(i) = usize::try_from(index) else { return None };
     let l = e.last.lock().unwrap();
-    if l.0 == gen { l.1.get(index.max(0) as usize).cloned() } else { None }
+    if l.0 == gen { l.1.get(i).cloned() } else { None }
 }
 
 /// Launch hit `index` of search generation `gen` (ignored if stale). `reveal != 0` shows a file in
@@ -470,7 +478,8 @@ pub extern "C" fn pc_launch(gen: u64, index: i32, reveal: i32) -> i32 {
     let Some(e) = ENGINE.get() else { return 0 };
     let hit: Option<Hit> = {
         let l = e.last.lock().unwrap();
-        if l.0 == gen { l.1.get(index.max(0) as usize).cloned() } else { None }
+        let Ok(i) = usize::try_from(index) else { return 0 };
+        if l.0 == gen { l.1.get(i).cloned() } else { None }
     };
     let Some(hit) = hit else { return 0 };
     if matches!(&hit.action, Action::Builtin(id) if id == home::ALL_APPS) {
@@ -659,7 +668,8 @@ pub unsafe extern "C" fn pc_icon(gen: u64, index: i32, buf: *mut u8) -> i32 {
     let Some(e) = ENGINE.get() else { return 0 };
     let hit: Option<Hit> = {
         let l = e.last.lock().unwrap();
-        if l.0 == gen { l.1.get(index.max(0) as usize).cloned() } else { None }
+        let Ok(i) = usize::try_from(index) else { return 0 };
+        if l.0 == gen { l.1.get(i).cloned() } else { None }
     };
     let Some(hit) = hit else { return 0 };
     match iconsrc::icon_bgra(&hit) {

@@ -209,7 +209,7 @@ public sealed partial class MainWindow
         if (done.Count == 1)
         {
             var f = done[0];
-            bool runnable = Runnable.Contains(f.Extension);
+            bool runnable = ActionLog.IsRunnable(f.FullName);
             RaiseNotice(new Notice($"download:{f.FullName}:{f.LastWriteTime.Ticks}", "download", f.Name, "downloaded",
                 "Downloaded · " + time, f.Name, $"In Downloads · {Size(f.Length)}" + (runnable ? " · a program, so it is only shown" : ""))
             {

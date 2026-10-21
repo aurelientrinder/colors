@@ -291,8 +291,15 @@ impl Client {
 
         let pending = self.pending.clone();
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
+            let mut lines = BufReader::new(stdout).lines();
+            while let Some(line) = lines.next().or_else(|| {
+                pending.lock().unwrap().clear();
+                None
+            }) {
+                let Ok(line) = line else {
+                    pending.lock().unwrap().clear();
+                    break;
+                };
                 if let Ok(r) = serde_json::from_str::<RawReply>(&line) {
                     if let Some(tx) = pending.lock().unwrap().remove(&r.id) {
                         let _ = tx.send(r);

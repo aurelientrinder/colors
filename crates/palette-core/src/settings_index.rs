@@ -240,8 +240,7 @@ fn split_command(line: &str) -> Option<(String, String)> {
         let (file, args) = rest.split_once('"')?;
         return Some((file.to_string(), args.trim().to_string()));
     }
-    let lower = line.to_lowercase();
-    let end = lower.find(".exe").map(|i| i + 4).unwrap_or_else(|| line.find(' ').unwrap_or(line.len()));
+    let end = line.as_bytes().windows(4).position(|w| w.eq_ignore_ascii_case(b".exe")).map(|i| i + 4).unwrap_or_else(|| line.find(' ').unwrap_or(line.len()));
     Some((line[..end].to_string(), line[end..].trim().to_string()))
 }
 
