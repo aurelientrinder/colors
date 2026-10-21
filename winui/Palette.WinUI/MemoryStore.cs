@@ -21,18 +21,27 @@ internal static class MemoryStore
     private static readonly object Gate = new();
     private static List<Memory>? _all;
 
+    /// <summary>The file's write time when it was last read or saved here: a different one means it was edited outside.</summary>
+    private static DateTime _stamp;
+
     private static string FilePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "palette", "memory.json");
 
+    private static DateTime Stamp() => File.Exists(FilePath) ? File.GetLastWriteTimeUtc(FilePath) : DateTime.MinValue;
+
+    /// <summary>Everything remembered, read again when the file changed on disk since it was last read or saved.</summary>
     private static List<Memory> All()
     {
-        if (_all != null) return _all;
+        var stamp = Stamp();
+        if (_all != null && stamp == _stamp) return _all;
         try
         {
-            if (File.Exists(FilePath)) _all = JsonSerializer.Deserialize(File.ReadAllText(FilePath), MemoryJson.Default.ListMemory);
+            _all = stamp == DateTime.MinValue ? new() : JsonSerializer.Deserialize(File.ReadAllText(FilePath), MemoryJson.Default.ListMemory);
+            _stamp = stamp;
         }
         catch (Exception ex)
         {
+            // Half written, or not valid JSON: keep what was known, and try again next time.
             App.Log("memory not loaded: " + ex.Message);
         }
         return _all ??= new();
@@ -52,6 +61,7 @@ internal static class MemoryStore
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
             File.WriteAllText(FilePath + ".tmp", json);
             File.Move(FilePath + ".tmp", FilePath, overwrite: true);
+            _stamp = Stamp();
         }
         catch (Exception ex)
         {

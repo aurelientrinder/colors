@@ -18,6 +18,18 @@ internal sealed class Settings
     /// <summary>The chat remembers what you tell it about yourself, across conversations (MemoryStore).</summary>
     public bool ChatMemory { get; set; } = true;
 
+    /// <summary>The bubble says when an event on the calendar is about to start (Watchers.cs).</summary>
+    public bool EventHeadsUp { get; set; } = true;
+
+    /// <summary>The bubble says when a download has landed in Downloads.</summary>
+    public bool DownloadNotices { get; set; } = true;
+
+    /// <summary>The bubble sums up the day the first time the PC is used in the morning.</summary>
+    public bool MorningBrief { get; set; } = true;
+
+    /// <summary>The day the morning brief last showed (yyyy-MM-dd): once a day, even across restarts.</summary>
+    public string? LastBrief { get; set; }
+
     /// <summary>The line of keys for the selected row, in the search card.</summary>
     public bool KeyHints { get; set; } = true;
 

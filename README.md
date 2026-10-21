@@ -243,6 +243,16 @@ back after. Reminders are kept in `%LOCALAPPDATA%\palette\reminders.json`. "Remi
 call of the model (a small model otherwise says it set one without doing it), and it names the day as a
 word ("friday", "next tuesday") that Palette turns into a date, which it got wrong by itself.
 
+**What Palette notices on its own.** The bubble also says three things nobody asked for, each with
+its own switch in Settings: an event on your calendar starting within ten minutes (with See today); a
+download that has landed in Downloads, once the browser has finished writing it (Open, or Show in
+folder; a program or script is only ever shown in its folder, never opened from the bubble; several at
+once make one notice); and the morning brief, the first time you use the PC between 5 and noon: the
+day's events and reminders, once a day. These only look, nothing is changed and nothing leaves the PC;
+only reminders and events chime. Each is said once, a download or event notice goes away by itself
+once it no longer matters, and the bubble holds everything back while a full-screen game, video or
+presentation is in front. The watchers are in `Watchers.cs`.
+
 ### Asking your documents
 
 A question that does not point at the screen is answered from your own files:

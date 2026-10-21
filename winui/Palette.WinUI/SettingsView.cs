@@ -34,6 +34,12 @@ public sealed partial class MainWindow
             new("gcal", "Add Google Calendar", _settings.CalendarFeeds.Count > 0
                 ? $"{_settings.CalendarFeeds.Count} connected. Copy another secret iCal address, then press Enter"
                 : "Copy your calendar's secret iCal address (Google Calendar › Settings › Integrate calendar), then press Enter"),
+            new("eventheadsup", "Heads-up before events", "The bubble above the taskbar says when an event starts in 10 minutes",
+                () => _settings.EventHeadsUp, on => { _settings.EventHeadsUp = on; _settings.Save(); }),
+            new("downloadnotices", "Say when a download lands", "The bubble offers to open it or show it in its folder",
+                () => _settings.DownloadNotices, on => { _settings.DownloadNotices = on; _settings.Save(); WatchDownloads(on); }),
+            new("morningbrief", "Morning brief", "The first time you use the PC in the morning: today's events and reminders",
+                () => _settings.MorningBrief, on => { _settings.MorningBrief = on; _settings.Save(); }),
             new("chatmemory", "Chat memory", "The chat remembers what you tell it about yourself, on this PC only",
                 () => _settings.ChatMemory, on => { _settings.ChatMemory = on; _settings.Save(); }),
             new("clipboard", "Remember what is copied", "Find it by typing clip. Kept in memory only",

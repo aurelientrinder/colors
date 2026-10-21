@@ -17,11 +17,35 @@ using WinRT.Interop;
 
 namespace Palette;
 
+/// <summary>What the user did with a notice in the bubble.</summary>
+internal enum NoticeChoice { Primary, Secondary, Link, Dismiss }
+
 /// <summary>
-/// The bubble: a reminder that has come due, centred just above the taskbar. It comes in as a small
-/// pill (a breathing dot, what it is about, its time) that glows a few times, with a soft chime, and
-/// then waits; it never takes the keyboard from what the user is doing. Under the pointer (or tapped)
-/// it opens into a card: Open in chat, Snooze 10 min, Done. It stays until one of those, or its ×.
+/// One thing for the bubble to say (a reminder due, an event about to start, a download landed, the
+/// morning brief): its pill (<see cref="Pill"/>, <see cref="PillTime"/>), and its card (<see cref="Head"/>,
+/// <see cref="Title"/>, <see cref="Body"/>, a link and up to two buttons; a null label leaves it out).
+/// <see cref="Key"/> tells notices apart: one already announced is not announced again.
+/// </summary>
+internal sealed record Notice(string Key, string Kind, string Pill, string PillTime, string Head, string Title, string Body)
+{
+    public string? Link { get; init; }
+    public string? Secondary { get; init; }
+    public string Primary { get; init; } = "OK";
+    /// <summary>Chime when it comes in (a reminder, an event); otherwise it only glows.</summary>
+    public bool Chime { get; init; } = true;
+    /// <summary>Gone by itself after this (an event that has started, a download long landed).</summary>
+    public DateTime? Expires { get; init; }
+    public Reminder? Reminder { get; init; }
+    public string? Path { get; init; }
+}
+
+/// <summary>
+/// The bubble, centred just above the taskbar: a reminder that has come due, or something a watcher
+/// noticed (Watchers.cs). It comes in as a small pill (a breathing dot, what it is about, its time)
+/// that glows a few times, with a soft chime for what has a time, and then waits; it never takes the
+/// keyboard from what the user is doing. Under the pointer (or tapped) it opens into a card with the
+/// notice's link and buttons (for a reminder: Open in chat, Snooze 10 min, Done). It stays until one
+/// of those, or its ×.
 ///
 /// The window is see-through like the palette's (Chrome.cs): the card and its shadow are drawn in it,
 /// and its region keeps clicks beside the card for the windows below.
@@ -54,24 +78,23 @@ internal sealed class Bubble : Window
     private readonly Button _openClose = CloseButton();
     private readonly TextBlock _title = new() { FontSize = 15, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, LineHeight = 20 };
     private readonly TextBlock _from = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly HyperlinkButton _toChat = new() { Content = "Open in chat", FontSize = 12, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
-    private readonly Button _snooze = new() { Content = "Snooze 10 min", FontSize = 13, Height = 32, Padding = new Thickness(14, 0, 14, 0), CornerRadius = new CornerRadius(6) };
-    private readonly Button _done = new() { Content = "Done", FontSize = 13, FontWeight = FontWeights.SemiBold, Height = 32, Padding = new Thickness(18, 0, 18, 0), CornerRadius = new CornerRadius(6) };
-    private BellIcon? _bell;
+    private readonly HyperlinkButton _link = new() { FontSize = 12, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
+    private readonly Button _second = new() { FontSize = 13, Height = 32, Padding = new Thickness(14, 0, 14, 0), CornerRadius = new CornerRadius(6) };
+    private readonly Button _first = new() { FontSize = 13, FontWeight = FontWeights.SemiBold, Height = 32, Padding = new Thickness(18, 0, 18, 0), CornerRadius = new CornerRadius(6) };
 
     private readonly Storyboard _pulse = new(), _glowing = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _closeLater;
 
-    private Reminder? _reminder;
+    private Notice? _notice;
     private bool _expanded, _showing;
     private double _t = 1, _fromW, _fromH, _toW, _toH;   // the card's motion between pill and card
     private long _motionStart;
 
-    /// <summary>The reminder on show was done (Done or ×), to be snoozed, or to be opened in its chat.</summary>
-    public event Action<Reminder>? Done, Snoozed, OpenChat;
+    /// <summary>The user chose something for the notice on show.</summary>
+    public event Action<Notice, NoticeChoice>? Chose;
 
     public bool Showing => _showing;
-    public Reminder? Current => _reminder;
+    public Notice? Current => _notice;
 
     public Bubble()
     {
@@ -157,11 +180,11 @@ internal sealed class Bubble : Window
         actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        actions.Children.Add(_toChat);
-        Grid.SetColumn(_snooze, 1);
-        actions.Children.Add(_snooze);
-        Grid.SetColumn(_done, 2);
-        actions.Children.Add(_done);
+        actions.Children.Add(_link);
+        Grid.SetColumn(_second, 1);
+        actions.Children.Add(_second);
+        Grid.SetColumn(_first, 2);
+        actions.Children.Add(_first);
         _open.Children.Add(actions);
         _open.HorizontalAlignment = HorizontalAlignment.Left;
         _open.VerticalAlignment = VerticalAlignment.Top;
@@ -189,11 +212,11 @@ internal sealed class Bubble : Window
         _card.PointerEntered += (_, _) => { _closeLater.Stop(); Expand(true); };
         _card.PointerExited += (_, _) => { if (_expanded) _closeLater.Start(); };
         _pill.Tapped += (_, _) => Expand(true);
-        _pillClose.Click += (_, _) => Finish(Done);
-        _openClose.Click += (_, _) => Finish(Done);
-        _done.Click += (_, _) => Finish(Done);
-        _snooze.Click += (_, _) => Finish(Snoozed);
-        _toChat.Click += (_, _) => { if (_reminder is { } r) OpenChat?.Invoke(r); };
+        _pillClose.Click += (_, _) => Choose(NoticeChoice.Dismiss);
+        _openClose.Click += (_, _) => Choose(NoticeChoice.Dismiss);
+        _first.Click += (_, _) => Choose(NoticeChoice.Primary);
+        _second.Click += (_, _) => Choose(NoticeChoice.Secondary);
+        _link.Click += (_, _) => Choose(NoticeChoice.Link);
 
         // The dot breathes out a ring, for as long as the bubble shows.
         AddTo(_pulse, _ring, "(UIElement.RenderTransform).(ScaleTransform.ScaleX)", (0, 1), (1.6, 2.4), (2.2, 2.4));
@@ -239,19 +262,36 @@ internal sealed class Bubble : Window
         _pillTime.Foreground = muted;
         _head.Foreground = muted;
         _from.Foreground = body;
-        _toChat.Foreground = accent;
+        _link.Foreground = accent;
         foreach (var close in new[] { _pillClose, _openClose })
         {
             close.Foreground = muted;
             Tint(close, B(dark ? 0x0FFFFFFF : 0x0A000000), B(dark ? 0x1FFFFFFF : 0x14000000), B(dark ? 0x14FFFFFF : 0x0F000000), muted);
         }
-        Tint(_snooze, B(dark ? 0x0FFFFFFF : 0xFFF5F7FA), B(dark ? 0x1AFFFFFF : 0xFFEBEFF4), B(dark ? 0x0AFFFFFF : 0xFFE1E6EC), text);
-        _snooze.BorderBrush = B(dark ? 0x1AFFFFFF : 0x1A000000);
-        _snooze.BorderThickness = new Thickness(1);
-        Tint(_done, accent, B(dark ? 0xE660CDFF : 0xE6005FB8), B(dark ? 0xCC60CDFF : 0xCC005FB8), B(dark ? 0xFF000000 : 0xFFFFFFFF));
-        _done.BorderThickness = new Thickness(0);
-        if (_bellSlot != null) _bellSlot.Child = _bell = new BellIcon(16, accent);
+        Tint(_second, B(dark ? 0x0FFFFFFF : 0xFFF5F7FA), B(dark ? 0x1AFFFFFF : 0xFFEBEFF4), B(dark ? 0x0AFFFFFF : 0xFFE1E6EC), text);
+        _second.BorderBrush = B(dark ? 0x1AFFFFFF : 0x1A000000);
+        _second.BorderThickness = new Thickness(1);
+        Tint(_first, accent, B(dark ? 0xE660CDFF : 0xE6005FB8), B(dark ? 0xCC60CDFF : 0xCC005FB8), B(dark ? 0xFF000000 : 0xFFFFFFFF));
+        _first.BorderThickness = new Thickness(0);
+        _accent = accent;
+        PutIcon();
         DrawShadows(dark, accent.Color);
+    }
+
+    private SolidColorBrush? _accent;
+
+    /// <summary>The card's mark: a bell for a reminder, else the kind's icon.</summary>
+    private void PutIcon()
+    {
+        if (_bellSlot == null || _accent == null) return;
+        string? glyph = _notice?.Kind switch
+        {
+            "event" => "",      // calendar
+            "download" => "",   // download
+            "brief" => "",      // sun
+            _ => null,
+        };
+        _bellSlot.Child = glyph == null ? new BellIcon(16, _accent) : new FontIcon { Glyph = glyph, FontSize = 14, Foreground = _accent };
     }
 
     /// <summary>A button's colours at rest, under the pointer and pressed (the template's resources, so hover keeps them).</summary>
@@ -323,22 +363,25 @@ internal sealed class Bubble : Window
     // ------------------------------------------------------------------ showing a reminder
 
     /// <summary>
-    /// Show <paramref name="r"/> as a pill (<paramref name="more"/>: how many others are due after it).
-    /// <paramref name="announce"/>: it has just come due, so it glows and chimes; otherwise (back after the
-    /// palette closed) it just reappears.
+    /// Show <paramref name="n"/> as a pill (<paramref name="more"/>: how many others wait after it).
+    /// <paramref name="announce"/>: it is new, so it glows (and chimes, if it has a time); otherwise (back
+    /// after the palette closed) it just reappears.
     /// </summary>
-    public void Show(Reminder r, int more, bool announce, string? chatTitle)
+    public void Show(Notice n, int more, bool announce)
     {
-        _reminder = r;
-        bool missed = DateTime.Now - r.At > TimeSpan.FromMinutes(2);
-        string time = r.At.ToString("t", CultureInfo.CurrentCulture);
-        _pillText.Text = r.Text;
-        _pillTime.Text = (missed ? (r.At.Date == DateTime.Today ? $"missed, {time}" : "missed") : time) + (more > 0 ? $" · +{more}" : "");
-        _head.Text = (missed ? "Missed reminder · " + ReminderStore.Describe(r.At) : "Reminder · " + time) + (more > 0 ? $" · {more} more" : "");
-        _title.Text = r.Text;
-        _from.Text = chatTitle is { Length: > 0 } t ? $"You asked for it in “{t}”, {SetWhen(r.Created)}." : $"Set {SetWhen(r.Created)}.";
-        _toChat.Visibility = r.ChatId != null ? Visibility.Visible : Visibility.Collapsed;
-        _snooze.Visibility = Visibility.Visible;
+        _notice = n;
+        _pillText.Text = n.Pill;
+        _pillTime.Text = n.PillTime + (more > 0 ? $" · +{more}" : "");
+        _head.Text = n.Head + (more > 0 ? $" · {more} more" : "");
+        _title.Text = n.Title;
+        _from.Text = n.Body;
+        _from.Visibility = n.Body.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _link.Content = n.Link;
+        _link.Visibility = n.Link != null ? Visibility.Visible : Visibility.Collapsed;
+        _second.Content = n.Secondary;
+        _second.Visibility = n.Secondary != null ? Visibility.Visible : Visibility.Collapsed;
+        _first.Content = n.Primary;
+        PutIcon();
 
         bool wasShowing = _showing;
         _showing = true;
@@ -364,16 +407,16 @@ internal sealed class Bubble : Window
         {
             _glowing.Stop();
             _glowing.Begin();
-            Chime();
+            if (n.Chime) Chime();
         }
     }
 
-    /// <summary>Put the bubble away (its reminder is done, or the palette is opening where it sits).</summary>
+    /// <summary>Put the bubble away (nothing left to say, or the palette is opening where it sits).</summary>
     public void HideBubble()
     {
         if (!_showing) return;
         _showing = false;
-        _reminder = null;
+        _notice = null;
         _closeLater.Stop();
         _pulse.Stop();
         _glowing.Stop();
@@ -381,17 +424,9 @@ internal sealed class Bubble : Window
         _aw.Hide();
     }
 
-    private static string SetWhen(DateTime created)
+    private void Choose(NoticeChoice choice)
     {
-        if (created.Date == DateTime.Today) return "today at " + created.ToString("t", CultureInfo.CurrentCulture);
-        if (created.Date == DateTime.Today.AddDays(-1)) return "yesterday";
-        return "on " + created.ToString("dddd d MMMM", CultureInfo.CurrentCulture);
-    }
-
-    private void Finish(Action<Reminder>? what)
-    {
-        if (_reminder is not { } r) return;
-        what?.Invoke(r);
+        if (_notice is { } n) Chose?.Invoke(n, choice);
     }
 
     private (double w, double h) PillSize()

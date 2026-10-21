@@ -743,7 +743,7 @@ public sealed partial class MainWindow : Window
         _hideClock.Stop();
         if (_visible) return;   // reopened in the meantime
         _aw.Hide();
-        CheckReminders();   // a reminder that came due while the palette was open shows now
+        CheckBubble();   // a reminder that came due while the palette was open shows now
     }
 
     private void OnActivated(object sender, WindowActivatedEventArgs e)
