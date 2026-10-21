@@ -240,7 +240,8 @@ public static class Native
         [property: JsonPropertyName("folder")] string Folder,
         [property: JsonPropertyName("modified")] long Modified,
         [property: JsonPropertyName("opened")] long Opened,
-        [property: JsonPropertyName("why")] string Why);
+        [property: JsonPropertyName("why")] string Why,
+        [property: JsonPropertyName("about")] string About = "");
 
     /// <summary>Excerpts of your documents for a chat message (empty text: none).</summary>
     public sealed record ChatExcerpts(

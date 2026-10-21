@@ -290,7 +290,7 @@ public sealed partial class MainWindow
                 bool remindersDone = answer.Rounds.Count > 0 && answer.Rounds[^1].Calls.Count > 0
                     && answer.Rounds[^1].Calls.All(c => Doing.Contains(c.Name));
                 string? turnNote = intro ? IntroNote : late && introduced && !afterTools ? WorkItOutNote : null;
-                string body = ChatBody(opened.System ?? "", chat, think: late && !remindersDone, tools: lastRound || remindersDone ? null : opened.Tools,
+                string body = ChatBody(opened.System ?? "", chat, think: late && !remindersDone, tools: lastRound || remindersDone ? null : ToolsNow(opened.Tools, answer),
                     requireTool: reminder && round == 0, thinkBudget: late && afterTools ? LateThinkBudget : 0, note: turnNote,
                     maxTokens: intro ? 120 : null);
                 var calls = await StreamTurn(chat, answer, opened.Port, body, () => thinkStart, t => thinkStart = t, ct, late, stopAfterSentence: intro);
@@ -309,7 +309,18 @@ public sealed partial class MainWindow
                     RenderChat(chat);
                     continue;
                 }
-                if (calls.Count == 0 && !lastRound && !retried && AnnouncesLookup(said))
+                if (calls.Count == 0 && afterTools && Announces(said))
+                {
+                    // After its tools, "I'll search again for…" heads an answer that needs no new search (forcing one made
+                    // it search the same thing twice): the sentence goes, the answer after it stays.
+                    var announced = Regex.Match(said, @"^\s*[^.!?\n]*[.!?]\s*");
+                    if (announced.Success && said[announced.Length..].Trim().Length > 0)
+                    {
+                        answer.Text = answer.Text[..answer.ReplyStart] + said[announced.Length..];
+                        RenderChat(chat);
+                    }
+                }
+                else if (calls.Count == 0 && !lastRound && !retried && AnnouncesLookup(said))
                 {
                     // It said it would look in the user's things ("I'll look through your files…") and answered
                     // without looking: its sentence stays, the rest is dropped, and it is asked again with a
@@ -555,6 +566,24 @@ public sealed partial class MainWindow
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool Announces(string turn) => Announce.IsMatch(turn);
+
+    /// <summary>
+    /// The tools to offer for the next turn of an answer: once a search has found the files, not find_files again (the
+    /// model would search the same thing with another kind, and the user would wait twice for one answer).
+    /// </summary>
+    private static string? ToolsNow(string? tools, ChatMsg answer)
+    {
+        bool found = answer.Rounds.Any(r => r.Calls.Any(c => c.Name == "find_files" && c.Done && c.Outcome.StartsWith("Found")));
+        if (!found || tools == null) return tools;
+        try
+        {
+            if (System.Text.Json.Nodes.JsonNode.Parse(tools) is not System.Text.Json.Nodes.JsonArray all) return tools;
+            foreach (var t in all.ToList())
+                if (t?["function"]?["name"]?.GetValue<string>() == "find_files") all.Remove(t);
+            return all.ToJsonString();
+        }
+        catch (System.Text.Json.JsonException) { return tools; }
+    }
 
     private static string ChatBody(string system, ChatAnswer chat, bool think, string? tools, bool requireTool = false, int thinkBudget = 0,
         string? note = null, int? maxTokens = null)

@@ -28,8 +28,9 @@ public sealed class ToolRound
     public List<ToolCall> Calls { get; } = new();
 }
 
-/// <summary>Files a tool found, shown as clickable rows under the answer.</summary>
-public sealed record FilesBlock(List<Native.FileFound> Files);
+/// <summary>Files a tool found, each name a link in the answer: the first <paramref name="Fits"/> fit the question
+/// (all, when -1), the rest were looked at and judged not to.</summary>
+public sealed record FilesBlock(List<Native.FileFound> Files, int Fits = -1);
 
 /// <summary>The weather a tool fetched, shown as a small card.</summary>
 public sealed record WeatherBlock(WebAnswers.Weather Weather);
@@ -85,9 +86,12 @@ public sealed partial class MainWindow
                 string what = kind switch
                 {
                     "image" => "your pictures", "video" => "your videos", "document" => "your documents", "spreadsheet" => "your spreadsheets",
-                    "presentation" => "your presentations", "code" => "your code", "audio" => "your music", "3d" => "your 3D models", _ => "your files",
+                    "presentation" => "your presentations", "code" => "your code", "audio" => "your music", "3d" => "your 3D models", "app" => "your apps", _ => "your files",
                 };
-                return $"Looking through {what}{When(Arg("period"))}" + (q.Length > 0 ? $" for “{q}”" : "");
+                string fo = Arg("folder").ToLowerInvariant();
+                string where = fo is "downloads" or "desktop" or "documents" or "pictures" or "videos" or "music"
+                    ? $" in {char.ToUpperInvariant(fo[0])}{fo[1..]}" : "";
+                return $"Looking through {what}{where}{When(Arg("period"))}" + (q.Length > 0 ? $" for “{q}”" : "");
             case "search_documents": return "Reading your documents";
             case "get_weather": return Arg("place") is { Length: > 0 } place ? $"Checking the weather in {place}" : "Checking the weather";
             case "get_calendar":
@@ -116,7 +120,7 @@ public sealed partial class MainWindow
     /// <summary>What came of a tool, for its line once done: "Found 6 files", "Nothing on the calendar".</summary>
     private static string ToolOutcome(string name, string result, object? block) => (name, block) switch
     {
-        (_, FilesBlock f) => f.Files.Count == 1 ? "Found 1 file" : $"Found {f.Files.Count} files",
+        (_, FilesBlock f) => (f.Fits < 0 ? f.Files.Count : f.Fits) switch { 0 => "None of them fits", 1 => "Found 1 file", var n => $"Found {n} files" },
         (_, SourcesBlock s) => s.Docs.Count == 1 ? "Read 1 document" : $"Read {s.Docs.Count} documents",
         (_, WeatherBlock w) => $"Checked the weather in {w.Weather.Place}",
         (_, EventsBlock e) => e.Events.Count == 0 ? "Nothing on the calendar" : e.Events.Count == 1 ? "Found 1 event" : $"Found {e.Events.Count} events",
@@ -163,7 +167,7 @@ public sealed partial class MainWindow
         {
             return name switch
             {
-                "find_files" => await FindFilesTool(Arg("query"), Arg("period"), Arg("kind")),
+                "find_files" => await FindFilesTool(Arg("query"), Arg("period"), Arg("kind"), Arg("folder"), ct),
                 "search_documents" => await SearchDocumentsTool(Arg("question")),
                 "get_weather" => await WeatherTool(Arg("place"), ct),
                 "get_calendar" => await CalendarTool(Arg("period"), Arg("date"), ct),
@@ -211,7 +215,10 @@ public sealed partial class MainWindow
         return (new DateTimeOffset(p.a).ToUnixTimeSeconds(), new DateTimeOffset(p.b).ToUnixTimeSeconds());
     }
 
-    private static async Task<(string, object?, string?)> FindFilesTool(string query, string period, string kind)
+    /// <summary>Candidates the engine gathers (tools.rs), more than are shown: the model ranks them (FileRank.cs).</summary>
+    private const int FilePool = 16;
+
+    private async Task<(string, object?, string?)> FindFilesTool(string query, string period, string kind, string folder, CancellationToken ct)
     {
         var (from, to) = Period(period);
         using var ms = new MemoryStream();
@@ -222,21 +229,50 @@ public sealed partial class MainWindow
             w.WriteNumber("from", from);
             w.WriteNumber("to", to);
             w.WriteString("kind", kind.Length > 0 ? kind : "any");
-            w.WriteNumber("limit", 6);
+            w.WriteString("folder", folder);
+            w.WriteNumber("limit", FilePool);
             w.WriteEndObject();
         }
         string request = Encoding.UTF8.GetString(ms.ToArray());
-        var files = await Task.Run(() => Native.FindFiles(request));
-        if (files.Count == 0) return ("No file matches.", null, null);
-        var sb = new StringBuilder($"{files.Count} file(s), best first (name the ones you mean, with their extension: each name becomes a link):\n");
-        for (int i = 0; i < files.Count; i++)
+        var pool = await Task.Run(() => Native.FindFiles(request));
+        if (pool.Count == 0)
+            return (query.Length > 0
+                ? "No file matches. Try again with other guesses (other names it may have, what it does), another period, or none."
+                : "No file matches.", null, null);
+
+        string Line(Native.FileFound f)
         {
-            var f = files[i];
-            sb.Append($"{i + 1}. {f.Name} in {f.Folder}; changed {When(f.Modified)}");
-            if (f.Opened > 0) sb.Append($", opened {When(f.Opened)}");
-            sb.Append('\n');
+            var l = new StringBuilder($"{f.Name} in {ShortFolder(f.Folder)}; changed {When(f.Modified)}");
+            if (f.Opened > 0) l.Append($", opened {When(f.Opened)}");
+            if (f.About.Length > 0) l.Append("; ").Append(f.About);
+            return l.ToString();
         }
-        return (sb.ToString(), new FilesBlock(files), null);
+        const string Links = "name the ones you mean, with their extension: each name becomes a link";
+        var ranked = pool.Count > 1 ? await RankFiles(pool, query, period, kind, folder, ct) : null;
+        if (ranked == null)
+        {
+            // Not ranked (the model could not be asked): the engine's own order, its first few.
+            var top = pool.Take(6).ToList();
+            var sb = new StringBuilder($"{top.Count} file(s), best guess first ({Links}):\n");
+            for (int i = 0; i < top.Count; i++) sb.Append($"{i + 1}. {Line(top[i])}\n");
+            return (sb.ToString(), new FilesBlock(top), null);
+        }
+        var fits = ranked.Select(r => pool[r.index]).ToList();
+        var others = pool.Where(f => !fits.Contains(f)).ToList();
+        string looked = string.Join(", ", others.Take(8).Select(f => f.Name)) + (others.Count > 8 ? $" and {others.Count - 8} more" : "");
+        if (fits.Count == 0)
+            return ($"Looked at {pool.Count} files, and none seems to be what the user means: {looked}. Say you could not find it; mention one of " +
+                "these only if it may be it after all, and ask for a detail that would tell it apart (when, what kind, what it is called).",
+                new FilesBlock(pool.Take(12).ToList(), 0), null);
+        var res = new StringBuilder($"{fits.Count} file(s) fit what the user means, best first ({Links}):\n");
+        for (int i = 0; i < fits.Count; i++)
+        {
+            res.Append($"{i + 1}. {Line(fits[i])}");
+            if (ranked[i].why.Length > 0) res.Append($" (fits: {ranked[i].why})");
+            res.Append('\n');
+        }
+        if (others.Count > 0) res.Append($"Also looked at, and judged not to fit: {looked}.\n");
+        return (res.ToString(), new FilesBlock(fits.Concat(others.Take(12)).ToList(), fits.Count), null);
     }
 
     /// <summary>A unix time as the model reads it best: "Tuesday 14 October 2026 at 16:20".</summary>

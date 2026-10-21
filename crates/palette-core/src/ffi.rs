@@ -828,8 +828,8 @@ pub unsafe extern "C" fn pc_chat_docs(question: *const c_char) -> *mut c_char {
     into_c(out.to_string())
 }
 
-/// The chat's `find_files` tool (tools.rs): `{"query":"...","from":unix,"to":unix,"kind":"document","limit":6}`
-/// in, `[{"path","name","folder","modified","opened","why"},...]` out. Takes up to a few seconds (the
+/// The chat's `find_files` tool (tools.rs): `{"query":"...","from":unix,"to":unix,"kind":"document","folder":"downloads","limit":6}`
+/// in, `[{"path","name","folder","modified","opened","why","about"},...]` out: candidates, for the shell to rank. Takes up to three seconds (the
 /// meaning search): call from a worker thread. Free with `pc_free`.
 ///
 /// # Safety
@@ -847,7 +847,8 @@ pub unsafe extern "C" fn pc_find_files(request: *const c_char) -> *mut c_char {
         None => Vec::new(),
     };
     let by_topic = |q: &str| match ENGINE.get() {
-        Some(e) => crate::tools::file_paths(e.sem.query(q, Duration::from_secs(8)).into_iter().map(|(h, _)| h)),
+        // At most three seconds: the topic is one source among several, and the answer waits on it.
+        Some(e) => crate::tools::file_paths(e.sem.query(q, Duration::from_secs(3)).into_iter().map(|(h, _)| h)),
         None => Vec::new(),
     };
     let found = crate::tools::find_files(
@@ -855,6 +856,7 @@ pub unsafe extern "C" fn pc_find_files(request: *const c_char) -> *mut c_char {
         req["from"].as_i64().unwrap_or(0),
         req["to"].as_i64().unwrap_or(0),
         req["kind"].as_str().unwrap_or("any"),
+        req["folder"].as_str().unwrap_or(""),
         req["limit"].as_u64().unwrap_or(6) as usize,
         &by_name,
         &by_topic,

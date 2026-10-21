@@ -159,32 +159,47 @@ fn app_name(exe: &str) -> String {
 }
 
 fn file_description(exe: &str) -> Option<String> {
+    version_strings(exe, &["FileDescription"]).into_iter().next().flatten()
+}
+
+/// Strings of a program's version information ("FileDescription", "ProductName", "CompanyName"), in the
+/// order asked, None for each it does not have; all None for a file without any.
+pub fn version_strings(exe: &str, keys: &[&str]) -> Vec<Option<String>> {
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
     let w: Vec<u16> = exe.encode_utf16().chain(std::iter::once(0)).collect();
+    let none = || keys.iter().map(|_| None).collect();
     unsafe {
         let size = GetFileVersionInfoSizeW(PCWSTR(w.as_ptr()), None);
         if size == 0 {
-            return None;
+            return none();
         }
         let mut data = vec![0u8; size as usize];
-        GetFileVersionInfoW(PCWSTR(w.as_ptr()), None, size, data.as_mut_ptr() as *mut _).ok()?;
+        if GetFileVersionInfoW(PCWSTR(w.as_ptr()), None, size, data.as_mut_ptr() as *mut _).is_err() {
+            return none();
+        }
         // The first language/code page in the translation table.
         let mut ptr: *mut core::ffi::c_void = std::ptr::null_mut();
         let mut len = 0u32;
         let tr: Vec<u16> = "\\VarFileInfo\\Translation\0".encode_utf16().collect();
         if !VerQueryValueW(data.as_ptr() as *const _, PCWSTR(tr.as_ptr()), &mut ptr, &mut len).as_bool() || len < 4 {
-            return None;
+            return none();
         }
         let lang = *(ptr as *const u16);
         let cp = *(ptr as *const u16).add(1);
-        let key: Vec<u16> = format!("\\StringFileInfo\\{lang:04x}{cp:04x}\\FileDescription\0").encode_utf16().collect();
-        if !VerQueryValueW(data.as_ptr() as *const _, PCWSTR(key.as_ptr()), &mut ptr, &mut len).as_bool() || len == 0 {
-            return None;
-        }
-        let s = std::slice::from_raw_parts(ptr as *const u16, len as usize);
-        let s = String::from_utf16_lossy(s).trim_end_matches('\0').trim().to_string();
-        (!s.is_empty()).then_some(s)
+        keys.iter()
+            .map(|k| {
+                let key: Vec<u16> = format!("\\StringFileInfo\\{lang:04x}{cp:04x}\\{k}\0").encode_utf16().collect();
+                let mut ptr: *mut core::ffi::c_void = std::ptr::null_mut();
+                let mut len = 0u32;
+                if !VerQueryValueW(data.as_ptr() as *const _, PCWSTR(key.as_ptr()), &mut ptr, &mut len).as_bool() || len == 0 {
+                    return None;
+                }
+                let s = std::slice::from_raw_parts(ptr as *const u16, len as usize);
+                let s = String::from_utf16_lossy(s).trim_end_matches('\0').trim().to_string();
+                (!s.is_empty()).then_some(s)
+            })
+            .collect()
     }
 }
 
