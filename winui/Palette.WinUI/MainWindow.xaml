@@ -685,7 +685,17 @@
                     <Grid>
                         <!-- a file: its picture or first page, then where it is and how big -->
                         <StackPanel x:Name="FilePreview" Padding="0,8,0,4">
-                            <Grid x:Name="PreviewStage" Height="186">
+                            <Grid
+                                x:Name="PreviewStage"
+                                Height="186"
+                                Background="Transparent"
+                                DoubleTapped="OnStageDoubleTapped"
+                                PointerCanceled="OnStageReleased"
+                                PointerMoved="OnStageMoved"
+                                PointerPressed="OnStagePressed"
+                                PointerReleased="OnStageReleased"
+                                PointerWheelChanged="OnStageWheel"
+                                SizeChanged="OnStageSizeChanged">
                                 <Image
                                     x:Name="PreviewImage"
                                     MaxHeight="186"
@@ -720,6 +730,12 @@
                                             TextTrimming="Clip" />
                                     </Viewbox>
                                 </Border>
+                                <!-- a 3D model: Sight's frames, see ModelView.cs -->
+                                <Image
+                                    x:Name="ModelFrame"
+                                    IsHitTestVisible="False"
+                                    Stretch="Fill"
+                                    Visibility="Collapsed" />
                                 <TextBlock
                                     x:Name="PreviewNote"
                                     Margin="16,0,16,14"
