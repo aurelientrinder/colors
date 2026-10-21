@@ -168,7 +168,7 @@ public sealed partial class MainWindow
                 "get_weather" => await WeatherTool(Arg("place"), ct),
                 "get_calendar" => await CalendarTool(Arg("period"), Arg("date"), ct),
                 "get_system_status" => await SystemTool(),
-                "set_reminder" => SetReminderTool(Arg("text"), Num("in_minutes"), Arg("time"), Arg("day").Length > 0 ? Arg("day") : Arg("date")),
+                "set_reminder" => SetReminderTool(Arg("text"), Num("in_minutes"), Num("in_seconds"), Arg("time"), Arg("day").Length > 0 ? Arg("day") : Arg("date")),
                 "list_reminders" => ListRemindersTool(),
                 "cancel_reminder" => CancelReminderTool(Arg("about")),
                 "open" => await OpenTool(Arg("target")),
@@ -255,11 +255,17 @@ public sealed partial class MainWindow
         return (docs.Text, new SourcesBlock(paths.Zip(docs.Names, (p, n) => new SourceDoc(p, n)).ToList()), null);
     }
 
-    private (string, object?, string?) SetReminderTool(string text, int? inMinutes, string time, string day)
+    private (string, object?, string?) SetReminderTool(string text, int? inMinutes, int? inSeconds, string time, string day)
     {
-        if (text.Length == 0) return ("Say what to remind the user of (text).", null, null);
-        var at = ReminderStore.Resolve(inMinutes, time, day, DateTime.Now, out string why);
-        if (at == null) return ($"Not set: {why}", null, null);
+        if (text.Length == 0) return ("NOT SET: say what to remind the user of (text), and call set_reminder again.", null, null);
+        string why = "";
+        DateTime? at = inSeconds is > 0 and < 60 * 60 * 24 && inMinutes is null or 0
+            ? DateTime.Now.AddSeconds(inSeconds.Value)
+            : ReminderStore.Resolve(inMinutes, time, day, DateTime.Now, out why);
+        // The model, told no, still says "I've set it": the refusal has to be impossible to misread.
+        if (at == null)
+            return ($"NOT SET: nothing was saved. {why} Call set_reminder again with that, or tell the user plainly " +
+                "that the reminder was not set; never say it was.", null, null);
         var r = ReminderStore.Add(text, at.Value, _chat?.Id);
         ActionLog.Add(new ActionRecord(ActionLog.NewId(), "reminder", $"Set a reminder: {r.Text}", DateTime.Now, _chat?.Id, ReminderId: r.Id));
         return ($"Reminder set for {ReminderStore.Describe(r.At, CultureInfo.InvariantCulture)} ({ReminderStore.Until(r.At)}): {r.Text} " +

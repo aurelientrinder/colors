@@ -290,8 +290,9 @@ internal sealed class Bubble : Window
         {
             for (int x = 0; x < n; x++)
             {
+                // Drawn under the card too (it is opaque, so none of it shows): a hole cut to one corner
+                // radius left a hard, stair-stepped rim round the pill, whose ends are rounder.
                 double d = MainWindow.RoundedRectDistance(x + 0.5, y + 0.5, c, c, half, half, rr);
-                if (d <= -0.5) continue;   // under the card
                 double dk = MainWindow.RoundedRectDistance(x + 0.5, y + 0.5 - dy, c, c, half, half, rr);
                 double a1 = alpha * MainWindow.Falloff(dk, blur), a2 = ambient * MainWindow.Falloff(d, 3);
                 double a = Math.Clamp(1 - (1 - a1) * (1 - a2), 0, 1);
@@ -494,8 +495,12 @@ internal sealed class Bubble : Window
     {
         _eraseProc = (h, msg, w, l, id, data) =>
         {
-            const uint WM_PAINT = 0xF, WM_ERASEBKGND = 0x14, WM_MOUSEACTIVATE = 0x21;
+            const uint WM_PAINT = 0xF, WM_ERASEBKGND = 0x14, WM_MOUSEACTIVATE = 0x21, WM_NCCALCSIZE = 0x83, WM_NCPAINT = 0x85;
             if (msg == WM_MOUSEACTIVATE) return (IntPtr)3;   // MA_NOACTIVATE: a click does not take the keyboard
+            // Showing it puts a thin dialog frame back (WS_DLGFRAME), drawn light down the sides of the
+            // see-through window: whatever the styles say, the whole window is client, with no frame to paint.
+            if (msg == WM_NCCALCSIZE && w != IntPtr.Zero) return IntPtr.Zero;
+            if (msg == WM_NCPAINT) return IntPtr.Zero;
             if (msg == WM_ERASEBKGND)
             {
                 Win32.GetClientRect(h, out var rc);
