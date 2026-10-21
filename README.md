@@ -4,6 +4,24 @@ A Spotlight-style launcher for Windows: a Rust engine with a WinUI 3 interface.
 Resident, instant on a tap of the Windows key, `Alt+Space` (falls back to `Ctrl+Space` if taken; any combination can be chosen in Settings) or the Copilot key
 (Win+Shift+F23, intercepted with a low-level keyboard hook so Copilot does not open).
 
+## Install
+
+On 64-bit Windows 10 or 11, in PowerShell (no admin needed):
+
+```
+irm https://raw.githubusercontent.com/aurelientrinder/colors/main/install.ps1 | iex
+```
+
+[install.ps1](install.ps1) puts the latest release in `%LOCALAPPDATA%\Programs\Palette`, downloads the
+models (search ~210 MB, plans ~310 MB, the NPU versions on Intel Core Ultra ~450 MB, and, if you say yes,
+the chat model, 4.9 GB), adds Palette to the Start menu, to sign-in and to Apps & features, and starts
+it. Run it again to update. Remove it from Apps & features. This copy has no UI Access, so over elevated
+windows (Task Manager, an admin terminal) the Windows key opens Start; see
+[Over elevated windows](#over-elevated-windows-ui-access).
+
+A release is made with `.\scripts\make-release.ps1 -Version x.y.z`, which builds the app without models
+into `dist\` with the plan model, the NPU models and checksums, then `gh release create vx.y.z dist\*`.
+
 ## Layout
 
 ```

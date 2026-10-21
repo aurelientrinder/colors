@@ -21,3 +21,6 @@ __pycache__/
 /ml/intent/runs/
 /ml/intent/tools/
 /ml/intent/.venv-ov/
+
+# Release files: scripts/make-release.ps1
+/dist/

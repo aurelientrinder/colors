@@ -51,8 +51,9 @@
   </ItemGroup>
 
   <!-- Embedding model for the semantic tier (fetched by scripts\get-model.ps1). Optional: without it
-       the launcher simply has no "Related" results. -->
-  <ItemGroup>
+       the launcher simply has no "Related" results. Left out with -p:PaletteNoModels=true (the release
+       zip: install.ps1 downloads them). -->
+  <ItemGroup Condition="'$(PaletteNoModels)' != 'true'">
     <None Include="..\..\models\**\*.*" Exclude="..\..\models\**\.download-done" Link="models\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
