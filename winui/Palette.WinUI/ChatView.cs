@@ -313,7 +313,7 @@ public sealed partial class MainWindow
                     RenderChat(chat);
                     continue;
                 }
-                if (calls.Count == 0 && afterTools && Announces(said))
+                if (calls.Count == 0 && afterTools && Announces(said) && !ToldToFind(answer))
                 {
                     // After its tools, "I'll search again for…" heads an answer that needs no new search (forcing one made
                     // it search the same thing twice): the sentence goes, the answer after it stays.
@@ -324,11 +324,12 @@ public sealed partial class MainWindow
                         RenderChat(chat);
                     }
                 }
-                else if (calls.Count == 0 && !lastRound && !retried && AnnouncesLookup(said))
+                else if (calls.Count == 0 && !lastRound && !retried && (AnnouncesLookup(said) || afterTools && ToldToFind(answer)))
                 {
                     // It said it would look in the user's things ("I'll look through your files…") and answered
-                    // without looking: its sentence stays, the rest is dropped, and it is asked again with a
-                    // tool call required.
+                    // without looking, or an action told it to find the file first and it stopped there ("I need
+                    // to find the exact file name first."): its sentence stays, the rest is dropped, and it is
+                    // asked again with a tool call required.
                     App.Log($"chat: announced without a tool call, asking again: {said}");
                     retried = true;
                     answer.Text = answer.Text[..answer.ReplyStart];
@@ -564,6 +565,10 @@ public sealed partial class MainWindow
     private static readonly Regex LookupWords = new(
         @"\b(files?|documents?|folders?|photos?|pictures?|downloads?|calendar|schedule|events?|agenda|weather|forecast|battery|pc|computer|disk|memory|lease|invoices?|contracts?|manuals?|notes?|fichiers?|calendrier|météo|batterie|reminders?|rappels?)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>The last tool of this answer could not act until the file was found (ChatActions.cs ResolveFile).</summary>
+    private static bool ToldToFind(ChatMsg answer) =>
+        answer.Rounds.LastOrDefault()?.Calls.Any(c => c.Result.Contains("find it with find_files first")) == true;
 
     private static bool AnnouncesLookup(string turn) => Announce.IsMatch(turn) && LookupWords.IsMatch(FirstSentence(turn));
 

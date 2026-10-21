@@ -159,8 +159,28 @@ public sealed partial class MainWindow
         var found = FoundPaths().Reverse().Distinct(StringComparer.OrdinalIgnoreCase).Where(ActionLog.Exists).ToList();
         var hit = found.FirstOrDefault(p => Path.GetFileName(p).Equals(name, StringComparison.OrdinalIgnoreCase))
             ?? found.FirstOrDefault(p => Path.GetFileNameWithoutExtension(p).Equals(name, StringComparison.OrdinalIgnoreCase));
+        hit ??= TypedPath(name);
         if (hit == null) why = $"I don't know which file {name} is: find it with find_files first, then use its exact name.";
         return hit;
+    }
+
+    /// <summary>
+    /// A full path the user typed in this conversation that ends in <paramref name="name"/> (the model often
+    /// passes only the name of "C:\…\notes.txt"). Paths may hold spaces, so each drive letter is followed to
+    /// the name rather than parsed.
+    /// </summary>
+    private string? TypedPath(string name)
+    {
+        if (_acting is not { } a || name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return null;
+        foreach (var m in a.chat.Messages.Where(m => m.Role == "user").Reverse())
+            foreach (Match drive in Regex.Matches(m.Text, @"\b[A-Za-z]:\\"))
+            {
+                int end = m.Text.IndexOf("\\" + name, drive.Index, StringComparison.OrdinalIgnoreCase);
+                if (end < 0 || m.Text[drive.Index..end].IndexOfAny(['\n', '"', '<', '>', '|']) >= 0) continue;
+                string path = m.Text[drive.Index..(end + 1 + name.Length)];
+                if (ActionLog.Exists(path)) return Path.GetFullPath(path);
+            }
+        return null;
     }
 
     /// <summary>
