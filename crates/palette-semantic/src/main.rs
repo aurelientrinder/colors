@@ -29,16 +29,7 @@ fn model_dir(args: &[String]) -> PathBuf {
     }
     // Newest first; the index is rebuilt automatically when the model changes.
     const NAMES: [&str; 2] = ["embeddinggemma-2-text-q4", "embeddinggemma-300m-q4"];
-    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let mut bases: Vec<PathBuf> = Vec::new();
-    if let Some(d) = &exe_dir {
-        bases.push(d.join("models"));
-        // dev layout: <repo>\target\release\palette-semantic.exe
-        bases.push(d.join("..").join("..").join("models"));
-    }
-    if let Some(l) = std::env::var_os("LOCALAPPDATA") {
-        bases.push(PathBuf::from(l).join("palette").join("models"));
-    }
+    let bases = palette_ov::model_bases();
     for name in NAMES {
         for base in &bases {
             let c = base.join(name);

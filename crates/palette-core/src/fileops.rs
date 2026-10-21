@@ -106,9 +106,11 @@ fn recycle_path(p: &Path) -> Result<(), String> {
 
 /// Put the file on the clipboard, to be pasted in Explorer or attached anywhere.
 pub fn copy_file(p: &Path) -> bool {
-    let q = p.display().to_string().replace('\'', "''");
+    // The path goes in an environment variable, never into the command: a file name can hold any quote
+    // PowerShell knows (it takes ‘ ’ ‚ ‛ for ' too), and a downloaded file's name is anyone's choice.
     Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &format!("Set-Clipboard -LiteralPath '{q}'")])
+        .env("PALETTE_PATH", p)
+        .args(["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -LiteralPath $env:PALETTE_PATH"])
         .creation_flags(NO_WINDOW)
         .status()
         .is_ok_and(|s| s.success())

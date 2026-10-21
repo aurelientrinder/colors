@@ -65,19 +65,21 @@ pub fn set_autostart(enable: bool) -> bool {
     let _ = Command::new("reg.exe").args(["delete", RUN_KEY, "/v", "Palette", "/f"]).creation_flags(NO_WINDOW).output();
     let out = if enable {
         let Ok(exe) = std::env::current_exe() else { return false };
-        let exe = exe.display().to_string().replace('\'', "''");
-        let dir = std::path::Path::new(&exe).parent().map(|p| p.display().to_string()).unwrap_or_default();
+        let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         // Started the way the shell starts it: Task Scheduler cannot start the installed copy, which
-        // has UI Access (scripts\install-uiaccess.ps1), itself (ERROR_ELEVATION_REQUIRED).
+        // has UI Access (scripts\install-uiaccess.ps1), itself (ERROR_ELEVATION_REQUIRED). The paths go
+        // in environment variables, not the command: a folder name may hold a quote (O’Brien).
         let script = format!(
             "$u = \"$env:USERDOMAIN\\$env:USERNAME\"; \
              Register-ScheduledTask -TaskName '{TASK}' -Force -ErrorAction Stop \
-             -Action (New-ScheduledTaskAction -Execute 'rundll32.exe' -Argument 'shell32.dll,ShellExec_RunDLL \"{exe}\"' -WorkingDirectory '{dir}') \
+             -Action (New-ScheduledTaskAction -Execute 'rundll32.exe' -Argument ('shell32.dll,ShellExec_RunDLL \"' + $env:PALETTE_EXE + '\"') -WorkingDirectory $env:PALETTE_DIR) \
              -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $u) \
              -Principal (New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited) \
              -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew -Priority 4) | Out-Null"
         );
         Command::new("powershell.exe")
+            .env("PALETTE_EXE", &exe)
+            .env("PALETTE_DIR", &dir)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .creation_flags(NO_WINDOW)
             .output()

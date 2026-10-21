@@ -495,7 +495,9 @@ fn telling_libraries(names: impl Iterator<Item = String>) -> Vec<String> {
             continue;
         }
         families.push(family);
-        out.push(n[..stem.len()].to_string());
+        // The name less its 4-byte extension: cut from `n`, not by `stem`'s length (lowercasing can
+        // change it, and a name inside a downloaded zip can be anything).
+        out.push(n.get(..n.len().saturating_sub(4)).unwrap_or(&n).to_string());
         if out.len() == 8 {
             break;
         }
@@ -583,6 +585,13 @@ pub fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_library_name_that_lowercases_longer_is_kept_whole() {
+        // İ lowercases to two characters: the name must not be cut by the lowercase copy's length.
+        let found = telling_libraries(["\u{130}\u{130}\u{130}Engine.DLL".to_string(), "\u{212a}elvin.dll".to_string()].into_iter());
+        assert_eq!(found, vec!["\u{130}\u{130}\u{130}Engine".to_string(), "\u{212a}elvin".to_string()]);
+    }
 
     #[test]
     fn kinds_go_by_extension() {

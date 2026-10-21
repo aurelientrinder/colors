@@ -434,7 +434,9 @@ pub fn passage(chunk: &str, q: &str) -> Option<Passage> {
             .unwrap_or(from);
         let back = chunk[..first].char_indices().rev().nth(50).map(|(i, _)| i).unwrap_or(0).max(from);
         if back > from {
-            from = chunk[back..].find(' ').map(|i| back + i + 1).unwrap_or(back);
+            // A space before `to` only: text without spaces (Chinese, Japanese, a long URL) has none, and
+            // starting past `to` would cut the passage backwards.
+            from = chunk[back..to].find(' ').map(|i| back + i + 1).unwrap_or(back);
             lead = true;
         }
         let mut end = chunk[from..].char_indices().nth(PASSAGE_CHARS).map(|(i, _)| from + i).unwrap_or(to).min(to);
@@ -477,6 +479,16 @@ mod tests {
         let chunk = format!("{filler}le comportement pr\u{e9}sentait un caract\u{e8}re plus qu'excessif et particuli\u{e8}rement abusif et rendait impossible la poursuite du contrat; {filler}");
         let p = passage(&chunk, "un caract\u{e8}re plus qu'excessif et particuli\u{e8}rement abusif et rendait impossible la poursuite du").unwrap();
         assert!(p.text.contains("particuli\u{e8}rement abusif"), "{}", p.text);
+    }
+
+    #[test]
+    fn a_long_sentence_without_spaces_is_cut_forwards() {
+        // Words joined without a space (as in Chinese or Japanese, or a long path): no space to start
+        // the passage at before the sentence ends.
+        let sentence = format!("{}-budget-{}", ["ab"; 60].join("-"), ["cd"; 300].join("-"));
+        let chunk = format!("{sentence}. The next sentence has spaces in it.");
+        let p = passage(&chunk, "budget").expect("a passage");
+        assert!(p.text.contains("budget"));
     }
 
     #[test]

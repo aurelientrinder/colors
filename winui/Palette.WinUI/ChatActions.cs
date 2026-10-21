@@ -90,7 +90,10 @@ public sealed partial class MainWindow
 
     private static bool AsksToAct(string message) =>
         AsksAction(message) || AsksReminder(message) || !(message.TrimEnd().EndsWith('?') || Regex.IsMatch(message,
-            @"^\s*(how|what|why|when|where|which|who|is|are|does|do i|can i|should i|comment|pourquoi|quand|est-ce)\b", RegexOptions.IgnoreCase));
+            @"^\s*(how|what|why|when|where|which|who|is|are|does|do i|can i|should i|comment|pourquoi|quand|est-ce)\b", RegexOptions.IgnoreCase)
+            // Asked to read something (the window in front, a page): what it says must not become a
+            // request to act, so these are questions too unless they ask for an action outright.
+            || Regex.IsMatch(message, @"^\s*(summari[sz]e|summary|explain|translate|rewrite|shorten|proofread|tl;?dr|read|describe|r[ée]sume|r[ée]sumer|explique|traduis|traduire|relis)\b", RegexOptions.IgnoreCase));
 
     private const string OnlyAsked = "Nothing was done: the user asked a question, not for a change. Answer it, and offer to do it.";
 

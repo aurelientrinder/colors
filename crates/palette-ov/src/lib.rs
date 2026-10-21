@@ -85,20 +85,35 @@ fn wide(p: &Path) -> Vec<u16> {
     p.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
 }
 
-/// `models\<name>` holding `file`: beside the exe, above it (the repo checkout) or in the
-/// per-user data folder.
-pub fn find_models(name: &str, file: &str) -> Option<PathBuf> {
+/// The `models` folders the launcher and its helpers look in, in order: beside the exe; in the repo
+/// checkout the exe was built in, the nearest folder above it holding Cargo.toml; and in the per-user
+/// data folder. Never just any folder above the exe: anyone signed in to the PC can make `C:\models`,
+/// and what is found there (llama-server.exe, OpenVINO's DLLs) runs in this user's name. A drive root
+/// does not count as a checkout for the same reason (`D:\Cargo.toml` may be anyone's).
+pub fn model_bases() -> Vec<PathBuf> {
     let mut bases: Vec<PathBuf> = Vec::new();
-    let mut dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
-    for _ in 0..9 {
-        let Some(d) = dir else { break };
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+    if let Some(d) = &exe_dir {
         bases.push(d.join("models"));
-        dir = d.parent().map(Path::to_path_buf);
+        let checkout = d
+            .ancestors()
+            .skip(1)
+            .take(8)
+            .filter(|a| a.parent().is_some())
+            .find(|a| a.join("Cargo.toml").is_file());
+        if let Some(repo) = checkout {
+            bases.push(repo.join("models"));
+        }
     }
     if let Some(l) = std::env::var_os("LOCALAPPDATA") {
         bases.push(PathBuf::from(l).join("palette").join("models"));
     }
-    bases.into_iter().map(|b| b.join(name)).find(|d| d.join(file).exists())
+    bases
+}
+
+/// `models\<name>` holding `file`, in the folders of [`model_bases`].
+pub fn find_models(name: &str, file: &str) -> Option<PathBuf> {
+    model_bases().into_iter().map(|b| b.join(name)).find(|d| d.join(file).exists())
 }
 
 /// The OpenVINO runtime's folder, `models\openvino`.

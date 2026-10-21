@@ -339,8 +339,10 @@ pub fn wants(query: &str) -> Option<String> {
         return (rest.chars().count() >= 2).then(|| rest.to_string());
     }
     let lower = q.to_lowercase();
-    if let Some(rest) = lower.strip_prefix("ask ") {
-        let rest = q[q.len() - rest.len()..].trim();
+    // Cut from the typed text itself: lowercasing can change a text's length (İ, the Kelvin sign), so a
+    // position in `lower` is not one in `q`.
+    if q.get(..4).is_some_and(|lead| lead.eq_ignore_ascii_case("ask ")) {
+        let rest = q[4..].trim();
         return (rest.chars().count() >= 3).then(|| rest.to_string());
     }
     const LEADS: [&str; 24] = [
@@ -705,6 +707,13 @@ fn cut(text: &str, max: usize, tail: bool) -> String {
 mod tests {
     use super::*;
     use crate::uia::WindowText;
+
+    #[test]
+    fn ask_keeps_what_follows_whatever_its_letters() {
+        // Letters whose lowercase is longer (İ) or shorter (the Kelvin sign) than they are.
+        assert_eq!(wants("ask \u{130}\u{130}\u{130}\u{130}\u{130}\u{130}"), Some("\u{130}\u{130}\u{130}\u{130}\u{130}\u{130}".to_string()));
+        assert_eq!(wants("Ask \u{212a}\u{212a}\u{212a} about it"), Some("\u{212a}\u{212a}\u{212a} about it".to_string()));
+    }
 
     fn ctx(text: &str, selection: Option<&str>, terminal: bool) -> WindowText {
         WindowText {

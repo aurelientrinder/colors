@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 4] = b"PSM1";
 
+/// Keys kept in memory only, never written: what was copied (`clip:`), which the launcher promises
+/// stays off the disk, vectors included.
+fn memory_only(key: &str) -> bool {
+    key.starts_with("clip:")
+}
+
 pub struct Store {
     path: PathBuf,
     keys: Vec<String>,
@@ -73,6 +79,11 @@ impl Store {
                 .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
                 .collect();
             p = end;
+            // Written by an earlier version: counted as damaged, so the file is rewritten without it.
+            if memory_only(&key) {
+                bad += 1;
+                continue;
+            }
             // Vectors are stored unit length: anything else was damaged (and would outscore every
             // real match). Left out, the entry is simply computed again.
             let n2: f32 = v.iter().map(|x| x * x).sum();
@@ -126,6 +137,9 @@ impl Store {
                 w.write_all(MAGIC)?;
                 w.write_all(&(DIM as u32).to_le_bytes())?;
                 for i in 0..self.keys.len() {
+                    if memory_only(&self.keys[i]) {
+                        continue;
+                    }
                     let (stamp, size) = self.meta[i];
                     Self::write_record(&mut w, &self.keys[i], stamp, size, &self.vecs[i * DIM..(i + 1) * DIM])?;
                 }
@@ -168,6 +182,9 @@ impl Store {
 
     pub fn upsert(&mut self, key: &str, stamp: u64, size: u64, v: &[f32]) {
         self.put(key, stamp, size, v);
+        if memory_only(key) {
+            return;
+        }
         if let Some(w) = self.writer() {
             let _ = Self::write_record(w, key, stamp, size, v);
         }
